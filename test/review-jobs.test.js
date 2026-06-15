@@ -107,6 +107,39 @@ test("createRepairJobs falls back to asset manifest when asset jobs are absent",
   assert.equal(repairs[0].originalTask, null);
 });
 
+test("createRepairJobs marks repair complete when no repairs are needed", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "repair-jobs-none-"));
+  const base = path.join(root, "runs", "demo");
+  fs.mkdirSync(path.join(base, "review"), { recursive: true });
+  writeJson(path.join(base, "jobs", "asset_jobs.json"), {
+    jobs: [
+      {
+        id: "cat",
+        status: "pending",
+        task: "tasks/assets/cat.md",
+        output: "assets/objects/cat.png",
+        result: "assets/results/cat.json"
+      }
+    ]
+  });
+  writeJson(path.join(base, "review", "review_report.json"), {
+    assets: [
+      { assetId: "cat", status: "pass", issues: [] }
+    ]
+  });
+  writeJson(path.join(base, "run.json"), {
+    schema: "art-pipeline-v2-run@main-flow",
+    stages: { repair: "pending" }
+  });
+
+  const repairs = createRepairJobs({ projectRoot: root, runId: "demo" });
+
+  assert.equal(repairs.length, 0);
+  const run = readJson(path.join(base, "run.json"));
+  assert.equal(run.stages.repair, "complete");
+  assert.deepEqual(run.repairJobs, { count: 0 });
+});
+
 test("createRepairJobs rejects unsafe repair asset ids before writing paths", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "repair-jobs-unsafe-"));
   const base = path.join(root, "runs", "demo");

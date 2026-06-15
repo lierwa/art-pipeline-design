@@ -85,7 +85,7 @@ function createRepairJobs({ projectRoot, runId }) {
     projectRoot,
     runId,
     mutate(run) {
-      run.stages = { ...(run.stages || {}), repair: "ready" };
+      run.stages = { ...(run.stages || {}), repair: repairs.length === 0 ? "complete" : "ready" };
       run.repairJobs = { count: repairs.length };
     }
   });
