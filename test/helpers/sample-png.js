@@ -17,4 +17,39 @@ function writeSamplePng(filePath) {
   fs.writeFileSync(filePath, PNG.sync.write(png));
 }
 
-module.exports = { writeSamplePng };
+function writeFullyTransparentPng(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const png = new PNG({ width: 32, height: 32 });
+  fs.writeFileSync(filePath, PNG.sync.write(png));
+}
+
+function writeFullyOpaquePng(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const png = new PNG({ width: 32, height: 32 });
+  for (let i = 0; i < png.data.length; i += 4) {
+    png.data[i] = 255;
+    png.data[i + 1] = 180;
+    png.data[i + 2] = 200;
+    png.data[i + 3] = 255;
+  }
+  fs.writeFileSync(filePath, PNG.sync.write(png));
+}
+
+function writeRgbPng(filePath) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const png = new PNG({ width: 32, height: 32 });
+  for (let i = 0; i < png.data.length; i += 4) {
+    png.data[i] = 255;
+    png.data[i + 1] = 180;
+    png.data[i + 2] = 200;
+    png.data[i + 3] = 255;
+  }
+  fs.writeFileSync(filePath, PNG.sync.write(png, { colorType: 2 }));
+}
+
+module.exports = {
+  writeFullyOpaquePng,
+  writeFullyTransparentPng,
+  writeRgbPng,
+  writeSamplePng
+};

@@ -1,6 +1,7 @@
 const path = require("node:path");
 const { readJson } = require("../core/json");
 const { runDir } = require("../core/run-store");
+const { resolveExportDir, resolveManifestAssetPaths } = require("../core/asset-paths");
 const { validatePngAsset } = require("../validation/png");
 
 function arg(name) {
@@ -13,8 +14,10 @@ const runId = arg("--run");
 if (!runId) throw new Error("Usage: npm run validate-assets -- --run <run_id>");
 
 const base = runDir(projectRoot, runId);
+const exportDir = resolveExportDir(base);
 const manifest = readJson(path.join(base, "manifests", "asset_manifest.json"));
 for (const asset of manifest.assets) {
-  validatePngAsset(path.join(base, asset.output));
+  const paths = resolveManifestAssetPaths({ runDirectory: base, exportDir, output: asset.output });
+  validatePngAsset(paths.source);
 }
 console.log(`PNG assets valid: ${manifest.assets.length}`);
