@@ -8,7 +8,7 @@ The existing project is not considered V2 because it only reads a hand-written m
 
 ## Product Goal
 
-Given one cute isometric room scene image, the project creates a production run that can be executed by Codex Agent and later swapped to a fully automated API backend.
+Given one cute isometric room scene image, the project creates a production run that can be executed through the local Codex CLI using the user's existing Codex subscription/login state.
 
 The demo must answer one question: can this pipeline turn a full scene image into a usable layered game asset pack?
 
@@ -24,16 +24,19 @@ The demo must answer one question: can this pipeline turn a full scene image int
 
 ## Runtime Model
 
-The lowest-cost validation target is a Codex-runner pipeline.
+The required validation target is a Codex CLI worker-pool pipeline.
 
-The local project will not pretend it can directly control the Codex desktop app as a hidden API. Instead, it will maintain explicit task files that Codex Agent can execute in this workspace:
+The user only has a Codex subscription and must not be asked to provide an OpenAI API key. The project therefore must not depend on `OPENAI_API_KEY`, `CODEX_API_KEY`, OpenAI Images API, or any other API-key-backed image backend.
+
+The local project will not pretend it can directly control the Codex desktop app as a hidden API. Instead, it will invoke `codex exec` workers through the local CLI login state:
 
 - the project creates stage task files;
-- Codex reads the task files and performs vision/image-generation work;
+- the project launches bounded parallel `codex exec` workers;
+- Codex reads the task files and performs analysis or image-generation work;
 - Codex writes results back to the run directory;
 - the project validates outputs and advances the run state.
 
-This keeps the demo honest. Later, the same task contracts can be backed by OpenAI API, ComfyUI, or another image backend.
+The project must verify early whether the available Codex CLI environment can actually create PNG image assets. If it cannot, the demo must fail with a clear capability report instead of silently falling back to placeholder SVGs or API keys.
 
 ## Non-Goals For The First Real Demo
 
@@ -41,6 +44,8 @@ This keeps the demo honest. Later, the same task contracts can be backed by Open
 - No WeChat mini-game integration.
 - No perfect one-click segmentation guarantee.
 - No fake SVG placeholders as final objects.
+- No API key requirement.
+- No serial one-by-one asset generation for the batch asset stage.
 - No tiny-detail over-splitting, such as treating every small bottle as a separate gameplay object unless the manifest says it matters.
 - No physically implausible generated structure accepted silently.
 
@@ -105,7 +110,7 @@ The manifest is the source of truth for batch production.
 
 ### 4. Asset Generation
 
-Codex executes `tasks/generate_assets.md` and creates real image assets.
+The pipeline splits `asset_manifest.json` into one job file per asset and starts a bounded pool of parallel `codex exec` workers.
 
 Output:
 
@@ -115,6 +120,14 @@ Output:
 - one JSON result per generated asset.
 
 The required output is not a crop with messy background. Each object must be regenerated or cleaned into a standalone asset with transparent background and consistent style.
+
+The batch stage must support:
+
+- configurable `maxParallel`, initially 4;
+- one job result file per asset;
+- retry for failed jobs;
+- per-worker stdout/stderr logs;
+- no API-key environment variables passed to workers.
 
 ### 5. Asset Validation
 
@@ -232,7 +245,7 @@ npm run animate -- --run <run_id>
 npm run export -- --run <run_id>
 ```
 
-`analyze`, `generate-assets`, and `animate` create Codex task files and then check for expected result files. In Codex-runner mode, Codex Agent fills those files. In API mode, the same stages can call a backend directly.
+`analyze`, `generate-assets`, and `animate` create Codex task files and run them through local `codex exec`. The implementation must scrub API-key environment variables before spawning workers.
 
 ## Data Contracts
 
@@ -331,7 +344,8 @@ The demo is acceptable only if:
 - a source scene image creates a run;
 - `scene_graph.json` is produced from visual analysis, not hand-written as the only source;
 - `asset_manifest.json` contains grouped asset decisions and structural constraints;
-- at least five transparent PNG object assets are generated;
+- at least five transparent PNG object assets are generated through local Codex CLI workers;
+- batch asset generation uses bounded parallel workers rather than a serial loop;
 - at least one animation candidate is detected and written to `animation_manifest.json`;
 - preview/contact sheet/export files are created;
 - the final report clearly marks which outputs passed automatic checks and which require human art review.
@@ -341,6 +355,6 @@ The demo is acceptable only if:
 1. Replace the current placeholder pipeline with run-based contracts.
 2. Add schemas and tests before adding stage logic.
 3. Implement ingest, manifest validation, preview, and export first.
-4. Add Codex task generation for analysis and asset generation.
-5. Run one bathroom-scene demo end to end with Codex filling analysis and image outputs.
-6. Only after that, consider API automation.
+4. Add Codex CLI task execution for analysis and asset generation.
+5. Add an image-generation smoke test before the 20-asset batch path.
+6. Run one bathroom-scene demo end to end with bounded parallel Codex workers.
