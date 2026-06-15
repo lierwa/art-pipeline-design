@@ -1,0 +1,21 @@
+{
+  "name": "art-pipeline-v2-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal demo for a V2 layered art production pipeline.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test",
+    "ingest": "node src/cli/ingest.js",
+    "plan-assets": "node src/cli/plan-assets.js",
+    "create-asset-jobs": "node src/cli/create-asset-jobs.js",
+    "validate-assets": "node src/cli/validate-assets.js",
+    "export": "node src/cli/export.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0"
+  }
+}
