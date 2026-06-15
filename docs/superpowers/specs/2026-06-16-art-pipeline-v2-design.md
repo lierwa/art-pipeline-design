@@ -4,11 +4,11 @@
 
 Approved direction from discussion: replace the current placeholder demo with a real art-production pipeline demo.
 
-The existing project is not considered V2 because it only reads a hand-written manifest and exports placeholder SVGs. V2 must prove that a source scene image can move through analysis, element planning, batch single-asset production, animation candidate handling, and export.
+The existing project is not considered V2 because it only reads a hand-written manifest and exports placeholder SVGs. V2 must first prove that a source scene image can move through analysis, element planning, parallel single-asset production, Codex review, repair, and export.
 
 ## Product Goal
 
-Given one cute isometric room scene image, the project creates a production run that can be executed through the local Codex CLI using the user's existing Codex subscription/login state.
+Given one cute isometric room scene image, the project creates a production run that can be executed by the main Codex agent using subagents for parallel asset production.
 
 The demo must answer one question: can this pipeline turn a full scene image into a usable layered game asset pack?
 
@@ -18,25 +18,26 @@ The demo must answer one question: can this pipeline turn a full scene image int
 2. The project creates a run directory and records the original image.
 3. Codex analyzes the image and writes a structured scene graph.
 4. The pipeline converts the scene graph into an asset manifest.
-5. Codex batch-generates clean single-object PNG assets according to the manifest.
-6. Animation-suitable assets are tagged and routed into an animation stage.
+5. The main Codex agent dispatches subagents to batch-generate clean single-object PNG assets according to the manifest.
+6. Codex reviews generated assets and creates repair jobs for failed or low-quality assets.
 7. The pipeline validates, previews, and exports the asset pack.
 
 ## Runtime Model
 
-The required validation target is a Codex CLI worker-pool pipeline.
+The required validation target is a main-Codex-agent orchestration pipeline.
 
 The user only has a Codex subscription and must not be asked to provide an OpenAI API key. The project therefore must not depend on `OPENAI_API_KEY`, `CODEX_API_KEY`, OpenAI Images API, or any other API-key-backed image backend.
 
-The local project will not pretend it can directly control the Codex desktop app as a hidden API. Instead, it will invoke `codex exec` workers through the local CLI login state:
+The local project will not pretend it can directly control the Codex desktop app as a hidden API. Instead, the project writes explicit task contracts that the main Codex agent runs in this thread:
 
 - the project creates stage task files;
-- the project launches bounded parallel `codex exec` workers;
-- Codex reads the task files and performs analysis or image-generation work;
-- Codex writes results back to the run directory;
+- the main Codex agent reads the batch task file;
+- the main Codex agent spawns subagents for independent asset jobs;
+- subagents write results back to the run directory;
+- the main Codex agent reviews results and creates repair jobs when needed;
 - the project validates outputs and advances the run state.
 
-The project must verify early whether the available Codex CLI environment can actually create PNG image assets. If it cannot, the demo must fail with a clear capability report instead of silently falling back to placeholder SVGs or API keys.
+The project must verify early whether Codex in this environment can actually create PNG image assets. If it cannot, the demo must fail with a clear capability report instead of silently falling back to placeholder SVGs or API keys.
 
 ## Non-Goals For The First Real Demo
 
@@ -46,6 +47,7 @@ The project must verify early whether the available Codex CLI environment can ac
 - No fake SVG placeholders as final objects.
 - No API key requirement.
 - No serial one-by-one asset generation for the batch asset stage.
+- No animation pipeline in the first validation pass.
 - No tiny-detail over-splitting, such as treating every small bottle as a separate gameplay object unless the manifest says it matters.
 - No physically implausible generated structure accepted silently.
 
@@ -78,7 +80,6 @@ The scene graph must include:
 - rough bbox or polygon region;
 - occlusion and layer notes;
 - structural plausibility notes;
-- animation suitability notes.
 
 For the bathroom reference, the analysis should be able to flag important structure rules:
 
@@ -96,7 +97,7 @@ Each asset entry includes:
 
 - stable id;
 - display name;
-- type: `background`, `object`, `effect`, or `animation_candidate`;
+- type: `background`, `object`, or `effect`;
 - source region;
 - layer order;
 - grouping reason;
@@ -110,7 +111,7 @@ The manifest is the source of truth for batch production.
 
 ### 4. Asset Generation
 
-The pipeline splits `asset_manifest.json` into one job file per asset and starts a bounded pool of parallel `codex exec` workers.
+The pipeline splits `asset_manifest.json` into one job file per asset and writes a subagent batch task for the main Codex agent.
 
 Output:
 
@@ -123,11 +124,11 @@ The required output is not a crop with messy background. Each object must be reg
 
 The batch stage must support:
 
-- configurable `maxParallel`, initially 4;
+- configurable subagent batch size, initially 4;
 - one job result file per asset;
-- retry for failed jobs;
-- per-worker stdout/stderr logs;
-- no API-key environment variables passed to workers.
+- repair jobs for failed or low-quality assets;
+- per-subagent notes and result JSON;
+- no API-key requirement.
 
 ### 5. Asset Validation
 
@@ -146,24 +147,21 @@ Validation includes:
 
 Visual correctness still needs human review, but the pipeline must catch obvious broken outputs.
 
-### 6. Animation Candidate Stage
+### 6. Codex Review And Repair Stage
 
-Codex analyzes generated single-object assets and the scene graph to produce `animation_manifest.json`.
+Codex reviews generated single-object assets against the source scene, asset manifest, and style guide.
 
-Candidate examples:
+The review stage must check:
 
-- water surface loop;
-- shower water stream;
-- cat blink/breath/tail idle;
-- curtain sway;
-- steam/sparkle effects.
+- asset matches the requested object;
+- transparent background is clean;
+- style matches the source scene;
+- structural constraints are respected;
+- object is not a messy crop;
+- object is not clipped;
+- grouping granularity follows the manifest.
 
-For the first real demo, animation output can be either:
-
-- an animation spec only, if image generation frames are not enabled;
-- or actual frame PNGs in `assets/animations/<asset_id>/frames`.
-
-The manifest must still be present either way.
+Codex writes `review_report.json`. Failed assets become repair jobs under `jobs/repairs`.
 
 ### 7. Export
 
@@ -171,13 +169,12 @@ The export stage produces:
 
 - `export/level.json`;
 - `export/assets/**`;
-- `export/animation_manifest.json`;
 - `export/contact_sheet.png`;
 - `export/composite_preview.png`;
 - `export/report.md`;
 - optional `.zip`.
 
-`level.json` should be usable by a later game prototype. It must contain layer order, asset paths, anchor points, transform defaults, and animation references.
+`level.json` should be usable by a later game prototype. It must contain layer order, asset paths, anchor points, and transform defaults.
 
 ## Proposed First Demo Scope
 
@@ -193,9 +190,9 @@ Use one bathroom scene image and prove the full loop with a small but meaningful
 - cat;
 - bath mat;
 - bucket or basket;
-- water surface as animation candidate.
+- water surface as a normal effect asset, without animation behavior in this first pass.
 
-This is enough to test scene analysis, grouping, structural rules, batch generation, validation, and animation routing without trying to solve every object in the scene on day one.
+This is enough to test scene analysis, grouping, structural rules, subagent batch generation, Codex review, repair, validation, and export without trying to solve every object or animation in the scene on day one.
 
 ## Folder Structure
 
@@ -214,12 +211,12 @@ D:\work\art-pipeline-v2-demo
         analysis_report.md
       manifests\
         asset_manifest.json
-        animation_manifest.json
+        review_report.json
       assets\
         background\
         objects\
         effects\
-        animations\
+        repairs\
       preview\
       export\
       run.json
@@ -240,12 +237,12 @@ npm run ingest -- --source <image>
 npm run analyze -- --run <run_id>
 npm run plan-assets -- --run <run_id>
 npm run generate-assets -- --run <run_id>
-npm run validate -- --run <run_id>
-npm run animate -- --run <run_id>
+npm run review -- --run <run_id>
+npm run repair -- --run <run_id>
 npm run export -- --run <run_id>
 ```
 
-`analyze`, `generate-assets`, and `animate` create Codex task files and run them through local `codex exec`. The implementation must scrub API-key environment variables before spawning workers.
+`analyze`, `generate-assets`, `review`, and `repair` create task files for the main Codex agent. Asset generation and repair are executed through subagents spawned by the main Codex agent.
 
 ## Data Contracts
 
@@ -265,8 +262,7 @@ npm run export -- --run <run_id>
       "region": { "type": "bbox", "x": 0, "y": 0, "w": 0, "h": 0 },
       "grouping": "single functional fixture",
       "layerHint": "wall_fixture",
-      "structureNotes": ["pipe must be continuous", "no recessed shelf"],
-      "animationCandidate": false
+      "structureNotes": ["pipe must be continuous", "no recessed shelf"]
     }
   ],
   "issues": []
@@ -293,17 +289,16 @@ npm run export -- --run <run_id>
 }
 ```
 
-### animation_manifest.json
+### review_report.json
 
 ```json
 {
-  "animations": [
+  "assets": [
     {
-      "assetId": "water_surface",
-      "kind": "loop",
-      "status": "spec_only",
-      "suggestedMotion": "subtle ripple loop",
-      "frames": []
+      "assetId": "shower_column_with_tray",
+      "status": "repair_required",
+      "issues": ["pipe is disconnected"],
+      "repairTask": "jobs/repairs/shower_column_with_tray.json"
     }
   ]
 }
@@ -332,6 +327,8 @@ Tests should cover:
 - schema validation for `scene_graph.json`;
 - conversion from scene graph to asset manifest;
 - validation failure for missing or non-alpha assets;
+- subagent batch task generation;
+- review report parsing and repair job generation;
 - export generation from a mocked valid run;
 - no placeholder SVG assets accepted as final object output.
 
@@ -344,9 +341,9 @@ The demo is acceptable only if:
 - a source scene image creates a run;
 - `scene_graph.json` is produced from visual analysis, not hand-written as the only source;
 - `asset_manifest.json` contains grouped asset decisions and structural constraints;
-- at least five transparent PNG object assets are generated through local Codex CLI workers;
-- batch asset generation uses bounded parallel workers rather than a serial loop;
-- at least one animation candidate is detected and written to `animation_manifest.json`;
+- at least five transparent PNG object assets are generated through subagents;
+- batch asset generation uses parallel subagents rather than a serial loop;
+- `review_report.json` is produced and failed assets can be routed to repair jobs;
 - preview/contact sheet/export files are created;
 - the final report clearly marks which outputs passed automatic checks and which require human art review.
 
@@ -355,6 +352,6 @@ The demo is acceptable only if:
 1. Replace the current placeholder pipeline with run-based contracts.
 2. Add schemas and tests before adding stage logic.
 3. Implement ingest, manifest validation, preview, and export first.
-4. Add Codex CLI task execution for analysis and asset generation.
-5. Add an image-generation smoke test before the 20-asset batch path.
-6. Run one bathroom-scene demo end to end with bounded parallel Codex workers.
+4. Add Codex task files for analysis, subagent asset generation, review, and repair.
+5. Add an image-generation smoke test before the batch path.
+6. Run one bathroom-scene demo end to end with main-agent orchestration and parallel subagents.
