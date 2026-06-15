@@ -2,7 +2,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { writeJson } = require("./json");
 
+function validateRunId(runId) {
+  if (typeof runId !== "string" || !/^[A-Za-z0-9._-]+$/.test(runId) || runId === "." || runId === "..") {
+    throw new Error("Invalid runId: expected a non-empty single path segment using letters, numbers, dot, underscore, or hyphen");
+  }
+}
+
 function runDir(projectRoot, runId) {
+  validateRunId(runId);
   return path.join(projectRoot, "runs", runId);
 }
 
