@@ -14,10 +14,22 @@ function buildAssetTask({ runId, asset }) {
   return `Generate one clean transparent PNG for asset ${asset.id}.
 
 Output: runs/${runId}/${asset.output}
+Write PNG exactly to: runs/${runId}/${asset.output}
 Prompt: ${asset.prompt}
 Negative prompt: ${asset.negativePrompt}
 
-Also write runs/${runId}/assets/results/${asset.id}.json with status and notes.
+Result JSON: runs/${runId}/assets/results/${asset.id}.json
+Write result JSON exactly to: runs/${runId}/assets/results/${asset.id}.json
+
+Write the result JSON as machine-readable status and notes:
+\`\`\`json
+{
+  "assetId": "${asset.id}",
+  "status": "complete",
+  "output": "${asset.output}",
+  "notes": []
+}
+\`\`\`
 `;
 }
 
