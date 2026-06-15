@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { readJson } = require("../core/json");
-const { runDir } = require("../core/run-store");
+const { recordValidation, runDir } = require("../core/run-store");
 const { resolveExportDir, resolveManifestAssetPaths } = require("../core/asset-paths");
 const { validatePngAsset } = require("../validation/png");
 
@@ -20,4 +20,5 @@ for (const asset of manifest.assets) {
   const paths = resolveManifestAssetPaths({ runDirectory: base, exportDir, output: asset.output });
   validatePngAsset(paths.source);
 }
+recordValidation({ projectRoot, runId, kind: "png", count: manifest.assets.length, lastStatus: "pass" });
 console.log(`PNG assets valid: ${manifest.assets.length}`);

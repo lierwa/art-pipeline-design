@@ -37,7 +37,71 @@ test("planAssets preserves grouping and structure constraints", () => {
   assert.equal(manifest.schema, "art-pipeline-v2-asset-manifest@main-flow");
   assert.equal(manifest.assets.length, 2);
   assert.equal(manifest.assets[0].output, "assets/objects/shower_column_with_tray.png");
+  assert.equal(manifest.assets[0].type, "object");
+  assert.deepEqual(manifest.assets[0].sourceObjectIds, ["shower_column_with_tray"]);
+  assert.deepEqual(manifest.assets[0].expectedSize, { width: 220, height: 380 });
+  assert.equal(manifest.assets[0].reviewPriority, "high");
   assert.match(manifest.assets[0].negativePrompt, /no recessed shelf/);
+});
+
+test("planAssets routes background, effect, and object assets with required contract fields", () => {
+  const manifest = planAssets({
+    sceneId: "bathroom",
+    objects: [
+      {
+        id: "room_base",
+        name: "Room base background",
+        type: "background",
+        grouping: "room shell",
+        region: { type: "bbox", x: 0, y: 0, w: 1024, h: 768 }
+      },
+      {
+        id: "water_surface",
+        name: "Water surface",
+        layerHint: "static_effect",
+        grouping: "effect layer",
+        region: { type: "bbox", x: 100, y: 620, w: 520, h: 80 }
+      },
+      object()
+    ]
+  });
+
+  assert.deepEqual(
+    manifest.assets.map((asset) => ({
+      id: asset.id,
+      type: asset.type,
+      output: asset.output,
+      sourceObjectIds: asset.sourceObjectIds,
+      expectedSize: asset.expectedSize,
+      reviewPriority: asset.reviewPriority
+    })),
+    [
+      {
+        id: "room_base",
+        type: "background",
+        output: "assets/background/room_base.png",
+        sourceObjectIds: ["room_base"],
+        expectedSize: { width: 1024, height: 768 },
+        reviewPriority: "high"
+      },
+      {
+        id: "water_surface",
+        type: "effect",
+        output: "assets/effects/water_surface.png",
+        sourceObjectIds: ["water_surface"],
+        expectedSize: { width: 520, height: 80 },
+        reviewPriority: "normal"
+      },
+      {
+        id: "sink_vanity",
+        type: "object",
+        output: "assets/objects/sink_vanity.png",
+        sourceObjectIds: ["sink_vanity"],
+        expectedSize: { width: 320, height: 260 },
+        reviewPriority: "high"
+      }
+    ]
+  );
 });
 
 test("planAssets rejects duplicate sanitized asset ids", () => {

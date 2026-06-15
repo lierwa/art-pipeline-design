@@ -1,7 +1,7 @@
 const path = require("node:path");
 const { readJson, writeJson } = require("../core/json");
 const { planAssets } = require("../core/asset-planner");
-const { runDir } = require("../core/run-store");
+const { runDir, updateStage } = require("../core/run-store");
 
 function arg(name) {
   const index = process.argv.indexOf(name);
@@ -15,4 +15,5 @@ if (!runId) throw new Error("Usage: npm run plan-assets -- --run <run_id>");
 const base = runDir(projectRoot, runId);
 const manifest = planAssets(readJson(path.join(base, "analysis", "scene_graph.json")));
 writeJson(path.join(base, "manifests", "asset_manifest.json"), manifest);
+updateStage({ projectRoot, runId, stage: "planAssets", status: "complete" });
 console.log(`Assets planned: ${manifest.assets.length}`);

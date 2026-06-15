@@ -1,15 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { readJson, writeJson } = require("./json");
-const { runDir } = require("./run-store");
-
-const SAFE_ASSET_ID = /^[a-z0-9_]+$/;
-
-function assertSafeAssetId(assetId) {
-  if (typeof assetId !== "string" || !SAFE_ASSET_ID.test(assetId)) {
-    throw new Error(`Invalid repair assetId "${assetId}": expected a safe planner asset id`);
-  }
-}
+const { updateRun, runDir } = require("./run-store");
+const { validateAssetId } = require("./asset-paths");
 
 function readAssetContracts(base) {
   const jobsPath = path.join(base, "jobs", "asset_jobs.json");
@@ -65,7 +58,7 @@ function createRepairJobs({ projectRoot, runId }) {
   const repairs = report.assets
     .filter((item) => item.status === "repair_required")
     .map((item) => {
-      assertSafeAssetId(item.assetId);
+      validateAssetId(item.assetId, "repair assetId");
       const contract = assetContracts.get(item.assetId);
       if (!contract) {
         throw new Error(`Unknown repair assetId "${item.assetId}"`);
@@ -88,6 +81,14 @@ function createRepairJobs({ projectRoot, runId }) {
     fs.writeFileSync(path.join(base, repair.task), buildRepairTask({ repair, runId }), "utf8");
   }
 
+  updateRun({
+    projectRoot,
+    runId,
+    mutate(run) {
+      run.stages = { ...(run.stages || {}), repair: "ready" };
+      run.repairJobs = { count: repairs.length };
+    }
+  });
   return repairs;
 }
 

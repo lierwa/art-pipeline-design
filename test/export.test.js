@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { PNG } = require("pngjs");
 const { writeJson } = require("../src/core/json");
 const { validatePngAsset } = require("../src/validation/png");
 const {
@@ -14,6 +15,17 @@ const {
 } = require("./helpers/sample-png");
 const { exportRun } = require("../src/export/level");
 
+function readPngStats(filePath) {
+  const png = PNG.sync.read(fs.readFileSync(filePath));
+  let visiblePixels = 0;
+  let coloredPixels = 0;
+  for (let i = 0; i < png.data.length; i += 4) {
+    if (png.data[i + 3] > 0) visiblePixels++;
+    if (png.data[i] || png.data[i + 1] || png.data[i + 2]) coloredPixels++;
+  }
+  return { width: png.width, height: png.height, visiblePixels, coloredPixels };
+}
+
 function createRun(root, { runId = "demo", output = "assets/objects/cat.png", writeAsset = writeSamplePng } = {}) {
   const base = path.join(root, "runs", runId);
   fs.mkdirSync(path.join(base, "manifests"), { recursive: true });
@@ -23,6 +35,12 @@ function createRun(root, { runId = "demo", output = "assets/objects/cat.png", wr
   writeJson(path.join(base, "manifests", "asset_manifest.json"), {
     sceneId: "bathroom",
     assets: [{ id: "cat", output, layer: 10 }]
+  });
+  writeJson(path.join(base, "run.json"), {
+    runId,
+    stages: {
+      export: "pending"
+    }
   });
   return { base, runId };
 }
@@ -35,10 +53,24 @@ test("exportRun writes level and copies generated PNG assets", () => {
 
   assert.ok(fs.existsSync(path.join(result.exportDir, "level.json")));
   assert.ok(fs.existsSync(path.join(result.exportDir, "assets", "objects", "cat.png")));
+  assert.ok(fs.existsSync(path.join(result.exportDir, "contact_sheet.png")));
+  assert.ok(fs.existsSync(path.join(result.exportDir, "composite_preview.png")));
   assert.ok(fs.existsSync(path.join(result.exportDir, "report.md")));
+  for (const previewName of ["contact_sheet.png", "composite_preview.png"]) {
+    const stats = readPngStats(path.join(result.exportDir, previewName));
+    assert.ok(stats.width > 0, `${previewName} width`);
+    assert.ok(stats.height > 0, `${previewName} height`);
+    assert.ok(stats.visiblePixels > 0, `${previewName} visible pixels`);
+    assert.ok(stats.coloredPixels > 0, `${previewName} colored pixels`);
+  }
   const report = fs.readFileSync(path.join(result.exportDir, "report.md"), "utf8");
   assert.match(report, /Scene: bathroom/);
+  assert.match(report, /Automatic validation: complete/);
+  assert.match(report, /Human art review: pending/);
   assert.match(report, /\| cat \| assets\/objects\/cat\.png \| 32x32 \| 256 \| 768 \|/);
+
+  const run = JSON.parse(fs.readFileSync(path.join(path.dirname(result.exportDir), "run.json"), "utf8"));
+  assert.equal(run.stages.export, "complete");
 });
 
 test("exportRun recreates export directory before writing a fresh pack", () => {

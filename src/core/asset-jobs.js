@@ -1,13 +1,16 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { readJson, writeJson } = require("./json");
-const { runDir } = require("./run-store");
+const { updateRun, runDir } = require("./run-store");
+const { validateAssetId, validateAssetOutput } = require("./asset-paths");
 const { buildAssetTask } = require("./tasks");
 
 function createAssetJobs({ projectRoot, runId }) {
   const base = runDir(projectRoot, runId);
   const manifest = readJson(path.join(base, "manifests", "asset_manifest.json"));
   const assetJobs = manifest.assets.map((asset) => {
+    validateAssetId(asset.id);
+    validateAssetOutput(asset.output);
     const job = {
       id: asset.id,
       status: "pending",
@@ -40,6 +43,14 @@ function createAssetJobs({ projectRoot, runId }) {
   ].join("\n"), "utf8");
 
   writeJson(path.join(base, "jobs", "asset_jobs.json"), { jobs });
+  updateRun({
+    projectRoot,
+    runId,
+    mutate(run) {
+      run.stages = { ...(run.stages || {}), generateAssets: "ready" };
+      run.assetJobs = { count: jobs.length };
+    }
+  });
   return jobs;
 }
 

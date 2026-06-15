@@ -16,6 +16,10 @@ test("createAssetJobs writes one job and one subagent task per asset", () => {
       { id: "sink", output: "assets/objects/sink.png", prompt: "sink", negativePrompt: "none" }
     ]
   });
+  writeJson(path.join(base, "run.json"), {
+    runId: "demo",
+    stages: { generateAssets: "pending" }
+  });
 
   const jobs = createAssetJobs({ projectRoot: root, runId: "demo" });
 
@@ -47,4 +51,56 @@ test("createAssetJobs writes one job and one subagent task per asset", () => {
   assert.match(catTask, /"status": "complete"/);
   assert.match(catTask, /"output": "assets\/objects\/cat\.png"/);
   assert.match(catTask, /"notes": \[\]/);
+
+  const run = readJson(path.join(base, "run.json"));
+  assert.equal(run.stages.generateAssets, "ready");
+  assert.deepEqual(run.assetJobs, { count: 2 });
+});
+
+test("createAssetJobs rejects unsafe asset ids before writing job or task files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "asset-jobs-unsafe-id-"));
+  const base = path.join(root, "runs", "demo");
+  fs.mkdirSync(path.join(base, "manifests"), { recursive: true });
+  writeJson(path.join(base, "manifests", "asset_manifest.json"), {
+    assets: [
+      { id: "../escape", output: "assets/objects/escape.png", prompt: "escape", negativePrompt: "none" }
+    ]
+  });
+
+  let error = null;
+  try {
+    createAssetJobs({ projectRoot: root, runId: "demo" });
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.equal(fs.existsSync(path.join(base, "jobs", "escape.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "escape.md")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "subagent_batch.md")), false);
+  assert.match(error && error.message, /Invalid asset id "\.\.\/escape"/);
+});
+
+test("createAssetJobs rejects unsafe outputs before writing any job or task files", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "asset-jobs-unsafe-output-"));
+  const base = path.join(root, "runs", "demo");
+  fs.mkdirSync(path.join(base, "manifests"), { recursive: true });
+  writeJson(path.join(base, "manifests", "asset_manifest.json"), {
+    assets: [
+      { id: "cat", output: "assets/objects/cat.png", prompt: "cat", negativePrompt: "none" },
+      { id: "sink", output: "assets/objects/../sink.png", prompt: "sink", negativePrompt: "none" }
+    ]
+  });
+
+  let error = null;
+  try {
+    createAssetJobs({ projectRoot: root, runId: "demo" });
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.equal(fs.existsSync(path.join(base, "jobs", "assets", "cat.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "assets", "cat.md")), false);
+  assert.equal(fs.existsSync(path.join(base, "jobs", "asset_jobs.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "subagent_batch.md")), false);
+  assert.match(error && error.message, /invalid asset output/);
 });

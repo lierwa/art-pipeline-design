@@ -1,8 +1,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { readJson, writeJson } = require("../core/json");
-const { runDir } = require("../core/run-store");
+const { runDir, updateRun } = require("../core/run-store");
 const { resolveExportDir, resolveManifestAssetPaths } = require("../core/asset-paths");
+const { writePreviewImages } = require("../preview/raster");
 const { validatePngAsset } = require("../validation/png");
 
 function copyFile(source, target) {
@@ -26,6 +27,10 @@ function buildReport(sceneId, assets) {
     `Scene: ${sceneId}`,
     "",
     `Assets: ${assets.length}`,
+    "",
+    "Automatic validation: complete",
+    "",
+    "Human art review: pending",
     "",
     "| Asset ID | Output | Dimensions | Visible Pixels | Transparent Pixels |",
     "| --- | --- | ---: | ---: | ---: |"
@@ -51,6 +56,7 @@ function exportRun({ projectRoot, runId }) {
   for (const asset of assets) {
     copyFile(asset.source, asset.exportTarget);
   }
+  writePreviewImages({ assets, exportDir });
 
   const level = {
     schema: "art-pipeline-v2-level@main-flow",
@@ -65,6 +71,17 @@ function exportRun({ projectRoot, runId }) {
 
   writeJson(path.join(exportDir, "level.json"), level);
   fs.writeFileSync(path.join(exportDir, "report.md"), buildReport(manifest.sceneId, assets), "utf8");
+  updateRun({
+    projectRoot,
+    runId,
+    mutate(run) {
+      run.stages = { ...(run.stages || {}), export: "complete" };
+      run.export = {
+        assetCount: assets.length,
+        previews: ["export/contact_sheet.png", "export/composite_preview.png"]
+      };
+    }
+  });
   return { exportDir, level };
 }
 

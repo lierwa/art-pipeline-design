@@ -36,6 +36,10 @@ test("createRepairJobs creates repair task only for failed review items", () => 
       { assetId: "shower", status: "repair_required", issues: ["pipe disconnected"] }
     ]
   });
+  writeJson(path.join(base, "run.json"), {
+    runId: "demo",
+    stages: { repair: "pending" }
+  });
 
   const repairs = createRepairJobs({ projectRoot: root, runId: "demo" });
 
@@ -64,6 +68,10 @@ test("createRepairJobs creates repair task only for failed review items", () => 
   assert.match(repairTask, /Result: runs\/demo\/assets\/results\/shower\.json/);
   assert.match(repairTask, /Original job: runs\/demo\/jobs\/assets\/shower\.json/);
   assert.match(repairTask, /Original task: runs\/demo\/tasks\/assets\/shower\.md/);
+
+  const run = readJson(path.join(base, "run.json"));
+  assert.equal(run.stages.repair, "ready");
+  assert.deepEqual(run.repairJobs, { count: 1 });
 });
 
 test("createRepairJobs falls back to asset manifest when asset jobs are absent", () => {
@@ -84,6 +92,10 @@ test("createRepairJobs falls back to asset manifest when asset jobs are absent",
     assets: [
       { assetId: "sink", status: "repair_required", issues: ["missing faucet"] }
     ]
+  });
+  writeJson(path.join(base, "run.json"), {
+    runId: "demo",
+    stages: { repair: "pending" }
   });
 
   const repairs = createRepairJobs({ projectRoot: root, runId: "demo" });

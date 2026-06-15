@@ -6,8 +6,17 @@ const ALLOWED_ASSET_OUTPUT_PREFIXES = Object.freeze([
   "assets/effects/"
 ]);
 
+const SAFE_ASSET_ID = /^[a-z0-9_]+$/;
+
 function invalidAssetOutput(output, reason) {
   return new Error(`invalid asset output: ${reason}: ${JSON.stringify(output)}`);
+}
+
+function validateAssetId(assetId, label = "asset id") {
+  if (typeof assetId !== "string" || assetId.length === 0 || assetId === "." || assetId === ".." || !SAFE_ASSET_ID.test(assetId)) {
+    throw new Error(`Invalid ${label} "${assetId}": expected a safe planner asset id`);
+  }
+  return assetId;
 }
 
 function validateAssetOutput(output) {
@@ -73,5 +82,6 @@ module.exports = {
   ALLOWED_ASSET_OUTPUT_PREFIXES,
   resolveExportDir,
   resolveManifestAssetPaths,
+  validateAssetId,
   validateAssetOutput
 };
