@@ -205,3 +205,66 @@ test("createRepairJobs rejects unknown repair asset ids", () => {
   assert.equal(fs.existsSync(path.join(base, "tasks", "repairs", "ghost.md")), false);
   assert.match(error && error.message, /Unknown repair assetId "ghost"/);
 });
+
+test("createRepairJobs rejects unsafe asset job outputs before writing repairs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "repair-jobs-unsafe-output-"));
+  const base = path.join(root, "runs", "demo");
+  fs.mkdirSync(path.join(base, "review"), { recursive: true });
+  writeJson(path.join(base, "jobs", "asset_jobs.json"), {
+    jobs: [
+      {
+        id: "shower",
+        status: "pending",
+        task: "tasks/assets/shower.md",
+        output: "../outside.png",
+        result: "assets/results/shower.json"
+      }
+    ]
+  });
+  writeJson(path.join(base, "review", "review_report.json"), {
+    assets: [
+      { assetId: "shower", status: "repair_required", issues: ["unsafe output"] }
+    ]
+  });
+  writeJson(path.join(base, "run.json"), {
+    schema: "art-pipeline-v2-run@main-flow",
+    stages: { repair: "pending" }
+  });
+
+  assert.throws(
+    () => createRepairJobs({ projectRoot: root, runId: "demo" }),
+    /invalid asset output/
+  );
+  assert.equal(fs.existsSync(path.join(base, "jobs", "repairs", "shower.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "repairs", "shower.md")), false);
+});
+
+test("createRepairJobs rejects unsafe manifest fallback outputs before writing repairs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "repair-jobs-unsafe-manifest-output-"));
+  const base = path.join(root, "runs", "demo");
+  fs.mkdirSync(path.join(base, "review"), { recursive: true });
+  writeJson(path.join(base, "manifests", "asset_manifest.json"), {
+    assets: [
+      {
+        id: "sink",
+        output: "assets/objects/../sink.png"
+      }
+    ]
+  });
+  writeJson(path.join(base, "review", "review_report.json"), {
+    assets: [
+      { assetId: "sink", status: "repair_required", issues: ["unsafe output"] }
+    ]
+  });
+  writeJson(path.join(base, "run.json"), {
+    schema: "art-pipeline-v2-run@main-flow",
+    stages: { repair: "pending" }
+  });
+
+  assert.throws(
+    () => createRepairJobs({ projectRoot: root, runId: "demo" }),
+    /invalid asset output/
+  );
+  assert.equal(fs.existsSync(path.join(base, "jobs", "repairs", "sink.json")), false);
+  assert.equal(fs.existsSync(path.join(base, "tasks", "repairs", "sink.md")), false);
+});

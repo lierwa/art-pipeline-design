@@ -2,16 +2,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { readJson, writeJson } = require("./json");
 const { updateRun, runDir } = require("./run-store");
-const { validateAssetId } = require("./asset-paths");
+const { validateAssetId, validateAssetOutput } = require("./asset-paths");
 
 function readAssetContracts(base) {
   const jobsPath = path.join(base, "jobs", "asset_jobs.json");
   if (fs.existsSync(jobsPath)) {
     const assetJobs = readJson(jobsPath);
     return new Map(assetJobs.jobs.map((job) => [
-      job.id,
+      validateAssetId(job.id),
       {
-        output: job.output,
+        output: validateAssetOutput(job.output),
         result: job.result,
         originalJob: `jobs/assets/${job.id}.json`,
         originalTask: job.task || null
@@ -21,9 +21,9 @@ function readAssetContracts(base) {
 
   const manifest = readJson(path.join(base, "manifests", "asset_manifest.json"));
   return new Map(manifest.assets.map((asset) => [
-    asset.id,
+    validateAssetId(asset.id),
     {
-      output: asset.output,
+      output: validateAssetOutput(asset.output),
       result: `assets/results/${asset.id}.json`,
       originalJob: null,
       originalTask: null
