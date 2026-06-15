@@ -9,6 +9,7 @@
     "ingest": "node src/cli/ingest.js",
     "plan-assets": "node src/cli/plan-assets.js",
     "create-asset-jobs": "node src/cli/create-asset-jobs.js",
+    "create-repair-jobs": "node src/cli/create-repair-jobs.js",
     "validate-assets": "node src/cli/validate-assets.js",
     "export": "node src/cli/export.js"
   },
