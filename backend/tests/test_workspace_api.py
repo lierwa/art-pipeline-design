@@ -939,6 +939,86 @@ def test_replace_mask_from_polygon_shape_writes_canvas_aligned_mask(
         assert mask.getpixel((4, 3)) == 255
 
 
+def test_extract_reuses_replaced_polygon_mask_for_bbox_alpha(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(12, 10), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 12,
+                "height": 10,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 4, "h": 4},
+                    "canvas": {"x": 1, "y": 1, "w": 8, "h": 7},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    replace_response = client.post(
+        "/api/workspace/elements/element_001/mask/replace",
+        json={
+            "shape": {
+                "type": "polygon",
+                "coordinateSpace": "source",
+                "points": [
+                    {"x": 3, "y": 2},
+                    {"x": 7, "y": 2},
+                    {"x": 5, "y": 6},
+                ],
+            }
+        },
+    )
+    assert replace_response.status_code == 200
+
+    response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "bbox_alpha"},
+    )
+
+    assert response.status_code == 200
+    element_dir = tmp_path / "workspace" / "elements" / "element_001"
+    outside_polygon_inside_bbox = (2, 4)
+    inside_polygon = (4, 3)
+
+    with Image.open(element_dir / "mask.png") as mask:
+        assert mask.mode == "L"
+        assert mask.size == (8, 7)
+        assert mask.getpixel(outside_polygon_inside_bbox) == 0
+        assert mask.getpixel(inside_polygon) == 255
+
+    with Image.open(tmp_path / "workspace" / "source" / "original.png") as source:
+        with Image.open(element_dir / "asset_incomplete.png") as asset:
+            assert asset.size == (8, 7)
+            assert asset.getpixel(outside_polygon_inside_bbox)[3] == 0
+            assert asset.getpixel(inside_polygon) == source.getpixel((5, 4))
+
+
 def test_clear_mask_removes_extraction_outputs_and_marks_element_ready(
     client: TestClient,
     tmp_path: Path,
