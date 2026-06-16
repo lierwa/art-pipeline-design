@@ -59,10 +59,30 @@ export type OverlayState = {
   showRejected: boolean;
 };
 
-export type AcceptedElementDraft = {
+export type ElementEditorDraft = {
   name: string;
   mode: ElementMode;
   layer: string;
+  bbox: {
+    x: string;
+    y: string;
+    w: string;
+    h: string;
+  };
+  canvas: {
+    x: string;
+    y: string;
+    w: string;
+    h: string;
+  };
+  notes: string;
+  visible: boolean;
+};
+
+export type CanvasTool = "select" | "draw" | "split";
+
+export type DraftRegion = {
+  bbox: Box;
 };
 
 export const EMPTY_STATE: WorkspaceState = {
@@ -108,4 +128,8 @@ export function updateElement(
   updater: (element: WorkspaceElement) => WorkspaceElement,
 ): WorkspaceElement[] {
   return elements.map((element) => (element.id === elementId ? updater(element) : element));
+}
+
+export function buildSourceUrl(cacheKey: number): string {
+  return `/api/workspace/source?cache=${cacheKey}`;
 }

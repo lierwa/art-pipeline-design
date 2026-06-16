@@ -9,6 +9,14 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
+from art_pipeline.annotations import (
+    ManualElementCreateRequest,
+    SplitElementRequest,
+    SplitRequestContractCreate,
+    create_manual_element,
+    split_element,
+    write_split_request_contract,
+)
 from art_pipeline.elements import ElementRecord, SourceMetadata, WorkspaceState, next_element_id
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
 from art_pipeline.thumbnails import write_thumbnail
@@ -73,6 +81,76 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
     def put_state(state: WorkspaceState) -> WorkspaceState:
         _write_state(app.state.workspace_root, state)
         return state
+
+    @app.post("/api/workspace/elements")
+    def post_element(request: ManualElementCreateRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+
+        try:
+            created = create_manual_element(root, state, source_image, request)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[*state.elements, created],
+        )
+        _write_state(root, next_state)
+        return {
+            "element": created.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/{element_id}/split")
+    def post_split(element_id: str, request: SplitElementRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        parent = _get_element(state, element_id)
+
+        try:
+            children = split_element(root, state, source_image, parent, request)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        updated_elements: list[ElementRecord] = []
+        for element in state.elements:
+            if element.id == element_id:
+                updated_elements.append(
+                    element.model_copy(update={"status": "split_parent"})
+                )
+                continue
+            updated_elements.append(element)
+
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[*updated_elements, *children],
+        )
+        _write_state(root, next_state)
+        return {
+            "children": [child.model_dump(mode="json") for child in children],
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/split-requests")
+    def post_split_request(request: SplitRequestContractCreate) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        element = _get_element(state, request.elementId)
+
+        contract_path, contract = write_split_request_contract(
+            root,
+            source_image,
+            element,
+            request.description.strip(),
+        )
+        return {
+            "requestId": contract["requestId"],
+            "path": contract_path,
+        }
 
     @app.post("/api/workspace/auto-annotate")
     def auto_annotate() -> WorkspaceState:
@@ -169,6 +247,22 @@ def _source_path(workspace_root: Path) -> Path:
 
 def _state_path(workspace_root: Path) -> Path:
     return workspace_root / "state.json"
+
+
+def _require_source_image(workspace_root: Path) -> Image.Image:
+    source_path = _source_path(workspace_root)
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="No source image uploaded.")
+    image = Image.open(source_path)
+    image.load()
+    return image
+
+
+def _get_element(state: WorkspaceState, element_id: str) -> ElementRecord:
+    for element in state.elements:
+        if element.id == element_id:
+            return element
+    raise HTTPException(status_code=404, detail="Element not found.")
 
 
 app = create_app()

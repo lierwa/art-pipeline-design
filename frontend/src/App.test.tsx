@@ -1,20 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { App } from "./App";
 
-const uploadedState = {
-  source: {
-    filename: "original.png",
-    path: "source/original.png",
-    width: 120,
-    height: 90,
-  },
-  elements: [],
-};
-
-const annotatedState = {
+const loadedState = {
   source: {
     filename: "original.png",
     path: "source/original.png",
@@ -25,10 +15,10 @@ const annotatedState = {
     {
       id: "element_001",
       name: "Region 1",
-      status: "proposal",
+      status: "accepted",
       mode: "visible_only",
       bbox: { x: 12, y: 16, w: 30, h: 32 },
-      canvas: { x: 12, y: 16, w: 30, h: 32 },
+      canvas: { x: 4, y: 8, w: 46, h: 48 },
       layer: 1,
       thumbnail: "elements/element_001/thumb.png",
       mask: null,
@@ -38,319 +28,331 @@ const annotatedState = {
       visible: true,
       confidence: 0.84,
     },
+  ],
+};
+
+const createdManualElement = {
+  id: "element_002",
+  name: "Manual Lamp",
+  status: "accepted",
+  mode: "visible_only",
+  bbox: { x: 20, y: 18, w: 24, h: 20 },
+  canvas: { x: 12, y: 10, w: 40, h: 36 },
+  layer: 2,
+  thumbnail: "elements/element_002/thumb.png",
+  mask: null,
+  parentId: null,
+  source: "manual",
+  notes: "",
+  visible: true,
+  confidence: null,
+};
+
+const splitState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...loadedState.elements[0],
+      status: "split_parent",
+    },
     {
       id: "element_002",
-      name: "Region 2",
-      status: "proposal",
+      name: "Left Shelf",
+      status: "accepted",
       mode: "visible_only",
-      bbox: { x: 64, y: 28, w: 38, h: 42 },
-      canvas: { x: 64, y: 28, w: 38, h: 42 },
-      layer: 2,
+      bbox: { x: 12, y: 16, w: 14, h: 32 },
+      canvas: { x: 4, y: 8, w: 30, h: 48 },
+      layer: 1,
       thumbnail: "elements/element_002/thumb.png",
       mask: null,
-      parentId: null,
-      source: "imported",
+      parentId: "element_001",
+      source: "split",
       notes: "",
       visible: true,
-      confidence: 0.91,
+      confidence: null,
+    },
+    {
+      id: "element_003",
+      name: "Right Shelf",
+      status: "accepted",
+      mode: "visible_only",
+      bbox: { x: 26, y: 16, w: 16, h: 32 },
+      canvas: { x: 18, y: 8, w: 24, h: 48 },
+      layer: 2,
+      thumbnail: "elements/element_003/thumb.png",
+      mask: null,
+      parentId: "element_001",
+      source: "split",
+      notes: "",
+      visible: true,
+      confidence: null,
     },
   ],
 };
 
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function installFetchMock(handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = vi.fn(handler) as typeof fetch;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
+function setCanvasRect(surface: HTMLElement) {
+  vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 600,
+    bottom: 450,
+    width: 600,
+    height: 450,
+    toJSON() {
+      return {};
+    },
+  });
+}
+
+async function drawRectangle(surface: HTMLElement, start: { x: number; y: number }, end: { x: number; y: number }) {
+  setCanvasRect(surface);
+  fireEvent.mouseDown(surface, { clientX: start.x, clientY: start.y, button: 0 });
+  fireEvent.mouseMove(surface, { clientX: end.x, clientY: end.y, button: 0 });
+  fireEvent.mouseUp(surface, { clientX: end.x, clientY: end.y, button: 0 });
+}
 
 describe("App", () => {
-  it("renders the workbench shell", () => {
-    render(<App />);
-
-    expect(screen.getByRole("heading", { name: /elements/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/upload png/i)).toBeInTheDocument();
-    expect(screen.getByTestId("canvas-area")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /inspector/i })).toBeInTheDocument();
-  });
-
-  it("displays an uploaded image preview", async () => {
-    const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const mockFetch = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({
-          source: {
-            filename: "original.png",
-            path: "source/original.png",
-            width: 8,
-            height: 6,
-          },
-          elements: [],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    });
-
-    globalThis.fetch = mockFetch as typeof fetch;
-
-    try {
-      render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
-
-      await user.upload(input, file);
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        "/api/workspace/source",
-        expect.objectContaining({ method: "POST" }),
-      );
-      expect(screen.getByRole("img", { name: /uploaded source/i })).toBeInTheDocument();
-      expect(screen.getByText(/original\.png - 8 x 6/i)).toBeInTheDocument();
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("clears the optimistic preview when upload fails", async () => {
-    const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const createObjectUrl = vi.spyOn(URL, "createObjectURL");
-    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
-
-    globalThis.fetch = vi.fn(async () => {
-      return new Response(
-        JSON.stringify({ detail: "Only PNG uploads are supported." }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }) as typeof fetch;
-
-    try {
-      render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
-
-      await user.upload(input, file);
-
-      expect(createObjectUrl).toHaveBeenCalledWith(file);
-      expect(revokeObjectUrl).toHaveBeenCalledWith("blob:mock-preview");
-      expect(screen.queryByRole("img", { name: /uploaded source/i })).not.toBeInTheDocument();
-      expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
-      expect(screen.getByText(/only png uploads are supported\./i)).toBeInTheDocument();
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("renders proposal cards after auto annotate", async () => {
-    const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/source" && init?.method === "POST") {
-        return new Response(JSON.stringify(uploadedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+  it("renders the workbench shell", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse({ source: null, elements: [] });
       }
-
-      if (input === "/api/workspace/auto-annotate" && init?.method === "POST") {
-        return new Response(JSON.stringify(annotatedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    globalThis.fetch = mockFetch as typeof fetch;
-
     try {
       render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
 
-      await user.upload(input, file);
-      await user.click(screen.getByRole("button", { name: /auto annotate/i }));
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        "/api/workspace/auto-annotate",
-        expect.objectContaining({ method: "POST" }),
-      );
-      expect(screen.getByAltText("Region 1 thumbnail")).toBeInTheDocument();
-      expect(screen.getByAltText("Region 2 thumbnail")).toBeInTheDocument();
-      expect(screen.getByText("auto_cv")).toBeInTheDocument();
-      expect(screen.getByText("imported")).toBeInTheDocument();
-      expect(screen.getAllByRole("button", { name: /accept/i })).toHaveLength(2);
-      expect(screen.getAllByRole("button", { name: /reject/i })).toHaveLength(2);
-      expect(screen.getByTestId("overlay-region-element_001")).toHaveStyle({
-        left: "10%",
-        top: "17.77777777777778%",
-        width: "25%",
-        height: "35.55555555555556%",
+      expect(screen.getByRole("heading", { name: /elements/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/upload png/i)).toBeInTheDocument();
+      expect(screen.getByTestId("canvas-area")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /inspector/i })).toBeInTheDocument();
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalledWith("/api/workspace/state");
       });
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreFetch();
     }
   });
 
-  it("hides bbox box and name overlays when toggles are turned off", async () => {
+  it("loads existing state on mount and renders the saved source and element", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      expect(await screen.findByText(/original\.png - 120 x 90/i)).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: /workspace source/i })).toHaveAttribute(
+        "src",
+        expect.stringContaining("/api/workspace/source"),
+      );
+      expect(screen.getByAltText("Region 1 thumbnail")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Region 1");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("creates a manual element from a drawn rectangle", async () => {
     const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/source" && init?.method === "POST") {
-        return new Response(JSON.stringify(uploadedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
       }
 
-      if (input === "/api/workspace/auto-annotate" && init?.method === "POST") {
-        return new Response(JSON.stringify(annotatedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
+      if (input === "/api/workspace/elements" && init?.method === "POST") {
+        return jsonResponse({
+          element: createdManualElement,
+          state: {
+            source: loadedState.source,
+            elements: [...loadedState.elements, createdManualElement],
+          },
         });
       }
 
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    globalThis.fetch = mockFetch as typeof fetch;
-
     try {
       render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
+      await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.upload(input, file);
-      await user.click(screen.getByRole("button", { name: /auto annotate/i }));
+      await user.click(screen.getByRole("button", { name: /draw element/i }));
 
-      expect(screen.getByTestId("overlay-box-element_001")).toBeInTheDocument();
-      expect(screen.getByTestId("overlay-label-element_001")).toBeInTheDocument();
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      await drawRectangle(surface, { x: 100, y: 90 }, { x: 220, y: 190 });
 
-      await user.click(screen.getByRole("checkbox", { name: /show boxes/i }));
-      await user.click(screen.getByRole("checkbox", { name: /show names/i }));
+      const nameField = screen.getByLabelText(/new element name/i);
+      await user.clear(nameField);
+      await user.type(nameField, "Manual Lamp");
+      await user.click(screen.getByRole("button", { name: /create element/i }));
 
-      expect(screen.queryByTestId("overlay-box-element_001")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("overlay-label-element_001")).not.toBeInTheDocument();
+      await screen.findByAltText("Manual Lamp thumbnail");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            name: "Manual Lamp",
+            bbox: { x: 20, y: 18, w: 24, h: 20 },
+          }),
+        }),
+      );
+      expect(screen.getByTestId("overlay-label-element_002")).toHaveTextContent("Manual Lamp");
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreFetch();
     }
   });
 
-  it("hides rejected proposals until show rejected is enabled", async () => {
+  it("edits inspector fields for the selected element and persists them", async () => {
     const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/source" && init?.method === "POST") {
-        return new Response(JSON.stringify(uploadedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      if (input === "/api/workspace/auto-annotate" && init?.method === "POST") {
-        return new Response(JSON.stringify(annotatedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
       }
 
       if (input === "/api/workspace/state" && init?.method === "PUT") {
-        return new Response(String(init.body), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
+        return jsonResponse(JSON.parse(String(init.body)));
       }
 
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    globalThis.fetch = mockFetch as typeof fetch;
-
     try {
       render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
-
-      await user.upload(input, file);
-      await user.click(screen.getByRole("button", { name: /auto annotate/i }));
-      await user.click(screen.getAllByRole("button", { name: /reject/i })[1]);
-
-      expect(screen.queryByAltText("Region 2 thumbnail")).not.toBeInTheDocument();
-
-      await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
-
-      expect(screen.getByAltText("Region 2 thumbnail")).toBeInTheDocument();
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("shows minimal editable inspector fields for accepted elements and persists edits", async () => {
-    const user = userEvent.setup();
-    const originalFetch = globalThis.fetch;
-    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/source" && init?.method === "POST") {
-        return new Response(JSON.stringify(uploadedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      if (input === "/api/workspace/auto-annotate" && init?.method === "POST") {
-        return new Response(JSON.stringify(annotatedState), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      if (input === "/api/workspace/state" && init?.method === "PUT") {
-        return new Response(String(init.body), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
-    });
-
-    globalThis.fetch = mockFetch as typeof fetch;
-
-    try {
-      render(<App />);
-      const input = screen.getByLabelText(/upload png/i);
-      const file = new File(["fake"], "scene.png", { type: "image/png" });
-
-      await user.upload(input, file);
-      await user.click(screen.getByRole("button", { name: /auto annotate/i }));
-      await user.click(screen.getAllByRole("button", { name: /accept/i })[0]);
-
-      expect(screen.getAllByRole("button", { name: /reject/i })).toHaveLength(1);
+      await screen.findByText(/original\.png - 120 x 90/i);
 
       const nameField = screen.getByLabelText(/element name/i);
       const modeField = screen.getByLabelText(/element mode/i);
       const layerField = screen.getByLabelText(/element layer/i);
-
-      expect(nameField).toHaveValue("Region 1");
-      expect(modeField).toHaveValue("visible_only");
-      expect(layerField).toHaveValue(1);
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const notesField = screen.getByLabelText(/element notes/i);
+      const visibilityField = screen.getByRole("checkbox", { name: /element visible/i });
 
       await user.clear(nameField);
-      await user.type(nameField, "Hero Cat");
+      await user.type(nameField, "Hero Shelf");
       await user.selectOptions(modeField, "needs_completion");
       await user.clear(layerField);
       await user.type(layerField, "7");
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "34");
+      await user.type(notesField, "Need to preserve the handle");
+      await user.click(visibilityField);
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
-      expect(screen.getByAltText("Hero Cat thumbnail")).toBeInTheDocument();
-      expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Hero Cat");
-      expect(mockFetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/state",
         expect.objectContaining({ method: "PUT" }),
       );
+      expect(screen.getAllByText(/element details updated\./i)).toHaveLength(2);
+      expect(screen.getByAltText("Hero Shelf thumbnail")).toBeInTheDocument();
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreFetch();
+    }
+  });
+
+  it("splits the selected element and overlay toggles still work afterward", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/split" && init?.method === "POST") {
+        return jsonResponse({
+          children: splitState.elements.slice(1),
+          state: splitState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /split selected/i }));
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      await drawRectangle(surface, { x: 60, y: 80 }, { x: 130, y: 240 });
+      await drawRectangle(surface, { x: 130, y: 80 }, { x: 210, y: 240 });
+
+      await user.click(await screen.findByRole("button", { name: /apply split/i }));
+
+      await screen.findByAltText("Left Shelf thumbnail");
+      expect(screen.getByText("split_parent")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_002")).toHaveTextContent("Left Shelf");
+      expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Right Shelf");
+
+      await user.click(screen.getByRole("checkbox", { name: /show boxes/i }));
+
+      expect(screen.queryByTestId("overlay-box-element_002")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("overlay-box-element_003")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("submits an AI split request contract for the selected element", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/split-requests" && init?.method === "POST") {
+        return jsonResponse({
+          requestId: "split_request_123",
+          path: "split_requests/split_request_123.json",
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const descriptionField = screen.getByLabelText(/split selected element into/i);
+      await user.type(descriptionField, "frame and glass");
+      await user.click(screen.getByRole("button", { name: /create split request/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/split-requests",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementId: "element_001",
+            description: "frame and glass",
+          }),
+        }),
+      );
+      expect(screen.getAllByText(/split request saved: split_request_123/i)).toHaveLength(2);
+    } finally {
+      restoreFetch();
     }
   });
 });

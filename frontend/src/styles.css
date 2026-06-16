@@ -17,7 +17,8 @@ body {
 button,
 input,
 label,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -186,6 +187,12 @@ button {
   max-height: 100%;
 }
 
+.canvas-drawing-surface {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
 .canvas-image {
   display: block;
   width: 100%;
@@ -215,6 +222,17 @@ button {
   border: 2px solid #5d78ff;
   border-radius: 6px;
   background: rgba(93, 120, 255, 0.08);
+}
+
+.overlay-box-draft {
+  border-style: dashed;
+  border-color: #5ac4b5;
+  background: rgba(90, 196, 181, 0.14);
+}
+
+.overlay-box-split {
+  border-color: #ff9f5d;
+  background: rgba(255, 159, 93, 0.12);
 }
 
 .overlay-label,
@@ -269,6 +287,30 @@ button {
 .error-text {
   padding: 0 1rem 1rem;
   color: #ff8d8d;
+}
+
+.canvas-tool-group,
+.canvas-draft-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.canvas-tool-group .is-active {
+  border-color: #5d78ff;
+  box-shadow: inset 0 0 0 1px rgba(93, 120, 255, 0.35);
+}
+
+.canvas-draft-panel,
+.manual-create-panel {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0 1rem 1rem;
+}
+
+.canvas-draft-panel {
+  border-top: 1px solid #273041;
+  padding-top: 0.9rem;
 }
 
 .bottom-panel {
@@ -358,13 +400,25 @@ button {
 }
 
 .field-group input,
-.field-group select {
+.field-group select,
+.field-group textarea {
   width: 100%;
   padding: 0.55rem 0.7rem;
   border: 1px solid #2f3749;
   border-radius: 8px;
   background: #11151d;
   color: #f3f6fb;
+}
+
+.field-group textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .element-actions {
