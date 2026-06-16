@@ -21,6 +21,7 @@ type CanvasStageProps = {
   tool: CanvasTool;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
+  assetCacheKey: number;
   canSplit: boolean;
   onToggleOverlay: (key: keyof OverlayState) => void;
   onSelectTool: (tool: CanvasTool) => void;
@@ -47,6 +48,7 @@ export function CanvasStage({
   tool,
   draftRegion,
   splitRegions,
+  assetCacheKey,
   canSplit,
   onToggleOverlay,
   onSelectTool,
@@ -127,6 +129,7 @@ export function CanvasStage({
       selectedElementId={selectedElementId}
       draftRegion={draftRegion}
       splitRegions={splitRegions}
+      assetCacheKey={assetCacheKey}
       onPointerDown={beginDraw}
       onPointerMove={updateDraw}
       onPointerUp={endDraw}
@@ -237,6 +240,7 @@ type CanvasArtboardProps = {
   selectedElementId: string | null;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
+  assetCacheKey: number;
   onPointerDown: (event: DrawingEvent) => void;
   onPointerMove: (event: DrawingEvent) => void;
   onPointerUp: (event: DrawingEvent) => void;
@@ -250,6 +254,7 @@ function CanvasArtboard({
   selectedElementId,
   draftRegion,
   splitRegions,
+  assetCacheKey,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -274,7 +279,7 @@ function CanvasArtboard({
               alt=""
               data-testid={`overlay-mask-${element.id}`}
               className="overlay-mask-image"
-              src={workspaceAssetUrl(element.mask) ?? undefined}
+              src={workspaceAssetUrl(element.mask, assetCacheKey) ?? undefined}
               style={boxToPercentStyle(element.canvas, source)}
             />
           ) : null,

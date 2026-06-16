@@ -67,6 +67,7 @@ export function App() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSavingState, setIsSavingState] = useState(false);
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
+  const [assetCacheKey, setAssetCacheKey] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
   const [manualElementName, setManualElementName] = useState("Manual Element");
@@ -125,6 +126,14 @@ export function App() {
     return selectedElement !== null && canExtractElement(selectedElement);
   }, [selectedElement]);
 
+  const hasUnsavedGeometryChanges = useMemo(() => {
+    return selectedElement !== null && elementDraft !== null
+      ? isGeometryDraftDirty(selectedElement, elementDraft)
+      : false;
+  }, [elementDraft, selectedElement]);
+
+  const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
+
   const hasBatchExtractTargets = useMemo(() => {
     return workspace.elements.some(
       (element) =>
@@ -167,6 +176,7 @@ export function App() {
   function replaceWorkspace(nextState: WorkspaceState, nextStatus: string, nextSelectionId?: string | null) {
     const normalized = normalizeWorkspaceState(nextState);
     setWorkspace(normalized);
+    setAssetCacheKey((current) => current + 1);
     setSelectedElementId((current) => {
       if (nextSelectionId !== undefined) {
         return nextSelectionId;
@@ -299,7 +309,7 @@ export function App() {
   }
 
   async function handleExtractSelected() {
-    if (!selectedElement || !canExtractSelected || isExtracting) {
+    if (!selectedElement || !canRunSelectedExtraction || isExtracting) {
       return;
     }
 
@@ -311,7 +321,12 @@ export function App() {
   }
 
   async function handleExtractAllAccepted() {
-    if (!workspace.source || !hasBatchExtractTargets || isExtracting) {
+    if (
+      !workspace.source
+      || !hasBatchExtractTargets
+      || isExtracting
+      || hasUnsavedGeometryChanges
+    ) {
       return;
     }
 
@@ -363,7 +378,7 @@ export function App() {
   }
 
   async function handleClearMask() {
-    if (!selectedElement || !selectedElement.mask) {
+    if (!selectedElement || !selectedElement.mask || hasUnsavedGeometryChanges) {
       return;
     }
 
@@ -389,7 +404,7 @@ export function App() {
   }
 
   async function handleReplaceMaskByCurrentShape() {
-    if (!selectedElement || !canExtractSelected) {
+    if (!selectedElement || !canRunSelectedExtraction) {
       return;
     }
 
@@ -649,14 +664,19 @@ export function App() {
           </button>
           <button
             type="button"
-            disabled={!canExtractSelected || isExtracting}
+            disabled={!canRunSelectedExtraction || isExtracting}
             onClick={() => void handleExtractSelected()}
           >
             Extract
           </button>
           <button
             type="button"
-            disabled={!workspace.source || !hasBatchExtractTargets || isExtracting}
+            disabled={
+              !workspace.source
+              || !hasBatchExtractTargets
+              || isExtracting
+              || hasUnsavedGeometryChanges
+            }
             onClick={() => void handleExtractAllAccepted()}
           >
             Extract All
@@ -693,6 +713,7 @@ export function App() {
             tool={tool}
             draftRegion={draftRegion}
             splitRegions={splitRegions}
+            assetCacheKey={assetCacheKey}
             canSplit={selectedElement !== null}
             onToggleOverlay={handleOverlayToggle}
             onSelectTool={handleSelectTool}
@@ -731,8 +752,10 @@ export function App() {
           onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
           onClearMask={() => void handleClearMask()}
           onReExtract={() => void handleExtractSelected()}
-          canExtractSelected={canExtractSelected}
+          canExtractSelected={canRunSelectedExtraction}
+          hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
           isExtracting={isExtracting}
+          assetCacheKey={assetCacheKey}
         />
       </main>
 
@@ -753,7 +776,7 @@ export function App() {
             <span className="preview-label">State</span>
             <strong>{isSavingState ? "Saving..." : status}</strong>
           </div>
-          <ExtractionPreview selectedElement={selectedElement} />
+          <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
         </div>
       </section>
     </div>
@@ -767,7 +790,13 @@ function canExtractElement(element: WorkspaceElement): boolean {
   return ["accepted", "extract_ready", "extracted"].includes(element.status);
 }
 
-function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElement | null }) {
+function ExtractionPreview({
+  selectedElement,
+  assetCacheKey,
+}: {
+  selectedElement: WorkspaceElement | null;
+  assetCacheKey: number;
+}) {
   if (!selectedElement) {
     return (
       <div className="extraction-preview extraction-preview-empty">
@@ -792,14 +821,14 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
           <figure>
             <img
               alt={`${selectedElement.name} source crop`}
-              src={sourceCropUrl(selectedElement)}
+              src={sourceCropUrl(selectedElement, assetCacheKey)}
             />
             <figcaption>Source crop</figcaption>
           </figure>
           <figure>
             <img
               alt={`${selectedElement.name} mask overlay`}
-              src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
             />
             <figcaption>Mask overlay</figcaption>
           </figure>
@@ -807,7 +836,7 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
             <div className="checkerboard-preview">
               <img
                 alt={`${selectedElement.name} transparent asset`}
-                src={assetIncompleteUrl(selectedElement)}
+                src={assetIncompleteUrl(selectedElement, assetCacheKey)}
               />
             </div>
             <figcaption>Transparent asset</figcaption>
@@ -818,7 +847,7 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
           <figure>
             <img
               alt={`${selectedElement.name} mask overlay`}
-              src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
             />
             <figcaption>Mask overlay</figcaption>
           </figure>
@@ -871,6 +900,28 @@ function parseBox(box: { x: string; y: string; w: string; h: string }): Box | nu
   }
 
   return { x, y, w, h };
+}
+
+function isGeometryDraftDirty(
+  element: WorkspaceElement,
+  draft: ElementEditorDraft,
+): boolean {
+  const bbox = parseBox(draft.bbox);
+  const canvas = parseBox(draft.canvas);
+  if (!bbox || !canvas) {
+    return true;
+  }
+
+  return !boxesEqual(element.bbox, bbox) || !boxesEqual(element.canvas, canvas);
+}
+
+function boxesEqual(left: Box, right: Box): boolean {
+  return (
+    left.x === right.x
+    && left.y === right.y
+    && left.w === right.w
+    && left.h === right.h
+  );
 }
 
 function buildElementFromDraft(

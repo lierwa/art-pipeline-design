@@ -18,7 +18,15 @@ from art_pipeline.annotations import (
     validate_workspace_state_geometry,
     write_split_request_contract,
 )
-from art_pipeline.elements import ElementRecord, SourceMetadata, WorkspaceState, next_element_id
+from art_pipeline.elements import (
+    BoundingBox,
+    CanvasBox,
+    ElementRecord,
+    SourceMetadata,
+    WorkspaceState,
+    next_element_id,
+    validate_element_id,
+)
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
 from art_pipeline.asset_outputs import (
     clear_extraction_outputs,
@@ -91,11 +99,13 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
 
     @app.put("/api/workspace/state")
     def put_state(state: WorkspaceState) -> WorkspaceState:
+        root = app.state.workspace_root
         try:
             validate_workspace_state_geometry(state)
+            state = _invalidate_geometry_changes(root, _read_state(root), state)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        _write_state(app.state.workspace_root, state)
+        _write_state(root, state)
         return state
 
     @app.post("/api/workspace/elements")
@@ -222,7 +232,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             "state": next_state.model_dump(mode="json"),
         }
 
-    @app.post("/api/workspace/elements/{element_id}/mask/replace")
+    @app.post("/api/workspace/elements/{element_id:path}/mask/replace")
     def post_replace_mask(element_id: str, request: ReplaceMaskRequest) -> dict:
         root = app.state.workspace_root
         state = _read_state(root)
@@ -254,12 +264,15 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _write_state(root, next_state)
         return {"state": next_state.model_dump(mode="json")}
 
-    @app.post("/api/workspace/elements/{element_id}/mask/clear")
+    @app.post("/api/workspace/elements/{element_id:path}/mask/clear")
     def post_clear_mask(element_id: str) -> dict:
         root = app.state.workspace_root
         state = _read_state(root)
-        _get_element(state, element_id)
-        clear_extraction_outputs(root, element_id)
+        try:
+            _get_element(state, element_id)
+            clear_extraction_outputs(root, element_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         next_state = WorkspaceState(
             source=state.source,
@@ -387,6 +400,11 @@ def _require_source_image(workspace_root: Path) -> Image.Image:
 
 
 def _get_element(state: WorkspaceState, element_id: str) -> ElementRecord:
+    try:
+        validate_element_id(element_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     for element in state.elements:
         if element.id == element_id:
             return element
@@ -407,6 +425,10 @@ def _select_extraction_targets(
         by_id = {element.id: element for element in state.elements}
         targets = []
         for element_id in element_ids:
+            try:
+                validate_element_id(element_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             element = by_id.get(element_id)
             if element is None:
                 raise HTTPException(status_code=404, detail="Element not found.")
@@ -430,6 +452,59 @@ def _is_extractable_element(
     if include_extracted:
         statuses.add("extracted")
     return element.status in statuses and element.mode != "rejected"
+
+
+def _invalidate_geometry_changes(
+    workspace_root: Path,
+    previous_state: WorkspaceState,
+    next_state: WorkspaceState,
+) -> WorkspaceState:
+    previous_by_id = {element.id: element for element in previous_state.elements}
+    next_elements: list[ElementRecord] = []
+    for element in next_state.elements:
+        previous = previous_by_id.get(element.id)
+        if previous is None or not _element_geometry_changed(previous, element):
+            next_elements.append(element)
+            continue
+
+        clear_extraction_outputs(workspace_root, element.id)
+        next_elements.append(
+            element.model_copy(
+                update={
+                    "status": "extract_ready"
+                    if _is_geometry_extract_ready_status(element)
+                    else element.status,
+                    "mask": None,
+                }
+            )
+        )
+
+    return WorkspaceState(source=next_state.source, elements=next_elements)
+
+
+def _element_geometry_changed(previous: ElementRecord, current: ElementRecord) -> bool:
+    return not (
+        _boxes_equal(previous.bbox, current.bbox)
+        and previous.canvas is not None
+        and current.canvas is not None
+        and _boxes_equal(previous.canvas, current.canvas)
+    )
+
+
+def _boxes_equal(left: BoundingBox | CanvasBox, right: BoundingBox | CanvasBox) -> bool:
+    return (
+        left.x == right.x
+        and left.y == right.y
+        and left.w == right.w
+        and left.h == right.h
+    )
+
+
+def _is_geometry_extract_ready_status(element: ElementRecord) -> bool:
+    return (
+        element.status in {"accepted", "extract_ready", "extracted"}
+        and element.mode != "rejected"
+    )
 
 
 app = create_app()

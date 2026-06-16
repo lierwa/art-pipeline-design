@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from art_pipeline.asset_outputs import element_output_dir, element_relative_path
 from art_pipeline.elements import BoundingBox
 
 
@@ -20,7 +21,7 @@ def write_thumbnail(
         bbox.y + bbox.h,
     )
     thumbnail = source_image.crop(crop_box)
-    output_path = workspace_root / "elements" / element_id / "thumb.png"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = element_output_dir(workspace_root, element_id, create=True)
+    output_path = output_dir / "thumb.png"
     thumbnail.save(output_path, format="PNG")
-    return str(output_path.relative_to(workspace_root).as_posix())
+    return element_relative_path(workspace_root, element_id, "thumb.png")

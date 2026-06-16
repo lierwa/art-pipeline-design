@@ -446,15 +446,21 @@ describe("App", () => {
       expect(await screen.findAllByText(/extracted 1 element\./i)).toHaveLength(2);
       expect(screen.getByAltText("Region 1 source crop")).toHaveAttribute(
         "src",
-        "/api/workspace/assets/elements/element_001/source_crop.png",
+        expect.stringMatching(
+          /^\/api\/workspace\/assets\/elements\/element_001\/source_crop\.png\?cache=\d+$/,
+        ),
       );
       expect(screen.getByAltText("Region 1 mask overlay")).toHaveAttribute(
         "src",
-        "/api/workspace/assets/elements/element_001/mask.png",
+        expect.stringMatching(
+          /^\/api\/workspace\/assets\/elements\/element_001\/mask\.png\?cache=\d+$/,
+        ),
       );
       expect(screen.getByAltText("Region 1 transparent asset")).toHaveAttribute(
         "src",
-        "/api/workspace/assets/elements/element_001/asset_incomplete.png",
+        expect.stringMatching(
+          /^\/api\/workspace\/assets\/elements\/element_001\/asset_incomplete\.png\?cache=\d+$/,
+        ),
       );
       expect(screen.getAllByText(/canvas 46 x 48 at 4, 8/i).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/bbox 30 x 32 at 12, 16/i).length).toBeGreaterThan(0);
@@ -515,6 +521,34 @@ describe("App", () => {
     }
   });
 
+  it("disables extraction and mask controls while geometry edits are unsaved", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(extractedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "31");
+
+      expect(screen.getByRole("button", { name: /^extract$/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /replace mask by current shape/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /clear mask/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /re-extract/i })).toBeDisabled();
+      expect(screen.getByText(/save geometry changes before mask or extraction actions/i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("shows mask overlays and clears the selected extraction mask", async () => {
     const user = userEvent.setup();
     const clearedState = {
@@ -551,7 +585,9 @@ describe("App", () => {
 
       expect(screen.getByTestId("overlay-mask-element_001")).toHaveAttribute(
         "src",
-        "/api/workspace/assets/elements/element_001/mask.png",
+        expect.stringMatching(
+          /^\/api\/workspace\/assets\/elements\/element_001\/mask\.png\?cache=\d+$/,
+        ),
       );
 
       await user.click(screen.getByRole("button", { name: /clear mask/i }));

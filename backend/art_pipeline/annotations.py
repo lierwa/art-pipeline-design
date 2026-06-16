@@ -13,6 +13,7 @@ from art_pipeline.elements import (
     ElementRecord,
     WorkspaceState,
     next_element_id,
+    validate_element_id,
 )
 from art_pipeline.masks import clamp_bbox_to_source, expand_canvas
 from art_pipeline.thumbnails import write_thumbnail
@@ -47,6 +48,7 @@ def validate_workspace_state_geometry(state: WorkspaceState) -> None:
     source_width = state.source.width
     source_height = state.source.height
     for element in state.elements:
+        validate_element_id(element.id)
         _validate_box_bounds(
             element.id,
             "bbox",

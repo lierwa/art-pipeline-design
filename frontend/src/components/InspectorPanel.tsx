@@ -19,7 +19,9 @@ type InspectorPanelProps = {
   onClearMask: () => void;
   onReExtract: () => void;
   canExtractSelected: boolean;
+  hasUnsavedGeometryChanges: boolean;
   isExtracting: boolean;
+  assetCacheKey: number;
 };
 
 export function InspectorPanel({
@@ -34,7 +36,9 @@ export function InspectorPanel({
   onClearMask,
   onReExtract,
   canExtractSelected,
+  hasUnsavedGeometryChanges,
   isExtracting,
+  assetCacheKey,
 }: InspectorPanelProps) {
   return (
     <aside className="panel inspector-panel">
@@ -256,7 +260,7 @@ export function InspectorPanel({
                 </button>
                 <button
                   type="button"
-                  disabled={!selectedElement.mask}
+                  disabled={!selectedElement.mask || hasUnsavedGeometryChanges}
                   onClick={onClearMask}
                 >
                   Clear mask
@@ -269,20 +273,23 @@ export function InspectorPanel({
                   Re-extract
                 </button>
               </div>
+              {hasUnsavedGeometryChanges ? (
+                <p className="panel-copy">Save geometry changes before mask or extraction actions.</p>
+              ) : null}
               {selectedElement.status === "extracted" && selectedElement.mask ? (
                 <div className="inspector-preview-strip">
                   <img
                     alt={`${selectedElement.name} inspector source crop`}
-                    src={sourceCropUrl(selectedElement)}
+                    src={sourceCropUrl(selectedElement, assetCacheKey)}
                   />
                   <img
                     alt={`${selectedElement.name} inspector mask overlay`}
-                    src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
                   />
                   <div className="checkerboard-preview">
                     <img
                       alt={`${selectedElement.name} inspector transparent asset`}
-                      src={assetIncompleteUrl(selectedElement)}
+                      src={assetIncompleteUrl(selectedElement, assetCacheKey)}
                     />
                   </div>
                 </div>
@@ -290,7 +297,7 @@ export function InspectorPanel({
                 <div className="inspector-preview-strip">
                   <img
                     alt={`${selectedElement.name} inspector mask overlay`}
-                    src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
                   />
                   <p className="panel-copy">Mask saved. Re-extract to refresh asset previews.</p>
                 </div>

@@ -5,10 +5,42 @@ from pathlib import Path
 
 from PIL import Image
 
-from art_pipeline.elements import ElementRecord
+from art_pipeline.elements import ElementRecord, validate_element_id
+
+
+def element_output_dir(
+    workspace_root: Path,
+    element_id: str,
+    create: bool = False,
+) -> Path:
+    validate_element_id(element_id)
+    workspace_path = Path(workspace_root).resolve()
+    elements_dir = (workspace_path / "elements").resolve()
+    output_dir = (elements_dir / element_id).resolve()
+    try:
+        output_dir.relative_to(elements_dir)
+    except ValueError as exc:
+        raise ValueError(
+            f"Element output path for {element_id!r} must stay inside workspace elements."
+        ) from exc
+
+    if create:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def element_relative_path(
+    workspace_root: Path,
+    element_id: str,
+    filename: str,
+) -> str:
+    workspace_path = Path(workspace_root).resolve()
+    output_path = element_output_dir(workspace_path, element_id) / filename
+    return str(output_path.relative_to(workspace_path).as_posix())
 
 
 def extraction_relative_paths(element_id: str) -> dict[str, str]:
+    validate_element_id(element_id)
     base = f"elements/{element_id}"
     return {
         "maskPath": f"{base}/mask.png",
@@ -23,10 +55,9 @@ def write_mask_output(
     element: ElementRecord,
     mask: Image.Image,
 ) -> str:
-    mask_path = extraction_relative_paths(element.id)["maskPath"]
-    output_dir = workspace_root / "elements" / element.id
-    output_dir.mkdir(parents=True, exist_ok=True)
-    mask.save(workspace_root / mask_path, format="PNG")
+    output_dir = element_output_dir(workspace_root, element.id, create=True)
+    mask_path = element_relative_path(workspace_root, element.id, "mask.png")
+    mask.save(output_dir / "mask.png", format="PNG")
     return mask_path
 
 
@@ -39,12 +70,11 @@ def write_extraction_outputs(
     source_crop: Image.Image,
 ) -> dict:
     paths = extraction_relative_paths(element.id)
-    output_dir = workspace_root / "elements" / element.id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = element_output_dir(workspace_root, element.id, create=True)
 
     write_mask_output(workspace_root, element, mask)
-    asset.save(workspace_root / paths["assetPath"], format="PNG")
-    source_crop.save(workspace_root / paths["sourceCropPath"], format="PNG")
+    asset.save(output_dir / "asset_incomplete.png", format="PNG")
+    source_crop.save(output_dir / "source_crop.png", format="PNG")
 
     metadata = {
         "elementId": element.id,
@@ -56,7 +86,7 @@ def write_extraction_outputs(
         "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
         "bbox": element.bbox.model_dump(mode="json"),
     }
-    (workspace_root / paths["metadataPath"]).write_text(
+    (output_dir / "extraction.json").write_text(
         json.dumps(metadata, indent=2),
         encoding="utf-8",
     )
@@ -67,7 +97,7 @@ def write_extraction_outputs(
 
 
 def clear_extraction_outputs(workspace_root: Path, element_id: str) -> None:
-    output_dir = workspace_root / "elements" / element_id
+    output_dir = element_output_dir(workspace_root, element_id)
     for filename in (
         "mask.png",
         "asset_incomplete.png",
@@ -80,7 +110,7 @@ def clear_extraction_outputs(workspace_root: Path, element_id: str) -> None:
 
 
 def clear_stale_asset_outputs(workspace_root: Path, element_id: str) -> None:
-    output_dir = workspace_root / "elements" / element_id
+    output_dir = element_output_dir(workspace_root, element_id)
     for filename in (
         "asset_incomplete.png",
         "extraction.json",

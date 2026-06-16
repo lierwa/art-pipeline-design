@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -23,6 +24,8 @@ ElementMode = Literal[
     "completed_by_codex",
     "rejected",
 ]
+
+ELEMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 class BoundingBox(BaseModel):
@@ -87,3 +90,11 @@ def next_element_id(existing_elements: list[ElementRecord], start: int = 1) -> s
         if candidate not in used_ids:
             return candidate
         next_index += 1
+
+
+def validate_element_id(element_id: str) -> None:
+    if not ELEMENT_ID_PATTERN.fullmatch(element_id):
+        raise ValueError(
+            f"Element id {element_id!r} must be a slug containing only letters, "
+            "numbers, underscores, and hyphens."
+        )

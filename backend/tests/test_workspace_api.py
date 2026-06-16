@@ -138,6 +138,51 @@ def test_put_state_round_trips_elements_payload(
     assert list(state_path.parent.glob("state.json.*")) == []
 
 
+@pytest.mark.parametrize("element_id", ["../../outside", "bad/id", "bad\\id"])
+def test_put_state_rejects_path_like_element_ids(
+    client: TestClient,
+    tmp_path: Path,
+    element_id: str,
+) -> None:
+    response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": element_id,
+                    "name": "Bad Id",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 1, "y": 1, "w": 2, "h": 2},
+                    "canvas": {"x": 0, "y": 0, "w": 4, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"Element id {element_id!r} must be a slug containing only letters, "
+        "numbers, underscores, and hyphens."
+    )
+    assert not (tmp_path / "outside").exists()
+    assert not (tmp_path / "workspace" / "state.json").exists()
+
+
 @pytest.mark.parametrize(
     ("bbox", "canvas", "detail"),
     [
@@ -636,6 +681,121 @@ def test_extract_selected_element_writes_mask_asset_and_metadata(
                         assert pixel[3] == 0
 
 
+def test_put_state_geometry_change_invalidates_extracted_outputs(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+    extract_response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "bbox_alpha"},
+    )
+    assert extract_response.status_code == 200
+    element_dir = tmp_path / "workspace" / "elements" / "element_001"
+    assert (element_dir / "mask.png").exists()
+    assert (element_dir / "asset_incomplete.png").exists()
+    assert (element_dir / "extraction.json").exists()
+
+    next_state = extract_response.json()["state"]
+    next_state["elements"][0]["bbox"] = {"x": 4, "y": 2, "w": 1, "h": 2}
+    response = client.put("/api/workspace/state", json=next_state)
+
+    assert response.status_code == 200
+    element = response.json()["elements"][0]
+    assert element["status"] == "extract_ready"
+    assert element["mask"] is None
+    assert not (element_dir / "mask.png").exists()
+    assert not (element_dir / "asset_incomplete.png").exists()
+    assert not (element_dir / "extraction.json").exists()
+
+
+def test_extract_rejects_persisted_path_like_element_id_without_writing_outside(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+    state_path = tmp_path / "workspace" / "state.json"
+    state_path.write_text(
+        workspace_api.json.dumps(
+            {
+                "source": {
+                    "filename": "original.png",
+                    "path": "source/original.png",
+                    "width": 8,
+                    "height": 6,
+                },
+                "elements": [
+                    {
+                        "id": "../../outside",
+                        "name": "Bad Id",
+                        "status": "accepted",
+                        "mode": "visible_only",
+                        "bbox": {"x": 1, "y": 1, "w": 2, "h": 2},
+                        "canvas": {"x": 0, "y": 0, "w": 4, "h": 4},
+                        "layer": 1,
+                        "thumbnail": None,
+                        "mask": None,
+                        "parentId": None,
+                        "source": "manual",
+                        "notes": "",
+                        "visible": True,
+                        "confidence": None,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.post("/api/workspace/extract", json={"strategy": "bbox_alpha"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Element id '../../outside' must be a slug containing only letters, "
+        "numbers, underscores, and hyphens."
+    )
+    assert not (tmp_path / "outside" / "mask.png").exists()
+
+
 def test_extract_without_ids_only_processes_accepted_or_extract_ready_elements(
     client: TestClient,
     tmp_path: Path,
@@ -1079,6 +1239,25 @@ def test_clear_mask_removes_extraction_outputs_and_marks_element_ready(
     assert not (
         tmp_path / "workspace" / "elements" / "element_001" / "asset_incomplete.png"
     ).exists()
+
+
+def test_clear_mask_rejects_path_like_element_id_without_deleting_outside(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_mask = outside_dir / "mask.png"
+    outside_mask.write_text("keep me", encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/..%2F..%2Foutside/mask/clear")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Element id '../../outside' must be a slug containing only letters, "
+        "numbers, underscores, and hyphens."
+    )
+    assert outside_mask.read_text(encoding="utf-8") == "keep me"
 
 
 def test_empty_mask_validation_fails_clearly() -> None:

@@ -102,19 +102,22 @@ export function thumbnailUrl(path: string | null): string | null {
   return workspaceAssetUrl(path);
 }
 
-export function workspaceAssetUrl(path: string | null): string | null {
+export function workspaceAssetUrl(path: string | null, cacheKey?: number): string | null {
   if (!path) {
     return null;
   }
-  return `/api/workspace/assets/${path}`;
+  const url = `/api/workspace/assets/${path}`;
+  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
 }
 
-export function sourceCropUrl(element: WorkspaceElement): string {
-  return `/api/workspace/assets/elements/${element.id}/source_crop.png`;
+export function sourceCropUrl(element: WorkspaceElement, cacheKey?: number): string {
+  const url = `/api/workspace/assets/elements/${element.id}/source_crop.png`;
+  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
 }
 
-export function assetIncompleteUrl(element: WorkspaceElement): string {
-  return `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
+export function assetIncompleteUrl(element: WorkspaceElement, cacheKey?: number): string {
+  const url = `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
+  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
 }
 
 export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState {
