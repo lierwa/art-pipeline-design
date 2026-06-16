@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -29,6 +30,7 @@ REPAIR_RELATIVE_PATHS = {
 }
 
 REPAIR_PACKAGE_FILES = tuple(REPAIR_RELATIVE_PATHS.values())
+REPAIR_AUTHORITY_FILENAME = "repair_authority.json"
 
 
 def missing_mask_relative_path(element_id: str) -> str:
@@ -45,6 +47,23 @@ def repair_relative_paths(element_id: str) -> dict[str, str]:
     return {
         key: repair_relative_path(element_id, filename)
         for key, filename in REPAIR_RELATIVE_PATHS.items()
+    }
+
+
+def repair_authority_path(workspace_root: Path, element_id: str) -> Path:
+    return element_output_dir(workspace_root, element_id) / REPAIR_AUTHORITY_FILENAME
+
+
+def fingerprint_image(image: Image.Image) -> dict[str, Any]:
+    normalized = image.copy()
+    digest = hashlib.sha256()
+    digest.update(normalized.mode.encode("utf-8"))
+    digest.update(f"{normalized.width}x{normalized.height}".encode("ascii"))
+    digest.update(normalized.tobytes())
+    return {
+        "mode": normalized.mode,
+        "size": [normalized.width, normalized.height],
+        "sha256": digest.hexdigest(),
     }
 
 
@@ -92,6 +111,10 @@ def clear_repair_outputs(workspace_root: Path, element_id: str) -> None:
     missing_mask_path = output_dir / "missing_mask.png"
     if missing_mask_path.exists():
         missing_mask_path.unlink()
+
+    authority_path = repair_authority_path(workspace_root, element_id)
+    if authority_path.exists():
+        authority_path.unlink()
 
     repair_dir = repair_output_dir(workspace_root, element_id)
     if repair_dir.exists():
@@ -150,10 +173,12 @@ def read_repair_metadata(workspace_root: Path, element: ElementRecord) -> dict[s
     repair_report_path = repair_dir / "repair_report.json"
     qa_report_path = repair_dir / "qa_report.json"
     changed_pixels_overlay_path = repair_dir / "changed_pixels_overlay.png"
+    authority_path = repair_authority_path(workspace_root, element.id)
     qa_report = _load_qa_report(qa_report_path)
 
     files = {
         "missingMask": missing_mask_path.exists(),
+        "repairAuthority": authority_path.exists(),
         "repairPackage": all(path.exists() for path in package_files.values()),
         "completedAsset": completed_asset_path.exists(),
         "repairReport": repair_report_path.exists(),
@@ -163,6 +188,11 @@ def read_repair_metadata(workspace_root: Path, element: ElementRecord) -> dict[s
     }
     paths = {
         "missingMaskPath": missing_mask_relative_path(element.id) if files["missingMask"] else None,
+        "repairAuthorityPath": (
+            f"elements/{element.id}/{REPAIR_AUTHORITY_FILENAME}"
+            if files["repairAuthority"]
+            else None
+        ),
         "completedAssetPath": (
             repair_relative_path(element.id, "completed_asset.png")
             if files["completedAsset"]
@@ -229,8 +259,47 @@ def create_repair_task_package(
         build_repair_prompt(element),
         encoding="utf-8",
     )
+    _write_repair_authority(
+        workspace_root,
+        element,
+        incomplete_asset,
+        missing_mask,
+        preserve_mask,
+    )
 
     return repair_relative_paths(element.id)
+
+
+def _write_repair_authority(
+    workspace_root: Path,
+    element: ElementRecord,
+    incomplete_asset: Image.Image,
+    missing_mask: Image.Image,
+    preserve_mask: Image.Image,
+) -> None:
+    authority = {
+        "version": 1,
+        "elementId": element.id,
+        "artifacts": {
+            "assetIncomplete": {
+                "path": f"elements/{element.id}/asset_incomplete.png",
+                **fingerprint_image(incomplete_asset.convert("RGBA")),
+            },
+            "missingMask": {
+                "path": f"elements/{element.id}/missing_mask.png",
+                **fingerprint_image(missing_mask.convert("L")),
+            },
+            "preserveMask": {
+                "derivedFrom": [
+                    f"elements/{element.id}/asset_incomplete.png",
+                    f"elements/{element.id}/missing_mask.png",
+                ],
+                **fingerprint_image(preserve_mask.convert("L")),
+            },
+        },
+    }
+    path = repair_authority_path(workspace_root, element.id)
+    path.write_text(json.dumps(authority, indent=2), encoding="utf-8")
 
 
 def _shape_point_to_canvas(

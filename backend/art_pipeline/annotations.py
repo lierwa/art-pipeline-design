@@ -47,8 +47,12 @@ def validate_workspace_state_geometry(state: WorkspaceState) -> None:
 
     source_width = state.source.width
     source_height = state.source.height
+    seen_ids: set[str] = set()
     for element in state.elements:
         validate_element_id(element.id)
+        if element.id in seen_ids:
+            raise ValueError(f"Duplicate element id: {element.id}.")
+        seen_ids.add(element.id)
         _validate_box_bounds(
             element.id,
             "bbox",

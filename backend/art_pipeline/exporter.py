@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 from art_pipeline.elements import ElementRecord, WorkspaceState
+from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import read_repair_metadata, repair_relative_path
 
 
@@ -235,11 +236,18 @@ def _plan_exports(
 
         if element.mode in {"needs_completion", "completed_by_codex"}:
             metadata = read_repair_metadata(workspace_root, element)
-            if metadata.get("qaReport") is not None:
-                repair_qa_reports[element.id] = metadata["qaReport"]
-
             completed_asset_path = repair_relative_path(element.id, "completed_asset.png")
             qa_report = metadata.get("qaReport") or {}
+            if (
+                metadata["files"]["completedAsset"]
+                and metadata["files"]["repairReport"]
+                and _workspace_file_exists(workspace_root, completed_asset_path)
+            ):
+                qa_report = validate_repair_output(workspace_root, element)
+
+            if qa_report:
+                repair_qa_reports[element.id] = qa_report
+
             qa_status = qa_report.get("status")
             valid_repair = (
                 metadata["files"]["completedAsset"]

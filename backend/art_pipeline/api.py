@@ -53,6 +53,14 @@ from art_pipeline.segmentation import (
 from art_pipeline.thumbnails import write_thumbnail
 
 
+ASSET_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+
 def create_app(workspace_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="Art Pipeline Workbench API")
     app.state.workspace_root = (workspace_root or Path("workspace")).resolve()
@@ -73,7 +81,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         image = _load_png(data)
 
         root = app.state.workspace_root
-        _clear_element_outputs(root)
+        _clear_generated_workspace_outputs(root)
         source_path = _source_path(root)
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_bytes(data)
@@ -100,7 +108,10 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Asset not found.") from exc
         if not asset_file.exists():
             raise HTTPException(status_code=404, detail="Asset not found.")
-        return FileResponse(asset_file, media_type="image/png")
+        media_type = ASSET_MEDIA_TYPES.get(asset_file.suffix.lower())
+        if media_type is None:
+            raise HTTPException(status_code=404, detail="Asset not found.")
+        return FileResponse(asset_file, media_type=media_type)
 
     @app.get("/api/workspace/state")
     def get_state() -> WorkspaceState:
@@ -532,15 +543,25 @@ def _state_path(workspace_root: Path) -> Path:
     return workspace_root / "state.json"
 
 
-def _clear_element_outputs(workspace_root: Path) -> None:
+def _clear_generated_workspace_outputs(workspace_root: Path) -> None:
     workspace_path = workspace_root.resolve()
-    elements_dir = (workspace_path / "elements").resolve()
-    try:
-        elements_dir.relative_to(workspace_path)
-    except ValueError as exc:
-        raise ValueError("Workspace element output path must stay inside workspace root.") from exc
-    if elements_dir.exists():
-        shutil.rmtree(elements_dir)
+    for dirname in (
+        "elements",
+        "export",
+        "export.tmp",
+        "export.previous",
+        "split_requests",
+    ):
+        output_dir = (workspace_path / dirname).resolve()
+        try:
+            output_dir.relative_to(workspace_path)
+        except ValueError as exc:
+            raise ValueError("Workspace output path must stay inside workspace root.") from exc
+        if output_dir.exists():
+            if output_dir.is_dir():
+                shutil.rmtree(output_dir)
+            else:
+                output_dir.unlink()
 
 
 def _require_source_image(workspace_root: Path) -> Image.Image:
