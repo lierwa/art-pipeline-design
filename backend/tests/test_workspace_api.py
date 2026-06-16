@@ -166,7 +166,7 @@ def test_auto_annotate_returns_deterministic_candidates_and_thumbnails(
     assert state_payload["elements"] == payload["elements"]
 
 
-def test_auto_annotate_prefers_imported_proposals_when_present(
+def test_auto_annotate_includes_imported_proposals_when_present(
     client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -203,6 +203,27 @@ def test_auto_annotate_prefers_imported_proposals_when_present(
     assert imported["source"] == "imported"
     assert imported["confidence"] == pytest.approx(0.91)
     assert (tmp_path / "workspace" / imported["thumbnail"]).exists()
+
+
+def test_auto_annotate_returns_400_for_malformed_imported_proposals(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    proposals_dir = tmp_path / "workspace" / "proposals"
+    proposals_dir.mkdir(parents=True, exist_ok=True)
+    imported_path = proposals_dir / "imported_proposals.json"
+    imported_path.write_text('{"name":"bad-shape"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/auto-annotate")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Imported proposals must be a JSON array."
 
 
 def test_auto_annotate_preserves_rejected_elements_and_avoids_id_collisions(

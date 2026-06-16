@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from art_pipeline.elements import BoundingBox, CanvasBox
 
@@ -17,6 +17,10 @@ class ProposalCandidate(BaseModel):
     canvas: CanvasBox
     source: str
     confidence: float | None = None
+
+
+class ImportedProposalsError(ValueError):
+    pass
 
 
 def generate_proposals(workspace_root: Path, source_image: Image.Image) -> list[ProposalCandidate]:
@@ -98,18 +102,24 @@ def imported_proposals(workspace_root: Path) -> list[ProposalCandidate]:
     if not imported_path.exists():
         return []
 
-    payload = json.loads(imported_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(imported_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ImportedProposalsError("Imported proposals file is not valid JSON.") from exc
     if not isinstance(payload, list):
-        raise ValueError("Imported proposals must be a JSON array.")
+        raise ImportedProposalsError("Imported proposals must be a JSON array.")
 
     proposals: list[ProposalCandidate] = []
     for item in payload:
-        proposal = ProposalCandidate.model_validate(
-            {
-                **item,
-                "source": "imported",
-            }
-        )
+        try:
+            proposal = ProposalCandidate.model_validate(
+                {
+                    **item,
+                    "source": "imported",
+                }
+            )
+        except ValidationError as exc:
+            raise ImportedProposalsError("Imported proposals have an invalid schema.") from exc
         proposals.append(proposal)
     return proposals
 

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
 from art_pipeline.elements import ElementRecord, SourceMetadata, WorkspaceState, next_element_id
-from art_pipeline.proposals import generate_proposals
+from art_pipeline.proposals import ImportedProposalsError, generate_proposals
 from art_pipeline.thumbnails import write_thumbnail
 
 
@@ -90,7 +90,12 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
 
         generated_elements: list[ElementRecord] = []
         next_index = 1
-        for candidate in generate_proposals(root, source_image):
+        try:
+            candidates = generate_proposals(root, source_image)
+        except ImportedProposalsError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        for candidate in candidates:
             element_id = next_element_id(state.elements + generated_elements, start=next_index)
             next_index = int(element_id.rsplit("_", 1)[1]) + 1
             thumbnail_path = write_thumbnail(source_image, root, element_id, candidate.bbox)

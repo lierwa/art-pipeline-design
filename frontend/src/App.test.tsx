@@ -1,3 +1,4 @@
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -69,7 +70,7 @@ describe("App", () => {
 
   it("displays an uploaded image preview", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const mockFetch = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -88,7 +89,7 @@ describe("App", () => {
       );
     });
 
-    global.fetch = mockFetch as typeof fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
 
     try {
       render(<App />);
@@ -104,17 +105,17 @@ describe("App", () => {
       expect(screen.getByRole("img", { name: /uploaded source/i })).toBeInTheDocument();
       expect(screen.getByText(/original\.png - 8 x 6/i)).toBeInTheDocument();
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("clears the optimistic preview when upload fails", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const createObjectUrl = vi.spyOn(URL, "createObjectURL");
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
 
-    global.fetch = vi.fn(async () => {
+    globalThis.fetch = vi.fn(async () => {
       return new Response(
         JSON.stringify({ detail: "Only PNG uploads are supported." }),
         {
@@ -137,13 +138,13 @@ describe("App", () => {
       expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
       expect(screen.getByText(/only png uploads are supported\./i)).toBeInTheDocument();
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("renders proposal cards after auto annotate", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/source" && init?.method === "POST") {
         return new Response(JSON.stringify(uploadedState), {
@@ -162,7 +163,7 @@ describe("App", () => {
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    global.fetch = mockFetch as typeof fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
 
     try {
       render(<App />);
@@ -182,14 +183,20 @@ describe("App", () => {
       expect(screen.getByText("imported")).toBeInTheDocument();
       expect(screen.getAllByRole("button", { name: /accept/i })).toHaveLength(2);
       expect(screen.getAllByRole("button", { name: /reject/i })).toHaveLength(2);
+      expect(screen.getByTestId("overlay-region-element_001")).toHaveStyle({
+        left: "10%",
+        top: "17.77777777777778%",
+        width: "25%",
+        height: "35.55555555555556%",
+      });
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("hides bbox box and name overlays when toggles are turned off", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/source" && init?.method === "POST") {
         return new Response(JSON.stringify(uploadedState), {
@@ -208,7 +215,7 @@ describe("App", () => {
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    global.fetch = mockFetch as typeof fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
 
     try {
       render(<App />);
@@ -227,13 +234,13 @@ describe("App", () => {
       expect(screen.queryByTestId("overlay-box-element_001")).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-label-element_001")).not.toBeInTheDocument();
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("hides rejected proposals until show rejected is enabled", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/source" && init?.method === "POST") {
         return new Response(JSON.stringify(uploadedState), {
@@ -259,7 +266,7 @@ describe("App", () => {
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    global.fetch = mockFetch as typeof fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
 
     try {
       render(<App />);
@@ -276,13 +283,13 @@ describe("App", () => {
 
       expect(screen.getByAltText("Region 2 thumbnail")).toBeInTheDocument();
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 
   it("shows minimal editable inspector fields for accepted elements and persists edits", async () => {
     const user = userEvent.setup();
-    const originalFetch = global.fetch;
+    const originalFetch = globalThis.fetch;
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/source" && init?.method === "POST") {
         return new Response(JSON.stringify(uploadedState), {
@@ -308,7 +315,7 @@ describe("App", () => {
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
-    global.fetch = mockFetch as typeof fetch;
+    globalThis.fetch = mockFetch as typeof fetch;
 
     try {
       render(<App />);
@@ -318,6 +325,8 @@ describe("App", () => {
       await user.upload(input, file);
       await user.click(screen.getByRole("button", { name: /auto annotate/i }));
       await user.click(screen.getAllByRole("button", { name: /accept/i })[0]);
+
+      expect(screen.getAllByRole("button", { name: /reject/i })).toHaveLength(1);
 
       const nameField = screen.getByLabelText(/element name/i);
       const modeField = screen.getByLabelText(/element mode/i);
@@ -341,7 +350,7 @@ describe("App", () => {
         expect.objectContaining({ method: "PUT" }),
       );
     } finally {
-      global.fetch = originalFetch;
+      globalThis.fetch = originalFetch;
     }
   });
 });
