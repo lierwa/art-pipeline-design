@@ -28,6 +28,7 @@ from art_pipeline.elements import (
     next_element_id,
     validate_element_id,
 )
+from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
 from art_pipeline.asset_outputs import (
     clear_extraction_outputs,
@@ -244,6 +245,20 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             "extractions": extractions,
             "state": next_state.model_dump(mode="json"),
         }
+
+    @app.post("/api/workspace/export")
+    def post_export(request: ExportWorkspaceRequest | None = None) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        export_request = request or ExportWorkspaceRequest()
+        try:
+            return export_workspace(
+                root,
+                state,
+                allow_incomplete_visible_only=export_request.allowIncompleteVisibleOnly,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/workspace/elements/{element_id:path}/mask/replace")
     def post_replace_mask(element_id: str, request: ReplaceMaskRequest) -> dict:

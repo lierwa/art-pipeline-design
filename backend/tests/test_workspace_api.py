@@ -1650,6 +1650,240 @@ def test_repair_qa_requires_valid_repair_report(
     assert body["state"]["elements"][0]["status"] == "qa_failed"
 
 
+def test_export_writes_visible_assets_and_blocks_incomplete_completion(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 2,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "ready",
+                    "visible": True,
+                    "confidence": None,
+                },
+                {
+                    "id": "element_002",
+                    "name": "Towel Gap",
+                    "status": "accepted",
+                    "mode": "needs_completion",
+                    "bbox": {"x": 1, "y": 1, "w": 3, "h": 2},
+                    "canvas": {"x": 0, "y": 0, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "needs generated edge",
+                    "visible": True,
+                    "confidence": None,
+                },
+                {
+                    "id": "element_003",
+                    "name": "Parent",
+                    "status": "split_parent",
+                    "mode": "visible_only",
+                    "bbox": {"x": 0, "y": 0, "w": 4, "h": 3},
+                    "canvas": {"x": 0, "y": 0, "w": 4, "h": 3},
+                    "layer": 3,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                },
+                {
+                    "id": "element_004",
+                    "name": "Rejected",
+                    "status": "proposal",
+                    "mode": "rejected",
+                    "bbox": {"x": 4, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 4, "y": 2, "w": 2, "h": 2},
+                    "layer": 4,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": False,
+                    "confidence": None,
+                },
+                {
+                    "id": "element_005",
+                    "name": "Draft Proposal",
+                    "status": "proposal",
+                    "mode": "visible_only",
+                    "bbox": {"x": 5, "y": 3, "w": 2, "h": 2},
+                    "canvas": {"x": 5, "y": 3, "w": 2, "h": 2},
+                    "layer": 5,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "auto_cv",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": 0.25,
+                },
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    extract_response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001", "element_002"], "strategy": "bbox_alpha"},
+    )
+    assert extract_response.status_code == 200
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 1
+    assert body["blockedCount"] == 1
+    assert body["exportedElements"][0]["elementId"] == "element_001"
+    assert body["exportedElements"][0]["assetPath"] == "export/assets/element_001.png"
+    assert body["exportedElements"][0]["maskPath"] == "export/masks/element_001.png"
+    assert body["blockedElements"] == [
+        {
+            "elementId": "element_002",
+            "name": "Towel Gap",
+            "reason": "needs_completion_without_valid_repair",
+        }
+    ]
+    assert "element_003 skipped because split_parent elements are not exported by default." in body["warnings"]
+    assert "element_004 skipped because rejected elements are not exported." in body["warnings"]
+    assert "element_005 skipped because proposals must be accepted before export." in body["warnings"]
+
+    export_root = tmp_path / "workspace" / "export"
+    assert (export_root / "assets" / "element_001.png").exists()
+    assert (export_root / "masks" / "element_001.png").exists()
+    assert not (export_root / "assets" / "element_002.png").exists()
+    assert (export_root / "manifest.json").exists()
+    assert (export_root / "level.json").exists()
+    assert (export_root / "qa_report.json").exists()
+    assert (export_root / "contact_sheet.png").exists()
+
+    manifest = workspace_api.json.loads((export_root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["assetPackVersion"] == 1
+    assert manifest["source"] == {
+        "filename": "original.png",
+        "path": "source/original.png",
+        "width": 8,
+        "height": 6,
+    }
+    assert manifest["elements"][0]["id"] == "element_001"
+    assert manifest["elements"][0]["sourceAssetPath"] == "elements/element_001/asset_incomplete.png"
+    assert manifest["elements"][0]["assetPath"] == "export/assets/element_001.png"
+    assert manifest["elements"][0]["maskPath"] == "export/masks/element_001.png"
+    assert manifest["elements"][0]["bbox"] == {"x": 3, "y": 2, "w": 2, "h": 2}
+    assert manifest["elements"][0]["canvas"] == {"x": 1, "y": 1, "w": 5, "h": 4}
+
+    level = workspace_api.json.loads((export_root / "level.json").read_text(encoding="utf-8"))
+    assert level["placements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "assetPath": "export/assets/element_001.png",
+            "maskPath": "export/masks/element_001.png",
+            "layer": 2,
+            "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+            "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+            "parentId": None,
+        }
+    ]
+
+    qa_report = workspace_api.json.loads((export_root / "qa_report.json").read_text(encoding="utf-8"))
+    assert qa_report["blockedElements"] == body["blockedElements"]
+    assert qa_report["warnings"] == body["warnings"]
+
+
+def test_export_can_explicitly_override_unrepaired_completion_with_warning(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    _prepare_completion_element(client, tmp_path)
+
+    response = client.post(
+        "/api/workspace/export",
+        json={"allowIncompleteVisibleOnly": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 1
+    assert body["blockedCount"] == 0
+    assert body["exportedElements"][0]["elementId"] == "element_001"
+    assert body["exportedElements"][0]["sourceAssetPath"] == "elements/element_001/asset_incomplete.png"
+    assert body["exportedElements"][0]["warnings"] == [
+        "needs_completion exported from asset_incomplete.png by explicit override."
+    ]
+    assert body["warnings"] == [
+        "element_001 needs_completion exported from asset_incomplete.png by explicit override."
+    ]
+    assert (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
+
+
+def test_export_uses_completed_asset_after_repair_qa_pass(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"filled missing pixel"}', encoding="utf-8")
+    validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
+    assert validate_response.status_code == 200
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 1
+    assert body["blockedCount"] == 0
+    assert body["exportedElements"][0]["sourceAssetPath"] == "elements/element_001/repair/completed_asset.png"
+    assert body["exportedElements"][0]["assetPath"] == "export/assets/element_001.png"
+
+    export_asset = tmp_path / "workspace" / "export" / "assets" / "element_001.png"
+    with Image.open(export_asset) as image:
+        assert image.getpixel((2, 1)) == (250, 120, 10, 255)
+
+    qa_report = workspace_api.json.loads(
+        (tmp_path / "workspace" / "export" / "qa_report.json").read_text(encoding="utf-8")
+    )
+    assert qa_report["repairQaReports"]["element_001"]["status"] == "pass"
+
+
 def _prepare_repair_package(client: TestClient, tmp_path: Path) -> Path:
     element_dir = _prepare_completion_element(client, tmp_path)
     mask_response = client.post(

@@ -13,6 +13,7 @@ import {
   DraftRegion,
   ElementEditorDraft,
   EMPTY_STATE,
+  ExportSummary,
   missingMaskUrl,
   MissingMaskDraft,
   normalizeWorkspaceState,
@@ -102,6 +103,8 @@ export function App() {
   const [repairQaReport, setRepairQaReport] = useState<RepairQaReport | null>(null);
   const [repairMetadataByElementId, setRepairMetadataByElementId] = useState<Record<string, RepairMetadata>>({});
   const [isRepairing, setIsRepairing] = useState(false);
+  const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
 
   useEffect(() => {
@@ -293,6 +296,7 @@ export function App() {
       const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
       setWorkspace(nextState);
       setSelectedElementId(nextState.elements[0]?.id ?? null);
+      setExportSummary(null);
       setStatus(nextState.source ? "Workspace loaded." : "Ready");
     } catch (loadError) {
       setStatus("Workspace load failed.");
@@ -305,6 +309,7 @@ export function App() {
   function replaceWorkspace(nextState: WorkspaceState, nextStatus: string, nextSelectionId?: string | null) {
     const normalized = normalizeWorkspaceState(nextState);
     setWorkspace(normalized);
+    setExportSummary(null);
     setRepairMetadataByElementId((current) => {
       const existingIds = new Set(normalized.elements.map((element) => element.id));
       return Object.fromEntries(
@@ -399,6 +404,7 @@ export function App() {
       setSplitRegions([]);
       setSavedMissingMaskElementIds([]);
       setRepairQaReport(null);
+      setExportSummary(null);
     } catch (uploadError) {
       URL.revokeObjectURL(optimisticUrl);
       setSourceUrl(null);
@@ -766,6 +772,41 @@ export function App() {
     }
   }
 
+  async function handleExportAssetPack() {
+    if (!workspace.source || isExporting) {
+      return;
+    }
+
+    setIsExporting(true);
+    setStatus("Exporting asset pack...");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/workspace/export", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ allowIncompleteVisibleOnly: false }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Export failed.");
+      }
+
+      const payload = (await response.json()) as ExportSummary;
+      setExportSummary(payload);
+      setAssetCacheKey((current) => current + 1);
+      setStatus(formatExportStatus(payload));
+    } catch (exportError) {
+      setStatus("Export failed.");
+      setError(exportError instanceof Error ? exportError.message : "Export failed.");
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   function handleOverlayToggle(key: keyof OverlayState) {
     setOverlays((current) => ({
       ...current,
@@ -1024,8 +1065,12 @@ export function App() {
           <button type="button" disabled>
             Repair
           </button>
-          <button type="button" disabled>
-            Export
+          <button
+            type="button"
+            disabled={!workspace.source || isExporting}
+            onClick={() => void handleExportAssetPack()}
+          >
+            Export Asset Pack
           </button>
         </div>
       </header>
@@ -1138,6 +1183,7 @@ export function App() {
             assetCacheKey={assetCacheKey}
             hasMissingMaskPreview={selectedHasMissingMask}
           />
+          <ExportPanel summary={exportSummary} assetCacheKey={assetCacheKey} />
         </div>
       </section>
     </div>
@@ -1331,6 +1377,77 @@ function isRepairVisible(
     || qaReport?.elementId === selectedElement.id
     || repairMetadata?.elementId === selectedElement.id
   );
+}
+
+function ExportPanel({
+  summary,
+  assetCacheKey,
+}: {
+  summary: ExportSummary | null;
+  assetCacheKey: number;
+}) {
+  return (
+    <div className="export-panel">
+      <div className="export-panel-summary">
+        <h3>Export Pack</h3>
+        <strong>{summary ? "Asset pack ready" : "No export yet"}</strong>
+        {summary ? (
+          <>
+            <span>Manifest: {summary.paths.manifest}</span>
+            <span>Level: {summary.paths.level}</span>
+          </>
+        ) : (
+          <span>Run export after extraction or repair validation.</span>
+        )}
+      </div>
+      <div className="export-panel-details">
+        {summary ? (
+          <>
+            <div className="export-metrics">
+              <div className="preview-card">
+                <span className="preview-label">Exportable count</span>
+                <strong>{summary.exportableCount} exportable</strong>
+              </div>
+              <div className="preview-card">
+                <span className="preview-label">Blocked count</span>
+                <strong>{summary.blockedCount} blocked</strong>
+              </div>
+              <div className="preview-card export-path-card">
+                <span className="preview-label">Open export folder path</span>
+                <strong>{summary.outputDir}</strong>
+              </div>
+            </div>
+            {summary.warnings.length > 0 ? (
+              <div className="export-warnings">
+                <span className="preview-label">Warnings</span>
+                <ul>
+                  {summary.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="panel-copy">No export warnings.</p>
+            )}
+            <figure className="export-contact-sheet">
+              <img
+                alt="Export contact sheet preview"
+                src={workspaceAssetUrl(summary.paths.contactSheet, assetCacheKey) ?? undefined}
+              />
+              <figcaption>Contact sheet preview</figcaption>
+            </figure>
+          </>
+        ) : (
+          <p className="panel-copy">The contact sheet preview appears here after export.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatExportStatus(summary: ExportSummary): string {
+  const assetLabel = summary.exportableCount === 1 ? "asset" : "assets";
+  return `Exported ${summary.exportableCount} ${assetLabel}. ${summary.blockedCount} blocked.`;
 }
 
 function formatRatio(value: number): string {

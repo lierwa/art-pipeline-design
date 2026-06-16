@@ -128,6 +128,38 @@ export type RepairMetadata = {
   qaReport: RepairQaReport | null;
 };
 
+export type ExportedElementSummary = {
+  elementId: string;
+  name: string;
+  assetPath: string;
+  maskPath: string | null;
+  sourceAssetPath: string;
+  warnings: string[];
+};
+
+export type BlockedExportElement = {
+  elementId: string;
+  name: string;
+  reason: string;
+};
+
+export type ExportSummary = {
+  exportableCount: number;
+  blockedCount: number;
+  warnings: string[];
+  outputDir: string;
+  paths: {
+    assetsDir: string;
+    masksDir: string;
+    manifest: string;
+    level: string;
+    contactSheet: string;
+    qaReport: string;
+  };
+  exportedElements: ExportedElementSummary[];
+  blockedElements: BlockedExportElement[];
+};
+
 export type CanvasTool = "select" | "draw" | "split" | "missing-mask";
 
 export type DraftRegion = {

@@ -101,6 +101,40 @@ const extractedState = {
   ],
 };
 
+const exportSummary = {
+  exportableCount: 1,
+  blockedCount: 1,
+  warnings: [
+    "element_002 needs_completion is blocked until repair QA passes.",
+  ],
+  outputDir: "D:/work/art-pipeline-v2-demo/workspace/export",
+  paths: {
+    assetsDir: "export/assets",
+    masksDir: "export/masks",
+    manifest: "export/manifest.json",
+    level: "export/level.json",
+    contactSheet: "export/contact_sheet.png",
+    qaReport: "export/qa_report.json",
+  },
+  exportedElements: [
+    {
+      elementId: "element_001",
+      name: "Region 1",
+      assetPath: "export/assets/element_001.png",
+      maskPath: "export/masks/element_001.png",
+      sourceAssetPath: "elements/element_001/asset_incomplete.png",
+      warnings: [],
+    },
+  ],
+  blockedElements: [
+    {
+      elementId: "element_002",
+      name: "Gap",
+      reason: "needs_completion_without_valid_repair",
+    },
+  ],
+};
+
 const completionState = {
   source: loadedState.source,
   elements: [
@@ -497,6 +531,42 @@ describe("App", () => {
       );
       expect(screen.getAllByText(/canvas 46 x 48 at 4, 8/i).length).toBeGreaterThan(0);
       expect(screen.getAllByText(/bbox 30 x 32 at 12, 16/i).length).toBeGreaterThan(0);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("exports the asset pack and shows the export summary panel", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(extractedState);
+      }
+
+      if (input === "/api/workspace/export" && init?.method === "POST") {
+        expect(init.body).toBe(JSON.stringify({ allowIncompleteVisibleOnly: false }));
+        return jsonResponse(exportSummary);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /export asset pack/i }));
+
+      expect(await screen.findAllByText(/exported 1 asset\. 1 blocked\./i)).toHaveLength(2);
+      expect(screen.getByRole("heading", { name: /export pack/i })).toBeInTheDocument();
+      expect(screen.getByText("1 exportable")).toBeInTheDocument();
+      expect(screen.getByText("1 blocked")).toBeInTheDocument();
+      expect(screen.getByText(/element_002 needs_completion is blocked/i)).toBeInTheDocument();
+      expect(screen.getByText("D:/work/art-pipeline-v2-demo/workspace/export")).toBeInTheDocument();
+      expect(screen.getByAltText("Export contact sheet preview")).toHaveAttribute(
+        "src",
+        expect.stringMatching(/^\/api\/workspace\/assets\/export\/contact_sheet\.png\?cache=\d+$/),
+      );
     } finally {
       restoreFetch();
     }

@@ -640,6 +640,80 @@ button {
   gap: 0.85rem;
 }
 
+.export-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.26fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #34415a;
+  border-radius: 8px;
+  background: #101722;
+}
+
+.export-panel-summary,
+.export-panel-details {
+  display: grid;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.export-panel-summary h3 {
+  margin: 0;
+  color: #9da7ba;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.export-panel-summary span:not(.preview-label),
+.export-warnings li,
+.export-contact-sheet figcaption {
+  color: #9da7ba;
+  font-size: 0.86rem;
+}
+
+.export-metrics {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.18fr) minmax(120px, 0.18fr) minmax(0, 1fr);
+  gap: 0.85rem;
+}
+
+.export-path-card strong {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.export-warnings {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid #493f2d;
+  border-radius: 8px;
+  background: rgba(255, 209, 102, 0.08);
+}
+
+.export-warnings ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.export-contact-sheet {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.export-contact-sheet img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid #2f3749;
+  border-radius: 6px;
+  background: #0d1117;
+}
+
 .qa-badge {
   width: fit-content;
   padding: 0.22rem 0.5rem;
@@ -672,7 +746,9 @@ button {
   .extraction-preview,
   .extraction-preview-grid,
   .repair-comparison,
-  .repair-comparison-grid {
+  .repair-comparison-grid,
+  .export-panel,
+  .export-metrics {
     grid-template-columns: 1fr;
   }
 }
