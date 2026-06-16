@@ -24,7 +24,8 @@ class PlannedExport:
     source_asset_path: str
     export_asset_path: str
     source_mask_path: str | None
-    export_mask_path: str | None
+    export_mask_path: str
+    derive_mask_from_asset: bool
     warnings: list[str]
 
 
@@ -35,6 +36,8 @@ MANIFEST_PATH = "export/manifest.json"
 LEVEL_PATH = "export/level.json"
 CONTACT_SHEET_PATH = "export/contact_sheet.png"
 QA_REPORT_PATH = "export/qa_report.json"
+MASK_DERIVED_FROM_ALPHA_WARNING = "mask derived from asset alpha because source mask was missing."
+MASK_UNAVAILABLE_REASON = "mask_missing_and_asset_alpha_unavailable"
 
 
 def export_workspace(
@@ -72,6 +75,14 @@ def export_workspace(
                 planned_export.source_mask_path,
                 planned_export.export_mask_path,
             )
+        elif planned_export.derive_mask_from_asset:
+            _write_alpha_mask(
+                workspace_path,
+                planned_export.source_asset_path,
+                planned_export.export_mask_path,
+            )
+        else:
+            raise ValueError(f"Mask source is missing for exported element {element.id}.")
 
         exported_entry = {
             "elementId": element.id,
@@ -186,7 +197,15 @@ def _plan_exports(
                     }
                 )
                 continue
-            planned.append(_planned_export(workspace_root, element, source_asset_path, []))
+            _append_planned_export(
+                planned,
+                blocked,
+                warnings,
+                workspace_root,
+                element,
+                source_asset_path,
+                [],
+            )
             continue
 
         if element.mode in {"needs_completion", "completed_by_codex"}:
@@ -202,7 +221,15 @@ def _plan_exports(
                 and _workspace_file_exists(workspace_root, completed_asset_path)
             )
             if valid_repair:
-                planned.append(_planned_export(workspace_root, element, completed_asset_path, []))
+                _append_planned_export(
+                    planned,
+                    blocked,
+                    warnings,
+                    workspace_root,
+                    element,
+                    completed_asset_path,
+                    [],
+                )
                 continue
 
             incomplete_asset_path = _incomplete_asset_path(element.id)
@@ -220,8 +247,14 @@ def _plan_exports(
                     "needs_completion exported from asset_incomplete.png by explicit override."
                 )
                 warnings.append(f"{element.id} {warning}")
-                planned.append(
-                    _planned_export(workspace_root, element, incomplete_asset_path, [warning])
+                _append_planned_export(
+                    planned,
+                    blocked,
+                    warnings,
+                    workspace_root,
+                    element,
+                    incomplete_asset_path,
+                    [warning],
                 )
                 continue
 
@@ -236,21 +269,61 @@ def _plan_exports(
     return planned, blocked, warnings, repair_qa_reports
 
 
+def _append_planned_export(
+    planned: list[PlannedExport],
+    blocked: list[dict[str, str]],
+    warnings: list[str],
+    workspace_root: Path,
+    element: ElementRecord,
+    source_asset_path: str,
+    element_warnings: list[str],
+) -> None:
+    planned_export = _planned_export(
+        workspace_root,
+        element,
+        source_asset_path,
+        element_warnings,
+    )
+    if planned_export is None:
+        blocked.append(
+            {
+                "elementId": element.id,
+                "name": element.name,
+                "reason": MASK_UNAVAILABLE_REASON,
+            }
+        )
+        return
+
+    planned.append(planned_export)
+    for warning in planned_export.warnings:
+        if warning not in element_warnings:
+            warnings.append(f"{element.id} {warning}")
+
+
 def _planned_export(
     workspace_root: Path,
     element: ElementRecord,
     source_asset_path: str,
     warnings: list[str],
-) -> PlannedExport:
+) -> PlannedExport | None:
     source_mask_path = _source_mask_path(workspace_root, element)
-    export_mask_path = f"{EXPORT_MASKS_DIR}/{element.id}.png" if source_mask_path else None
+    export_mask_path = f"{EXPORT_MASKS_DIR}/{element.id}.png"
+    if source_mask_path is None and not _asset_has_alpha_channel(workspace_root, source_asset_path):
+        return None
+
+    export_warnings = list(warnings)
+    derive_mask_from_asset = source_mask_path is None
+    if derive_mask_from_asset:
+        export_warnings.append(MASK_DERIVED_FROM_ALPHA_WARNING)
+
     return PlannedExport(
         element=element,
         source_asset_path=source_asset_path,
         export_asset_path=f"{EXPORT_ASSETS_DIR}/{element.id}.png",
         source_mask_path=source_mask_path,
         export_mask_path=export_mask_path,
-        warnings=warnings,
+        derive_mask_from_asset=derive_mask_from_asset,
+        warnings=export_warnings,
     )
 
 
@@ -293,6 +366,29 @@ def _copy_workspace_file(workspace_root: Path, source_relative: str, target_rela
         raise ValueError(f"Export source file is missing: {source_relative}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, target_path)
+
+
+def _asset_has_alpha_channel(workspace_root: Path, source_relative: str) -> bool:
+    source_path = _resolve_workspace_path(workspace_root, source_relative)
+    try:
+        with Image.open(source_path) as asset:
+            asset.load()
+            return "A" in asset.getbands()
+    except OSError:
+        return False
+
+
+def _write_alpha_mask(workspace_root: Path, source_relative: str, target_relative: str) -> None:
+    source_path = _resolve_workspace_path(workspace_root, source_relative)
+    target_path = _resolve_workspace_path(workspace_root, target_relative)
+    with Image.open(source_path) as asset:
+        asset.load()
+        if "A" not in asset.getbands():
+            raise ValueError(f"Export source asset has no alpha channel: {source_relative}")
+        mask = asset.getchannel("A").point(lambda value: 255 if value > 0 else 0)
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    mask.save(target_path, format="PNG")
 
 
 def _workspace_file_exists(workspace_root: Path, relative_path: str) -> bool:

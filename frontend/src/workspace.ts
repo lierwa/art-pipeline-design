@@ -132,7 +132,7 @@ export type ExportedElementSummary = {
   elementId: string;
   name: string;
   assetPath: string;
-  maskPath: string | null;
+  maskPath: string;
   sourceAssetPath: string;
   warnings: string[];
 };

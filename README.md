@@ -128,6 +128,8 @@ split_parent -> skipped
 rejected -> skipped
 ```
 
+Every exported asset has a matching `export/masks/<element_id>.png`. If the source mask is missing but the exported PNG has an alpha channel, export derives the mask from alpha and records a warning in `manifest.json` and `qa_report.json`. If neither a mask nor asset alpha is available, the element is blocked.
+
 The API also supports an explicit override:
 
 ```json
