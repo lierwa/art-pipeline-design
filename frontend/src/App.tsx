@@ -52,6 +52,10 @@ type ClearMaskResponse = {
   state: WorkspaceState;
 };
 
+type ReplaceMaskResponse = {
+  state: WorkspaceState;
+};
+
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_STATE);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -384,6 +388,42 @@ export function App() {
     }
   }
 
+  async function handleReplaceMaskByCurrentShape() {
+    if (!selectedElement || !canExtractSelected) {
+      return;
+    }
+
+    setStatus("Replacing mask...");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/mask/replace`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          shape: {
+            type: "rectangle",
+            coordinateSpace: "source",
+            bbox: selectedElement.bbox,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not replace mask.");
+      }
+
+      const payload = (await response.json()) as ReplaceMaskResponse;
+      replaceWorkspace(payload.state, "Mask replaced.", selectedElement.id);
+    } catch (replaceError) {
+      setStatus("Mask replace failed.");
+      setError(replaceError instanceof Error ? replaceError.message : "Could not replace mask.");
+    }
+  }
+
   function handleOverlayToggle(key: keyof OverlayState) {
     setOverlays((current) => ({
       ...current,
@@ -688,7 +728,7 @@ export function App() {
           onSplitRequestDescriptionChange={setSplitRequestDescription}
           onSaveElement={() => void handleSaveElement()}
           onCreateSplitRequest={() => void handleCreateSplitRequest()}
-          onReplaceMaskByBBox={() => void handleExtractSelected()}
+          onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
           onClearMask={() => void handleClearMask()}
           onReExtract={() => void handleExtractSelected()}
           canExtractSelected={canExtractSelected}
@@ -737,6 +777,8 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
     );
   }
 
+  const hasExtractedAsset = selectedElement.status === "extracted" && selectedElement.mask;
+
   return (
     <div className="extraction-preview">
       <div className="extraction-preview-summary">
@@ -745,7 +787,7 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
         <span>{formatCanvas(selectedElement)}</span>
         <span>{formatBBox(selectedElement)}</span>
       </div>
-      {selectedElement.mask ? (
+      {hasExtractedAsset ? (
         <div className="extraction-preview-grid">
           <figure>
             <img
@@ -770,6 +812,17 @@ function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElem
             </div>
             <figcaption>Transparent asset</figcaption>
           </figure>
+        </div>
+      ) : selectedElement.mask ? (
+        <div className="extraction-preview-grid">
+          <figure>
+            <img
+              alt={`${selectedElement.name} mask overlay`}
+              src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+            />
+            <figcaption>Mask overlay</figcaption>
+          </figure>
+          <p className="panel-copy">Mask saved. Re-extract to refresh asset previews.</p>
         </div>
       ) : (
         <p className="panel-copy">Run extraction to create mask and transparent asset previews.</p>

@@ -463,6 +463,58 @@ describe("App", () => {
     }
   });
 
+  it("replaces the selected mask from the current rectangle shape", async () => {
+    const user = userEvent.setup();
+    const shapeMaskState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          status: "extract_ready",
+          mask: "elements/element_001/mask.png",
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/mask/replace" && init?.method === "POST") {
+        return jsonResponse({
+          state: shapeMaskState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /replace mask by current shape/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/element_001/mask/replace",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            shape: {
+              type: "rectangle",
+              coordinateSpace: "source",
+              bbox: { x: 12, y: 16, w: 30, h: 32 },
+            },
+          }),
+        }),
+      );
+      expect(await screen.findAllByText(/mask replaced\./i)).toHaveLength(2);
+      expect(screen.getByText("extract_ready")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("shows mask overlays and clears the selected extraction mask", async () => {
     const user = userEvent.setup();
     const clearedState = {
@@ -493,7 +545,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      expect(screen.getByRole("button", { name: /replace mask by bbox/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /replace mask by current shape/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /re-extract/i })).toBeInTheDocument();
       await user.click(screen.getByRole("checkbox", { name: /show masks/i }));
 

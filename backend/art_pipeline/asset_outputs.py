@@ -18,6 +18,18 @@ def extraction_relative_paths(element_id: str) -> dict[str, str]:
     }
 
 
+def write_mask_output(
+    workspace_root: Path,
+    element: ElementRecord,
+    mask: Image.Image,
+) -> str:
+    mask_path = extraction_relative_paths(element.id)["maskPath"]
+    output_dir = workspace_root / "elements" / element.id
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mask.save(workspace_root / mask_path, format="PNG")
+    return mask_path
+
+
 def write_extraction_outputs(
     workspace_root: Path,
     element: ElementRecord,
@@ -30,7 +42,7 @@ def write_extraction_outputs(
     output_dir = workspace_root / "elements" / element.id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    mask.save(workspace_root / paths["maskPath"], format="PNG")
+    write_mask_output(workspace_root, element, mask)
     asset.save(workspace_root / paths["assetPath"], format="PNG")
     source_crop.save(workspace_root / paths["sourceCropPath"], format="PNG")
 
@@ -58,6 +70,18 @@ def clear_extraction_outputs(workspace_root: Path, element_id: str) -> None:
     output_dir = workspace_root / "elements" / element_id
     for filename in (
         "mask.png",
+        "asset_incomplete.png",
+        "extraction.json",
+        "source_crop.png",
+    ):
+        path = output_dir / filename
+        if path.exists():
+            path.unlink()
+
+
+def clear_stale_asset_outputs(workspace_root: Path, element_id: str) -> None:
+    output_dir = workspace_root / "elements" / element_id
+    for filename in (
         "asset_incomplete.png",
         "extraction.json",
         "source_crop.png",

@@ -20,10 +20,14 @@ from art_pipeline.annotations import (
 )
 from art_pipeline.elements import ElementRecord, SourceMetadata, WorkspaceState, next_element_id
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
-from art_pipeline.asset_outputs import clear_extraction_outputs
+from art_pipeline.asset_outputs import (
+    clear_extraction_outputs,
+    clear_stale_asset_outputs,
+    write_mask_output,
+)
+from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
 from art_pipeline.segmentation import (
     ExtractWorkspaceRequest,
-    SAM2_UNAVAILABLE_DETAIL,
     SegmentationUnavailableError,
     extract_with_strategy,
 )
@@ -169,9 +173,6 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/workspace/extract")
     def post_extract(request: ExtractWorkspaceRequest) -> dict:
-        if request.strategy == "sam2_subject":
-            raise HTTPException(status_code=501, detail=SAM2_UNAVAILABLE_DETAIL)
-
         root = app.state.workspace_root
         state = _read_state(root)
         if state.source is None:
@@ -184,7 +185,13 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         try:
             for element in targets:
                 extractions.append(
-                    extract_with_strategy(root, source_image, element, request.strategy)
+                    extract_with_strategy(
+                        root,
+                        source_image,
+                        element,
+                        request.strategy,
+                        request.sam2Prompt,
+                    )
                 )
         except SegmentationUnavailableError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
@@ -214,6 +221,38 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             "extractions": extractions,
             "state": next_state.model_dump(mode="json"),
         }
+
+    @app.post("/api/workspace/elements/{element_id}/mask/replace")
+    def post_replace_mask(element_id: str, request: ReplaceMaskRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        element = _get_element(state, element_id)
+        if not _is_extractable_element(element):
+            raise HTTPException(status_code=400, detail=f"Element {element.id} is not extractable.")
+
+        try:
+            mask = create_mask_from_shape(element, request.shape)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        clear_stale_asset_outputs(root, element.id)
+        mask_path = write_mask_output(root, element, mask)
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[
+                element.model_copy(
+                    update={
+                        "status": "extract_ready",
+                        "mask": mask_path,
+                    }
+                )
+                if element.id == element_id
+                else element
+                for element in state.elements
+            ],
+        )
+        _write_state(root, next_state)
+        return {"state": next_state.model_dump(mode="json")}
 
     @app.post("/api/workspace/elements/{element_id}/mask/clear")
     def post_clear_mask(element_id: str) -> dict:
@@ -362,8 +401,7 @@ def _select_extraction_targets(
         targets = [
             element
             for element in state.elements
-            if element.status in {"accepted", "extract_ready"}
-            and element.mode != "rejected"
+            if _is_extractable_element(element, include_extracted=False)
         ]
     else:
         by_id = {element.id: element for element in state.elements}
@@ -372,10 +410,7 @@ def _select_extraction_targets(
             element = by_id.get(element_id)
             if element is None:
                 raise HTTPException(status_code=404, detail="Element not found.")
-            if (
-                element.status not in {"accepted", "extract_ready", "extracted"}
-                or element.mode == "rejected"
-            ):
+            if not _is_extractable_element(element):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Element {element.id} is not extractable.",
@@ -385,6 +420,16 @@ def _select_extraction_targets(
     if not targets:
         raise HTTPException(status_code=400, detail="No extractable elements selected.")
     return targets
+
+
+def _is_extractable_element(
+    element: ElementRecord,
+    include_extracted: bool = True,
+) -> bool:
+    statuses = {"accepted", "extract_ready"}
+    if include_extracted:
+        statuses.add("extracted")
+    return element.status in statuses and element.mode != "rejected"
 
 
 app = create_app()

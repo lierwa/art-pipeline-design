@@ -15,7 +15,7 @@ type InspectorPanelProps = {
   onSplitRequestDescriptionChange: (value: string) => void;
   onSaveElement: () => void;
   onCreateSplitRequest: () => void;
-  onReplaceMaskByBBox: () => void;
+  onReplaceMaskByCurrentShape: () => void;
   onClearMask: () => void;
   onReExtract: () => void;
   canExtractSelected: boolean;
@@ -30,7 +30,7 @@ export function InspectorPanel({
   onSplitRequestDescriptionChange,
   onSaveElement,
   onCreateSplitRequest,
-  onReplaceMaskByBBox,
+  onReplaceMaskByCurrentShape,
   onClearMask,
   onReExtract,
   canExtractSelected,
@@ -250,9 +250,9 @@ export function InspectorPanel({
                 <button
                   type="button"
                   disabled={!canExtractSelected || isExtracting}
-                  onClick={onReplaceMaskByBBox}
+                  onClick={onReplaceMaskByCurrentShape}
                 >
-                  Replace mask by bbox
+                  Replace mask by current shape
                 </button>
                 <button
                   type="button"
@@ -269,7 +269,7 @@ export function InspectorPanel({
                   Re-extract
                 </button>
               </div>
-              {selectedElement.mask ? (
+              {selectedElement.status === "extracted" && selectedElement.mask ? (
                 <div className="inspector-preview-strip">
                   <img
                     alt={`${selectedElement.name} inspector source crop`}
@@ -285,6 +285,14 @@ export function InspectorPanel({
                       src={assetIncompleteUrl(selectedElement)}
                     />
                   </div>
+                </div>
+              ) : selectedElement.mask ? (
+                <div className="inspector-preview-strip">
+                  <img
+                    alt={`${selectedElement.name} inspector mask overlay`}
+                    src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+                  />
+                  <p className="panel-copy">Mask saved. Re-extract to refresh asset previews.</p>
                 </div>
               ) : (
                 <p className="panel-copy">No extraction mask saved for this element.</p>

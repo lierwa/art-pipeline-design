@@ -767,6 +767,36 @@ def test_sam2_subject_strategy_reports_unavailable(client: TestClient) -> None:
         files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
     )
     assert upload_response.status_code == 200
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
 
     response = client.post(
         "/api/workspace/extract",
@@ -775,6 +805,138 @@ def test_sam2_subject_strategy_reports_unavailable(client: TestClient) -> None:
 
     assert response.status_code == 501
     assert response.json()["detail"] == "sam2_subject extraction is not available in this demo build."
+
+
+def test_sam2_subject_prompt_contract_routes_through_adapter(client: TestClient) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(12, 10), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 12,
+                "height": 10,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 4, "h": 4},
+                    "canvas": {"x": 1, "y": 1, "w": 8, "h": 7},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    response = client.post(
+        "/api/workspace/extract",
+        json={
+            "elementIds": ["element_001"],
+            "strategy": "sam2_subject",
+            "sam2Prompt": {
+                "coordinateSpace": "source",
+                "box": {"x": 3, "y": 2, "w": 4, "h": 4},
+                "points": [
+                    {"x": 4, "y": 3, "label": "positive"},
+                    {"x": 8, "y": 8, "label": "negative"},
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 501
+    assert response.json()["detail"] == (
+        "sam2_subject extraction is not available in this demo build. "
+        "Received prompt contract for 1 element(s)."
+    )
+
+
+def test_replace_mask_from_polygon_shape_writes_canvas_aligned_mask(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(12, 10), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 12,
+                "height": 10,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 4, "h": 4},
+                    "canvas": {"x": 1, "y": 1, "w": 8, "h": 7},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    response = client.post(
+        "/api/workspace/elements/element_001/mask/replace",
+        json={
+            "shape": {
+                "type": "polygon",
+                "coordinateSpace": "source",
+                "points": [
+                    {"x": 3, "y": 2},
+                    {"x": 7, "y": 2},
+                    {"x": 5, "y": 6},
+                ],
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    element = response.json()["state"]["elements"][0]
+    assert element["status"] == "extract_ready"
+    assert element["mask"] == "elements/element_001/mask.png"
+
+    mask_path = tmp_path / "workspace" / "elements" / "element_001" / "mask.png"
+    assert mask_path.exists()
+    with Image.open(mask_path) as mask:
+        assert mask.mode == "L"
+        assert mask.size == (8, 7)
+        assert mask.getbbox() is not None
+        assert mask.getpixel((0, 0)) == 0
+        assert mask.getpixel((4, 3)) == 255
 
 
 def test_clear_mask_removes_extraction_outputs_and_marks_element_ready(
