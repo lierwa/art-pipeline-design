@@ -13,8 +13,12 @@ import {
   DraftRegion,
   ElementEditorDraft,
   EMPTY_STATE,
+  missingMaskUrl,
+  MissingMaskDraft,
   normalizeWorkspaceState,
   OverlayState,
+  repairAssetUrl,
+  RepairQaReport,
   sourceCropUrl,
   updateElement,
   WorkspaceElement,
@@ -56,6 +60,21 @@ type ReplaceMaskResponse = {
   state: WorkspaceState;
 };
 
+type SaveMissingMaskResponse = {
+  missingMaskPath: string;
+  state: WorkspaceState;
+};
+
+type CreateRepairTaskResponse = {
+  paths: Record<string, string>;
+  state: WorkspaceState;
+};
+
+type ValidateRepairResponse = {
+  qa: RepairQaReport;
+  state: WorkspaceState;
+};
+
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_STATE);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -73,6 +92,10 @@ export function App() {
   const [manualElementName, setManualElementName] = useState("Manual Element");
   const [splitRegions, setSplitRegions] = useState<DraftRegion[]>([]);
   const [splitRequestDescription, setSplitRequestDescription] = useState("");
+  const [missingMaskDraft, setMissingMaskDraft] = useState<MissingMaskDraft | null>(null);
+  const [savedMissingMaskElementIds, setSavedMissingMaskElementIds] = useState<string[]>([]);
+  const [repairQaReport, setRepairQaReport] = useState<RepairQaReport | null>(null);
+  const [isRepairing, setIsRepairing] = useState(false);
 
   useEffect(() => {
     void loadWorkspace();
@@ -133,6 +156,10 @@ export function App() {
   }, [elementDraft, selectedElement]);
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
+  const selectedHasMissingMask = selectedElement
+    ? savedMissingMaskElementIds.includes(selectedElement.id) || hasRepairPackage(selectedElement)
+    : false;
+  const selectedHasRepairPackage = selectedElement ? hasRepairPackage(selectedElement) : false;
 
   const hasBatchExtractTargets = useMemo(() => {
     return workspace.elements.some(
@@ -146,11 +173,17 @@ export function App() {
     if (!selectedElement) {
       setElementDraft(null);
       setSplitRequestDescription("");
+      setMissingMaskDraft(null);
+      setRepairQaReport(null);
       return;
     }
 
     setElementDraft(draftFromElement(selectedElement));
     setSplitRequestDescription("");
+    setMissingMaskDraft(missingMaskDraftFromElement(selectedElement));
+    setRepairQaReport((current) =>
+      current?.elementId === selectedElement.id ? current : null,
+    );
   }, [selectedElement]);
 
   async function loadWorkspace() {
@@ -436,6 +469,139 @@ export function App() {
     } catch (replaceError) {
       setStatus("Mask replace failed.");
       setError(replaceError instanceof Error ? replaceError.message : "Could not replace mask.");
+    }
+  }
+
+  async function handleDrawMissingMask() {
+    if (
+      !selectedElement
+      || !missingMaskDraft
+      || selectedElement.mode !== "needs_completion"
+      || hasUnsavedGeometryChanges
+      || isRepairing
+    ) {
+      return;
+    }
+
+    const bbox = parseBox(missingMaskDraft);
+    if (!bbox || bbox.w <= 0 || bbox.h <= 0) {
+      setStatus("Missing mask save failed.");
+      setError("Missing mask rectangle values must be positive whole numbers.");
+      return;
+    }
+
+    setIsRepairing(true);
+    setStatus("Saving missing mask...");
+    setError(null);
+    setRepairQaReport(null);
+
+    try {
+      const response = await fetch(
+        `/api/workspace/elements/${selectedElement.id}/repair/missing-mask`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            shape: {
+              type: "rectangle",
+              coordinateSpace: "canvas",
+              bbox,
+            },
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not save missing mask.");
+      }
+
+      const payload = (await response.json()) as SaveMissingMaskResponse;
+      setSavedMissingMaskElementIds((current) =>
+        current.includes(selectedElement.id) ? current : [...current, selectedElement.id],
+      );
+      replaceWorkspace(payload.state, "Missing mask saved.", selectedElement.id);
+    } catch (repairError) {
+      setStatus("Missing mask save failed.");
+      setError(
+        repairError instanceof Error ? repairError.message : "Could not save missing mask.",
+      );
+    } finally {
+      setIsRepairing(false);
+    }
+  }
+
+  async function handleCreateRepairTask() {
+    if (
+      !selectedElement
+      || selectedElement.mode !== "needs_completion"
+      || hasUnsavedGeometryChanges
+      || isRepairing
+    ) {
+      return;
+    }
+
+    setIsRepairing(true);
+    setStatus("Creating Codex repair task...");
+    setError(null);
+    setRepairQaReport(null);
+
+    try {
+      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/repair/task`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not create Codex repair task.");
+      }
+
+      const payload = (await response.json()) as CreateRepairTaskResponse;
+      setSavedMissingMaskElementIds((current) =>
+        current.includes(selectedElement.id) ? current : [...current, selectedElement.id],
+      );
+      replaceWorkspace(payload.state, "Codex repair task created.", selectedElement.id);
+    } catch (repairError) {
+      setStatus("Repair task creation failed.");
+      setError(
+        repairError instanceof Error ? repairError.message : "Could not create Codex repair task.",
+      );
+    } finally {
+      setIsRepairing(false);
+    }
+  }
+
+  async function handleValidateRepairOutput() {
+    if (!selectedElement || isRepairing) {
+      return;
+    }
+
+    setIsRepairing(true);
+    setStatus("Validating repair output...");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/repair/validate`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not validate repair output.");
+      }
+
+      const payload = (await response.json()) as ValidateRepairResponse;
+      replaceWorkspace(payload.state, `Repair validation: ${payload.qa.status}.`, selectedElement.id);
+      setRepairQaReport(payload.qa);
+    } catch (repairError) {
+      setStatus("Repair validation failed.");
+      setError(
+        repairError instanceof Error ? repairError.message : "Could not validate repair output.",
+      );
+    } finally {
+      setIsRepairing(false);
     }
   }
 
@@ -745,16 +911,25 @@ export function App() {
           selectedElement={selectedElement}
           draft={elementDraft}
           splitRequestDescription={splitRequestDescription}
+          missingMaskDraft={missingMaskDraft}
+          repairQaReport={repairQaReport}
+          hasMissingMaskPreview={selectedHasMissingMask}
+          hasRepairPackage={selectedHasRepairPackage}
           onDraftChange={setElementDraft}
           onSplitRequestDescriptionChange={setSplitRequestDescription}
+          onMissingMaskDraftChange={setMissingMaskDraft}
           onSaveElement={() => void handleSaveElement()}
           onCreateSplitRequest={() => void handleCreateSplitRequest()}
           onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
           onClearMask={() => void handleClearMask()}
           onReExtract={() => void handleExtractSelected()}
+          onDrawMissingMask={() => void handleDrawMissingMask()}
+          onCreateRepairTask={() => void handleCreateRepairTask()}
+          onValidateRepairOutput={() => void handleValidateRepairOutput()}
           canExtractSelected={canRunSelectedExtraction}
           hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
           isExtracting={isExtracting}
+          isRepairing={isRepairing}
           assetCacheKey={assetCacheKey}
         />
       </main>
@@ -777,6 +952,12 @@ export function App() {
             <strong>{isSavingState ? "Saving..." : status}</strong>
           </div>
           <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
+          <RepairComparison
+            selectedElement={selectedElement}
+            qaReport={repairQaReport}
+            assetCacheKey={assetCacheKey}
+            hasMissingMaskPreview={selectedHasMissingMask}
+          />
         </div>
       </section>
     </div>
@@ -788,6 +969,14 @@ function canExtractElement(element: WorkspaceElement): boolean {
     return false;
   }
   return ["accepted", "extract_ready", "extracted"].includes(element.status);
+}
+
+function hasExtractedAssetPreview(element: WorkspaceElement): boolean {
+  return ["extracted", "repair_pending", "repair_complete", "qa_failed"].includes(element.status);
+}
+
+function hasRepairPackage(element: WorkspaceElement): boolean {
+  return ["repair_pending", "repair_complete", "qa_failed"].includes(element.status);
 }
 
 function ExtractionPreview({
@@ -806,7 +995,7 @@ function ExtractionPreview({
     );
   }
 
-  const hasExtractedAsset = selectedElement.status === "extracted" && selectedElement.mask;
+  const hasExtractedAsset = hasExtractedAssetPreview(selectedElement) && selectedElement.mask;
 
   return (
     <div className="extraction-preview">
@@ -860,6 +1049,101 @@ function ExtractionPreview({
   );
 }
 
+function RepairComparison({
+  selectedElement,
+  qaReport,
+  assetCacheKey,
+  hasMissingMaskPreview,
+}: {
+  selectedElement: WorkspaceElement | null;
+  qaReport: RepairQaReport | null;
+  assetCacheKey: number;
+  hasMissingMaskPreview: boolean;
+}) {
+  if (!selectedElement || !isRepairVisible(selectedElement, qaReport)) {
+    return null;
+  }
+
+  const changedOverlayUrl = qaReport?.changedPixelsOverlayPath
+    ? workspaceAssetUrl(qaReport.changedPixelsOverlayPath, assetCacheKey)
+    : null;
+
+  return (
+    <div className="repair-comparison">
+      <div className="repair-comparison-summary">
+        <span className="preview-label">Repair Comparison</span>
+        <strong>{selectedElement.name}</strong>
+        {qaReport ? (
+          <>
+            <span className={`qa-badge qa-${qaReport.status}`}>QA {qaReport.status}</span>
+            <span>Inside missing changed pixels: {qaReport.metrics.insideMissingChangedPixels}</span>
+            <span>Outside missing changed pixels: {qaReport.metrics.outsideMissingChangedPixels}</span>
+            <span>Generated area ratio: {formatRatio(qaReport.metrics.changedAreaRatio)}</span>
+          </>
+        ) : (
+          <span>QA pending</span>
+        )}
+      </div>
+      <div className="repair-comparison-grid">
+        <figure>
+          <div className="checkerboard-preview">
+            <img
+              alt={`${selectedElement.name} before asset`}
+              src={assetIncompleteUrl(selectedElement, assetCacheKey)}
+            />
+          </div>
+          <figcaption>Before asset</figcaption>
+        </figure>
+        {hasRepairPackage(selectedElement) || qaReport ? (
+          <figure>
+            <div className="checkerboard-preview">
+              <img
+                alt={`${selectedElement.name} after asset`}
+                src={repairAssetUrl(selectedElement, "completed_asset.png", assetCacheKey)}
+              />
+            </div>
+            <figcaption>After asset</figcaption>
+          </figure>
+        ) : null}
+        {hasMissingMaskPreview ? (
+          <figure>
+            <img
+              alt={`${selectedElement.name} missing mask overlay`}
+              src={missingMaskUrl(selectedElement, assetCacheKey)}
+            />
+            <figcaption>Missing mask overlay</figcaption>
+          </figure>
+        ) : null}
+        {changedOverlayUrl ? (
+          <figure>
+            <img
+              alt={`${selectedElement.name} changed pixels overlay`}
+              src={changedOverlayUrl}
+            />
+            <figcaption>Changed pixels overlay</figcaption>
+          </figure>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function isRepairVisible(
+  selectedElement: WorkspaceElement,
+  qaReport: RepairQaReport | null,
+): boolean {
+  return (
+    selectedElement.mode === "needs_completion"
+    || selectedElement.mode === "completed_by_codex"
+    || hasRepairPackage(selectedElement)
+    || qaReport?.elementId === selectedElement.id
+  );
+}
+
+function formatRatio(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
 function formatCanvas(element: WorkspaceElement): string {
   return `Canvas ${element.canvas.w} x ${element.canvas.h} at ${element.canvas.x}, ${element.canvas.y}`;
 }
@@ -877,6 +1161,19 @@ function draftFromElement(element: WorkspaceElement): ElementEditorDraft {
     canvas: boxToDraft(element.canvas),
     notes: element.notes,
     visible: element.visible,
+  };
+}
+
+function missingMaskDraftFromElement(element: WorkspaceElement): MissingMaskDraft {
+  const x = clampInteger(element.bbox.x - element.canvas.x, 0, element.canvas.w);
+  const y = clampInteger(element.bbox.y - element.canvas.y, 0, element.canvas.h);
+  const maxWidth = Math.max(1, element.canvas.w - x);
+  const maxHeight = Math.max(1, element.canvas.h - y);
+  return {
+    x: String(x),
+    y: String(y),
+    w: String(clampInteger(element.bbox.w, 1, maxWidth)),
+    h: String(clampInteger(element.bbox.h, 1, maxHeight)),
   };
 }
 
@@ -922,6 +1219,10 @@ function boxesEqual(left: Box, right: Box): boolean {
     && left.w === right.w
     && left.h === right.h
   );
+}
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function buildElementFromDraft(

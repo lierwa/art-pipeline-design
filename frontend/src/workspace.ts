@@ -79,6 +79,34 @@ export type ElementEditorDraft = {
   visible: boolean;
 };
 
+export type MissingMaskDraft = {
+  x: string;
+  y: string;
+  w: string;
+  h: string;
+};
+
+export type RepairQaStatus = "pass" | "warn" | "fail";
+
+export type RepairQaReport = {
+  elementId: string;
+  status: RepairQaStatus;
+  reasons: string[];
+  warnings: string[];
+  metrics: {
+    totalPixels: number;
+    missingMaskPixels: number;
+    changedPixels: number;
+    insideMissingChangedPixels: number;
+    outsideMissingChangedPixels: number;
+    preserveChangedPixels: number;
+    missingAreaRatio: number;
+    changedAreaRatio: number;
+  };
+  reportPath: string;
+  changedPixelsOverlayPath: string | null;
+};
+
 export type CanvasTool = "select" | "draw" | "split";
 
 export type DraftRegion = {
@@ -117,6 +145,20 @@ export function sourceCropUrl(element: WorkspaceElement, cacheKey?: number): str
 
 export function assetIncompleteUrl(element: WorkspaceElement, cacheKey?: number): string {
   const url = `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
+  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+}
+
+export function missingMaskUrl(element: WorkspaceElement, cacheKey?: number): string {
+  const url = `/api/workspace/assets/elements/${element.id}/missing_mask.png`;
+  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+}
+
+export function repairAssetUrl(
+  element: WorkspaceElement,
+  filename: string,
+  cacheKey?: number,
+): string {
+  const url = `/api/workspace/assets/elements/${element.id}/repair/${filename}`;
   return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
 }
 

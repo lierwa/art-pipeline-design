@@ -34,6 +34,12 @@ from art_pipeline.asset_outputs import (
     write_mask_output,
 )
 from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
+from art_pipeline.qa import validate_repair_output
+from art_pipeline.repair_tasks import (
+    MissingMaskRequest,
+    create_repair_task_package,
+    write_missing_mask_from_shape,
+)
 from art_pipeline.segmentation import (
     ExtractWorkspaceRequest,
     SegmentationUnavailableError,
@@ -292,6 +298,79 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         )
         _write_state(root, next_state)
         return {"state": next_state.model_dump(mode="json")}
+
+    @app.post("/api/workspace/elements/{element_id:path}/repair/missing-mask")
+    def post_missing_mask(element_id: str, request: MissingMaskRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        element = _get_element(state, element_id)
+
+        try:
+            missing_mask_path = write_missing_mask_from_shape(root, element, request.shape)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return {
+            "missingMaskPath": missing_mask_path,
+            "state": state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/{element_id:path}/repair/task")
+    def post_repair_task(element_id: str) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        element = _get_element(state, element_id)
+
+        try:
+            paths = create_repair_task_package(root, source_image, element)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[
+                element.model_copy(update={"status": "repair_pending"})
+                if element.id == element_id
+                else element
+                for element in state.elements
+            ],
+        )
+        _write_state(root, next_state)
+        return {
+            "paths": paths,
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/{element_id:path}/repair/validate")
+    def post_repair_validate(element_id: str) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        element = _get_element(state, element_id)
+        qa_report = validate_repair_output(root, element)
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[
+                element.model_copy(
+                    update={
+                        "status": "qa_failed"
+                        if qa_report["status"] == "fail"
+                        else "repair_complete",
+                        "mode": element.mode
+                        if qa_report["status"] == "fail"
+                        else "completed_by_codex",
+                    }
+                )
+                if element.id == element_id
+                else element
+                for element in state.elements
+            ],
+        )
+        _write_state(root, next_state)
+        return {
+            "qa": qa_report,
+            "state": next_state.model_dump(mode="json"),
+        }
 
     @app.post("/api/workspace/auto-annotate")
     def auto_annotate() -> WorkspaceState:

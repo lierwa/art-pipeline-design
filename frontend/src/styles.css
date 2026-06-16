@@ -533,7 +533,17 @@ button {
   background: #11151d;
 }
 
-.mask-control-buttons {
+.inspector-repair {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid #34415a;
+  border-radius: 8px;
+  background: #121923;
+}
+
+.mask-control-buttons,
+.repair-control-buttons {
   display: grid;
   grid-template-columns: 1fr;
   gap: 0.55rem;
@@ -549,6 +559,104 @@ button {
   height: 72px;
 }
 
+.repair-preview-stack {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.repair-preview-stack figure,
+.repair-comparison figure {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.repair-preview-stack img,
+.repair-comparison img,
+.repair-preview-placeholder {
+  width: 100%;
+  height: 82px;
+  object-fit: contain;
+  border: 1px solid #2f3749;
+  border-radius: 6px;
+  background: #0d1117;
+}
+
+.repair-preview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7f8aa0;
+  font-size: 0.84rem;
+}
+
+.repair-preview-stack figcaption,
+.repair-comparison figcaption,
+.qa-summary span {
+  color: #c7d0df;
+  font-size: 0.82rem;
+}
+
+.qa-summary {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.65rem;
+  border: 1px solid #2f3749;
+  border-radius: 6px;
+  background: #0d1117;
+}
+
+.repair-comparison {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.3fr) minmax(0, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #2f3749;
+  border-radius: 8px;
+  background: #11151d;
+}
+
+.repair-comparison-summary {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.repair-comparison-summary span:not(.preview-label) {
+  color: #9da7ba;
+  font-size: 0.86rem;
+}
+
+.repair-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.qa-badge {
+  width: fit-content;
+  padding: 0.22rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #3b4252;
+  background: #1a1f29;
+  color: #f3f6fb;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.qa-pass {
+  border-color: #5ac48d;
+}
+
+.qa-warn {
+  border-color: #ffd166;
+}
+
+.qa-fail {
+  border-color: #ff7272;
+}
+
 @media (max-width: 1100px) {
   .workbench-grid {
     grid-template-columns: 1fr;
@@ -556,7 +664,9 @@ button {
 
   .bottom-panel-body,
   .extraction-preview,
-  .extraction-preview-grid {
+  .extraction-preview-grid,
+  .repair-comparison,
+  .repair-comparison-grid {
     grid-template-columns: 1fr;
   }
 }

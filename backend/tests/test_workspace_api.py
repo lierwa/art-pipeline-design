@@ -1267,3 +1267,210 @@ def test_empty_mask_validation_fails_clearly() -> None:
 
     with pytest.raises(ValueError, match="Mask for element element_001 is empty."):
         validate_non_empty_mask("element_001", empty_mask)
+
+
+def test_create_repair_task_writes_required_canvas_aligned_files(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path)
+
+    mask_response = client.post(
+        "/api/workspace/elements/element_001/repair/missing-mask",
+        json={
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 2, "y": 1, "w": 1, "h": 1},
+            }
+        },
+    )
+    assert mask_response.status_code == 200
+    assert mask_response.json()["missingMaskPath"] == "elements/element_001/missing_mask.png"
+
+    response = client.post("/api/workspace/elements/element_001/repair/task")
+
+    assert response.status_code == 200
+    body = response.json()
+    element = body["state"]["elements"][0]
+    assert element["status"] == "repair_pending"
+    assert body["paths"] == {
+        "sourceCropPath": "elements/element_001/repair/source_crop.png",
+        "sceneContextPath": "elements/element_001/repair/scene_context.png",
+        "incompleteAssetPath": "elements/element_001/repair/incomplete_asset.png",
+        "preserveMaskPath": "elements/element_001/repair/preserve_mask.png",
+        "missingMaskPath": "elements/element_001/repair/missing_mask.png",
+        "guideOverlayPath": "elements/element_001/repair/guide_overlay.png",
+        "repairPromptPath": "elements/element_001/repair/repair_prompt.md",
+    }
+
+    repair_dir = element_dir / "repair"
+    for filename in (
+        "source_crop.png",
+        "scene_context.png",
+        "incomplete_asset.png",
+        "preserve_mask.png",
+        "missing_mask.png",
+        "guide_overlay.png",
+        "repair_prompt.md",
+    ):
+        assert (repair_dir / filename).exists(), filename
+
+    with Image.open(element_dir / "missing_mask.png") as missing_mask:
+        assert missing_mask.mode == "L"
+        assert missing_mask.size == (5, 4)
+        assert missing_mask.getpixel((2, 1)) == 255
+        assert missing_mask.getpixel((0, 0)) == 0
+
+    with Image.open(repair_dir / "preserve_mask.png") as preserve_mask:
+        assert preserve_mask.mode == "L"
+        assert preserve_mask.size == (5, 4)
+        assert preserve_mask.getpixel((2, 1)) == 0
+        assert preserve_mask.getpixel((3, 1)) == 255
+
+    prompt = (repair_dir / "repair_prompt.md").read_text(encoding="utf-8")
+    assert "Preserve every pixel inside preserve_mask.png." in prompt
+    assert "Modify only pixels inside missing_mask.png." in prompt
+    assert "Do not redraw the whole object." in prompt
+    assert "Output completed_asset.png with the same size as incomplete_asset.png." in prompt
+    assert "Write repair_report.json." in prompt
+
+
+def test_repair_qa_fails_if_preserved_pixels_change(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((3, 1), (1, 2, 3, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"changed preserved"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "fail"
+    assert "preserve_pixels_changed" in body["qa"]["reasons"]
+    assert body["qa"]["metrics"]["preserveChangedPixels"] == 1
+    assert body["state"]["elements"][0]["status"] == "qa_failed"
+
+
+def test_repair_qa_fails_if_pixels_appear_outside_missing_mask(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((0, 0), (20, 30, 40, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"outside edit"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "fail"
+    assert "pixels_changed_outside_missing_mask" in body["qa"]["reasons"]
+    assert body["qa"]["metrics"]["outsideMissingChangedPixels"] == 1
+    assert body["state"]["elements"][0]["status"] == "qa_failed"
+
+
+def test_repair_qa_passes_for_missing_mask_only_edit(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"filled missing pixel"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "pass"
+    assert body["qa"]["reasons"] == []
+    assert body["qa"]["metrics"]["insideMissingChangedPixels"] == 1
+    assert body["qa"]["changedPixelsOverlayPath"] == (
+        "elements/element_001/repair/changed_pixels_overlay.png"
+    )
+    assert (repair_dir / "changed_pixels_overlay.png").exists()
+    assert (repair_dir / "qa_report.json").exists()
+    element = body["state"]["elements"][0]
+    assert element["status"] == "repair_complete"
+    assert element["mode"] == "completed_by_codex"
+
+
+def _prepare_repair_package(client: TestClient, tmp_path: Path) -> Path:
+    element_dir = _prepare_completion_element(client, tmp_path)
+    mask_response = client.post(
+        "/api/workspace/elements/element_001/repair/missing-mask",
+        json={
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 2, "y": 1, "w": 1, "h": 1},
+            }
+        },
+    )
+    assert mask_response.status_code == 200
+    task_response = client.post("/api/workspace/elements/element_001/repair/task")
+    assert task_response.status_code == 200
+    return element_dir
+
+
+def _prepare_completion_element(client: TestClient, tmp_path: Path) -> Path:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "needs_completion",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    extract_response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "bbox_alpha"},
+    )
+    assert extract_response.status_code == 200
+    return tmp_path / "workspace" / "elements" / "element_001"
