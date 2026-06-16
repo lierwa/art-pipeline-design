@@ -15,6 +15,7 @@ from art_pipeline.annotations import (
     SplitRequestContractCreate,
     create_manual_element,
     split_element,
+    validate_workspace_state_geometry,
     write_split_request_contract,
 )
 from art_pipeline.elements import ElementRecord, SourceMetadata, WorkspaceState, next_element_id
@@ -79,6 +80,10 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
 
     @app.put("/api/workspace/state")
     def put_state(state: WorkspaceState) -> WorkspaceState:
+        try:
+            validate_workspace_state_geometry(state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         _write_state(app.state.workspace_root, state)
         return state
 
@@ -140,12 +145,15 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         state = _read_state(root)
         source_image = _require_source_image(root)
         element = _get_element(state, request.elementId)
+        description = request.description.strip()
+        if not description:
+            raise HTTPException(status_code=400, detail="Split description must not be blank.")
 
         contract_path, contract = write_split_request_contract(
             root,
             source_image,
             element,
-            request.description.strip(),
+            description,
         )
         return {
             "requestId": contract["requestId"],

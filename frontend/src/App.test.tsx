@@ -273,6 +273,41 @@ describe("App", () => {
     }
   });
 
+  it("keeps the last persisted element when inspector save is rejected by validation", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        return jsonResponse(
+          { detail: "Element element_001 bbox width/height must be > 0." },
+          400,
+        );
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "0");
+      await user.click(screen.getByRole("button", { name: /save element/i }));
+
+      expect(await screen.findByText(/element element_001 bbox width\/height must be > 0\./i)).toBeInTheDocument();
+      expect(screen.getAllByText(/state save failed\./i)).toHaveLength(2);
+      expect(screen.getByTestId("overlay-box-element_001")).toBeInTheDocument();
+      expect(screen.getByLabelText(/bbox width/i)).toHaveValue(30);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("splits the selected element and overlay toggles still work afterward", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {

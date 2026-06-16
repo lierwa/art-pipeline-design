@@ -7,7 +7,13 @@ from uuid import uuid4
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from art_pipeline.elements import BoundingBox, ElementRecord, WorkspaceState, next_element_id
+from art_pipeline.elements import (
+    BoundingBox,
+    CanvasBox,
+    ElementRecord,
+    WorkspaceState,
+    next_element_id,
+)
 from art_pipeline.masks import clamp_bbox_to_source, expand_canvas
 from art_pipeline.thumbnails import write_thumbnail
 
@@ -29,6 +35,36 @@ class SplitElementRequest(BaseModel):
 class SplitRequestContractCreate(BaseModel):
     elementId: str
     description: str
+
+
+def validate_workspace_state_geometry(state: WorkspaceState) -> None:
+    if not state.elements:
+        return
+
+    if state.source is None:
+        raise ValueError("Workspace state with elements requires source metadata.")
+
+    source_width = state.source.width
+    source_height = state.source.height
+    for element in state.elements:
+        _validate_box_bounds(
+            element.id,
+            "bbox",
+            element.bbox,
+            source_width,
+            source_height,
+        )
+        if element.canvas is None:
+            raise ValueError(f"Element {element.id} canvas is required.")
+        _validate_box_bounds(
+            element.id,
+            "canvas",
+            element.canvas,
+            source_width,
+            source_height,
+        )
+        if not _contains_box(element.canvas, element.bbox):
+            raise ValueError(f"Element {element.id} canvas must contain bbox.")
 
 
 def create_manual_element(
@@ -146,6 +182,30 @@ def write_split_request_contract(
 def _validate_non_empty_bbox(bbox: BoundingBox) -> None:
     if bbox.w <= 0 or bbox.h <= 0:
         raise ValueError("Bounding box must cover at least one pixel.")
+
+
+def _validate_box_bounds(
+    element_id: str,
+    label: str,
+    box: BoundingBox | CanvasBox,
+    source_width: int,
+    source_height: int,
+) -> None:
+    if box.x < 0 or box.y < 0:
+        raise ValueError(f"Element {element_id} {label} x/y must be >= 0.")
+    if box.w <= 0 or box.h <= 0:
+        raise ValueError(f"Element {element_id} {label} width/height must be > 0.")
+    if box.x + box.w > source_width or box.y + box.h > source_height:
+        raise ValueError(f"Element {element_id} {label} must stay within source bounds.")
+
+
+def _contains_box(outer: CanvasBox, inner: BoundingBox) -> bool:
+    return (
+        outer.x <= inner.x
+        and outer.y <= inner.y
+        and outer.x + outer.w >= inner.x + inner.w
+        and outer.y + outer.h >= inner.y + inner.h
+    )
 
 
 def _next_layer(state: WorkspaceState) -> int:

@@ -127,6 +127,100 @@ def test_put_state_round_trips_elements_payload(
     assert list(state_path.parent.glob("state.json.*")) == []
 
 
+@pytest.mark.parametrize(
+    ("bbox", "canvas", "detail"),
+    [
+        (
+            {"x": -1, "y": 2, "w": 3, "h": 4},
+            {"x": 0, "y": 0, "w": 8, "h": 6},
+            "Element element_001 bbox x/y must be >= 0.",
+        ),
+        (
+            {"x": 1, "y": 2, "w": 0, "h": 4},
+            {"x": 0, "y": 0, "w": 8, "h": 6},
+            "Element element_001 bbox width/height must be > 0.",
+        ),
+        (
+            {"x": 6, "y": 2, "w": 3, "h": 4},
+            {"x": 0, "y": 0, "w": 8, "h": 6},
+            "Element element_001 bbox must stay within source bounds.",
+        ),
+        (
+            {"x": 1, "y": 2, "w": 3, "h": 4},
+            {"x": -1, "y": 0, "w": 8, "h": 6},
+            "Element element_001 canvas x/y must be >= 0.",
+        ),
+        (
+            {"x": 1, "y": 2, "w": 3, "h": 4},
+            {"x": 0, "y": 0, "w": 0, "h": 6},
+            "Element element_001 canvas width/height must be > 0.",
+        ),
+        (
+            {"x": 1, "y": 2, "w": 3, "h": 4},
+            {"x": 0, "y": 0, "w": 9, "h": 6},
+            "Element element_001 canvas must stay within source bounds.",
+        ),
+        (
+            {"x": 1, "y": 2, "w": 3, "h": 4},
+            {"x": 2, "y": 2, "w": 3, "h": 4},
+            "Element element_001 canvas must contain bbox.",
+        ),
+    ],
+)
+def test_put_state_rejects_invalid_element_geometry(
+    client: TestClient,
+    tmp_path: Path,
+    bbox: dict[str, int],
+    canvas: dict[str, int],
+    detail: str,
+) -> None:
+    original_payload = {
+        "source": {
+            "filename": "original.png",
+            "path": "source/original.png",
+            "width": 8,
+            "height": 6,
+        },
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "Cat",
+                "status": "proposal",
+                "bbox": {"x": 1, "y": 2, "w": 3, "h": 4},
+                "canvas": {"x": 0, "y": 0, "w": 8, "h": 6},
+            }
+        ],
+    }
+    ok_response = client.put("/api/workspace/state", json=original_payload)
+    assert ok_response.status_code == 200
+
+    invalid_payload = {
+        "source": original_payload["source"],
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "Cat",
+                "status": "proposal",
+                "bbox": bbox,
+                "canvas": canvas,
+            }
+        ],
+    }
+
+    response = client.put("/api/workspace/state", json=invalid_payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+
+    state_response = client.get("/api/workspace/state")
+    assert state_response.status_code == 200
+    assert state_response.json() == ok_response.json()
+
+    state_path = tmp_path / "workspace" / "state.json"
+    persisted = workspace_api.json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted == ok_response.json()
+
+
 def test_auto_annotate_returns_deterministic_candidates_and_thumbnails(
     client: TestClient,
     tmp_path: Path,
@@ -406,3 +500,32 @@ def test_create_split_request_writes_expected_contract(
     assert contract["sourceCropPath"].endswith(".png")
     assert contract["expectedOutput"]["type"] == "split_children"
     assert contract["expectedOutput"]["parentStatus"] == "split_parent"
+
+
+def test_create_split_request_rejects_blank_description(client: TestClient) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    created_response = client.post(
+        "/api/workspace/elements",
+        json={
+            "name": "Mirror",
+            "bbox": {"x": 64, "y": 28, "w": 38, "h": 42},
+        },
+    )
+    assert created_response.status_code == 200
+    element = created_response.json()["element"]
+
+    response = client.post(
+        "/api/workspace/split-requests",
+        json={
+            "elementId": element["id"],
+            "description": "   ",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Split description must not be blank."
