@@ -5,6 +5,7 @@ import { ElementPanel } from "./components/ElementPanel";
 import { InspectorPanel } from "./components/InspectorPanel";
 import "./styles.css";
 import {
+  assetIncompleteUrl,
   Box,
   buildSourceUrl,
   CanvasTool,
@@ -14,9 +15,11 @@ import {
   EMPTY_STATE,
   normalizeWorkspaceState,
   OverlayState,
+  sourceCropUrl,
   updateElement,
   WorkspaceElement,
   WorkspaceState,
+  workspaceAssetUrl,
 } from "./workspace";
 
 type CreateElementResponse = {
@@ -34,6 +37,21 @@ type SplitRequestResponse = {
   path: string;
 };
 
+type ExtractWorkspaceResponse = {
+  extractions: Array<{
+    elementId: string;
+    strategy: string;
+    maskPath: string;
+    assetPath: string;
+    sourceCropPath?: string;
+  }>;
+  state: WorkspaceState;
+};
+
+type ClearMaskResponse = {
+  state: WorkspaceState;
+};
+
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_STATE);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
@@ -42,6 +60,7 @@ export function App() {
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [overlays, setOverlays] = useState<OverlayState>(DEFAULT_OVERLAYS);
   const [isAnnotating, setIsAnnotating] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [isSavingState, setIsSavingState] = useState(false);
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
   const [tool, setTool] = useState<CanvasTool>("select");
@@ -97,6 +116,18 @@ export function App() {
   const selectedElement = useMemo(() => {
     return workspace.elements.find((element) => element.id === selectedElementId) ?? null;
   }, [selectedElementId, workspace.elements]);
+
+  const canExtractSelected = useMemo(() => {
+    return selectedElement !== null && canExtractElement(selectedElement);
+  }, [selectedElement]);
+
+  const hasBatchExtractTargets = useMemo(() => {
+    return workspace.elements.some(
+      (element) =>
+        (element.status === "accepted" || element.status === "extract_ready") &&
+        element.mode !== "rejected",
+    );
+  }, [workspace.elements]);
 
   useEffect(() => {
     if (!selectedElement) {
@@ -260,6 +291,96 @@ export function App() {
       );
     } finally {
       setIsAnnotating(false);
+    }
+  }
+
+  async function handleExtractSelected() {
+    if (!selectedElement || !canExtractSelected || isExtracting) {
+      return;
+    }
+
+    await runExtraction({
+      elementIds: [selectedElement.id],
+      successStatus: (count) => `Extracted ${count} element${count === 1 ? "" : "s"}.`,
+      selectionId: selectedElement.id,
+    });
+  }
+
+  async function handleExtractAllAccepted() {
+    if (!workspace.source || !hasBatchExtractTargets || isExtracting) {
+      return;
+    }
+
+    await runExtraction({
+      successStatus: (count) => `Extracted ${count} element${count === 1 ? "" : "s"}.`,
+    });
+  }
+
+  async function runExtraction(options: {
+    elementIds?: string[];
+    successStatus: (count: number) => string;
+    selectionId?: string;
+  }) {
+    setIsExtracting(true);
+    setStatus("Extracting source pixels...");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/workspace/extract", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(options.elementIds ? { elementIds: options.elementIds } : {}),
+          strategy: "bbox_alpha",
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Extraction failed.");
+      }
+
+      const payload = (await response.json()) as ExtractWorkspaceResponse;
+      replaceWorkspace(
+        payload.state,
+        options.successStatus(payload.extractions.length),
+        options.selectionId,
+      );
+    } catch (extractError) {
+      setStatus("Extraction failed.");
+      setError(
+        extractError instanceof Error ? extractError.message : "Extraction failed.",
+      );
+    } finally {
+      setIsExtracting(false);
+    }
+  }
+
+  async function handleClearMask() {
+    if (!selectedElement || !selectedElement.mask) {
+      return;
+    }
+
+    setStatus("Clearing mask...");
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/mask/clear`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not clear mask.");
+      }
+
+      const payload = (await response.json()) as ClearMaskResponse;
+      replaceWorkspace(payload.state, "Mask cleared.", selectedElement.id);
+    } catch (clearError) {
+      setStatus("Mask clear failed.");
+      setError(clearError instanceof Error ? clearError.message : "Could not clear mask.");
     }
   }
 
@@ -486,8 +607,19 @@ export function App() {
           >
             Auto Annotate
           </button>
-          <button type="button" disabled>
+          <button
+            type="button"
+            disabled={!canExtractSelected || isExtracting}
+            onClick={() => void handleExtractSelected()}
+          >
             Extract
+          </button>
+          <button
+            type="button"
+            disabled={!workspace.source || !hasBatchExtractTargets || isExtracting}
+            onClick={() => void handleExtractAllAccepted()}
+          >
+            Extract All
           </button>
           <button type="button" disabled>
             Repair
@@ -556,6 +688,11 @@ export function App() {
           onSplitRequestDescriptionChange={setSplitRequestDescription}
           onSaveElement={() => void handleSaveElement()}
           onCreateSplitRequest={() => void handleCreateSplitRequest()}
+          onReplaceMaskByBBox={() => void handleExtractSelected()}
+          onClearMask={() => void handleClearMask()}
+          onReExtract={() => void handleExtractSelected()}
+          canExtractSelected={canExtractSelected}
+          isExtracting={isExtracting}
         />
       </main>
 
@@ -576,10 +713,77 @@ export function App() {
             <span className="preview-label">State</span>
             <strong>{isSavingState ? "Saving..." : status}</strong>
           </div>
+          <ExtractionPreview selectedElement={selectedElement} />
         </div>
       </section>
     </div>
   );
+}
+
+function canExtractElement(element: WorkspaceElement): boolean {
+  if (element.mode === "rejected") {
+    return false;
+  }
+  return ["accepted", "extract_ready", "extracted"].includes(element.status);
+}
+
+function ExtractionPreview({ selectedElement }: { selectedElement: WorkspaceElement | null }) {
+  if (!selectedElement) {
+    return (
+      <div className="extraction-preview extraction-preview-empty">
+        <span className="preview-label">Extraction Preview</span>
+        <strong>Select an element</strong>
+      </div>
+    );
+  }
+
+  return (
+    <div className="extraction-preview">
+      <div className="extraction-preview-summary">
+        <span className="preview-label">Extraction Preview</span>
+        <strong>{selectedElement.name}</strong>
+        <span>{formatCanvas(selectedElement)}</span>
+        <span>{formatBBox(selectedElement)}</span>
+      </div>
+      {selectedElement.mask ? (
+        <div className="extraction-preview-grid">
+          <figure>
+            <img
+              alt={`${selectedElement.name} source crop`}
+              src={sourceCropUrl(selectedElement)}
+            />
+            <figcaption>Source crop</figcaption>
+          </figure>
+          <figure>
+            <img
+              alt={`${selectedElement.name} mask overlay`}
+              src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+            />
+            <figcaption>Mask overlay</figcaption>
+          </figure>
+          <figure>
+            <div className="checkerboard-preview">
+              <img
+                alt={`${selectedElement.name} transparent asset`}
+                src={assetIncompleteUrl(selectedElement)}
+              />
+            </div>
+            <figcaption>Transparent asset</figcaption>
+          </figure>
+        </div>
+      ) : (
+        <p className="panel-copy">Run extraction to create mask and transparent asset previews.</p>
+      )}
+    </div>
+  );
+}
+
+function formatCanvas(element: WorkspaceElement): string {
+  return `Canvas ${element.canvas.w} x ${element.canvas.h} at ${element.canvas.x}, ${element.canvas.y}`;
+}
+
+function formatBBox(element: WorkspaceElement): string {
+  return `BBox ${element.bbox.w} x ${element.bbox.h} at ${element.bbox.x}, ${element.bbox.y}`;
 }
 
 function draftFromElement(element: WorkspaceElement): ElementEditorDraft {

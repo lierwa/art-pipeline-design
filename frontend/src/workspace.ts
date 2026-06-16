@@ -99,10 +99,22 @@ export const DEFAULT_OVERLAYS: OverlayState = {
 };
 
 export function thumbnailUrl(path: string | null): string | null {
+  return workspaceAssetUrl(path);
+}
+
+export function workspaceAssetUrl(path: string | null): string | null {
   if (!path) {
     return null;
   }
   return `/api/workspace/assets/${path}`;
+}
+
+export function sourceCropUrl(element: WorkspaceElement): string {
+  return `/api/workspace/assets/elements/${element.id}/source_crop.png`;
+}
+
+export function assetIncompleteUrl(element: WorkspaceElement): string {
+  return `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
 }
 
 export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState {

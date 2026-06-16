@@ -90,6 +90,17 @@ const splitState = {
   ],
 };
 
+const extractedState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...loadedState.elements[0],
+      status: "extracted",
+      mask: "elements/element_001/mask.png",
+    },
+  ],
+};
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
@@ -164,7 +175,7 @@ describe("App", () => {
       render(<App />);
 
       expect(await screen.findByText(/original\.png - 120 x 90/i)).toBeInTheDocument();
-      expect(screen.getByRole("img", { name: /workspace source/i })).toHaveAttribute(
+      expect(await screen.findByRole("img", { name: /workspace source/i })).toHaveAttribute(
         "src",
         expect.stringContaining("/api/workspace/source"),
       );
@@ -386,6 +397,120 @@ describe("App", () => {
         }),
       );
       expect(screen.getAllByText(/split request saved: split_request_123/i)).toHaveLength(2);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("extracts the selected element and renders the extraction preview", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/extract" && init?.method === "POST") {
+        return jsonResponse({
+          extractions: [
+            {
+              elementId: "element_001",
+              strategy: "bbox_alpha",
+              maskPath: "elements/element_001/mask.png",
+              assetPath: "elements/element_001/asset_incomplete.png",
+              sourceCropPath: "elements/element_001/source_crop.png",
+            },
+          ],
+          state: extractedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /^extract$/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/extract",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementIds: ["element_001"],
+            strategy: "bbox_alpha",
+          }),
+        }),
+      );
+      expect(await screen.findAllByText(/extracted 1 element\./i)).toHaveLength(2);
+      expect(screen.getByAltText("Region 1 source crop")).toHaveAttribute(
+        "src",
+        "/api/workspace/assets/elements/element_001/source_crop.png",
+      );
+      expect(screen.getByAltText("Region 1 mask overlay")).toHaveAttribute(
+        "src",
+        "/api/workspace/assets/elements/element_001/mask.png",
+      );
+      expect(screen.getByAltText("Region 1 transparent asset")).toHaveAttribute(
+        "src",
+        "/api/workspace/assets/elements/element_001/asset_incomplete.png",
+      );
+      expect(screen.getAllByText(/canvas 46 x 48 at 4, 8/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/bbox 30 x 32 at 12, 16/i).length).toBeGreaterThan(0);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("shows mask overlays and clears the selected extraction mask", async () => {
+    const user = userEvent.setup();
+    const clearedState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          status: "extract_ready",
+          mask: null,
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(extractedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/mask/clear" && init?.method === "POST") {
+        return jsonResponse({
+          state: clearedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.getByRole("button", { name: /replace mask by bbox/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /re-extract/i })).toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: /show masks/i }));
+
+      expect(screen.getByTestId("overlay-mask-element_001")).toHaveAttribute(
+        "src",
+        "/api/workspace/assets/elements/element_001/mask.png",
+      );
+
+      await user.click(screen.getByRole("button", { name: /clear mask/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/element_001/mask/clear",
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(await screen.findAllByText(/mask cleared\./i)).toHaveLength(2);
+      expect(screen.queryByAltText("Region 1 mask overlay")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("overlay-mask-element_001")).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }

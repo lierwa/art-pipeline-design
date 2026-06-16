@@ -1,4 +1,11 @@
-import { ElementEditorDraft, ElementMode, WorkspaceElement } from "../workspace";
+import {
+  assetIncompleteUrl,
+  ElementEditorDraft,
+  ElementMode,
+  sourceCropUrl,
+  WorkspaceElement,
+  workspaceAssetUrl,
+} from "../workspace";
 
 type InspectorPanelProps = {
   selectedElement: WorkspaceElement | null;
@@ -8,6 +15,11 @@ type InspectorPanelProps = {
   onSplitRequestDescriptionChange: (value: string) => void;
   onSaveElement: () => void;
   onCreateSplitRequest: () => void;
+  onReplaceMaskByBBox: () => void;
+  onClearMask: () => void;
+  onReExtract: () => void;
+  canExtractSelected: boolean;
+  isExtracting: boolean;
 };
 
 export function InspectorPanel({
@@ -18,6 +30,11 @@ export function InspectorPanel({
   onSplitRequestDescriptionChange,
   onSaveElement,
   onCreateSplitRequest,
+  onReplaceMaskByBBox,
+  onClearMask,
+  onReExtract,
+  canExtractSelected,
+  isExtracting,
 }: InspectorPanelProps) {
   return (
     <aside className="panel inspector-panel">
@@ -223,6 +240,56 @@ export function InspectorPanel({
               <span>Element visible</span>
             </label>
             <button type="submit">Save element</button>
+            <section className="inspector-extraction" aria-label="Extraction controls">
+              <div className="inspector-details">
+                <strong>Extraction</strong>
+                <span>{formatCanvas(selectedElement)}</span>
+                <span>{formatBBox(selectedElement)}</span>
+              </div>
+              <div className="mask-control-buttons">
+                <button
+                  type="button"
+                  disabled={!canExtractSelected || isExtracting}
+                  onClick={onReplaceMaskByBBox}
+                >
+                  Replace mask by bbox
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedElement.mask}
+                  onClick={onClearMask}
+                >
+                  Clear mask
+                </button>
+                <button
+                  type="button"
+                  disabled={!canExtractSelected || isExtracting}
+                  onClick={onReExtract}
+                >
+                  Re-extract
+                </button>
+              </div>
+              {selectedElement.mask ? (
+                <div className="inspector-preview-strip">
+                  <img
+                    alt={`${selectedElement.name} inspector source crop`}
+                    src={sourceCropUrl(selectedElement)}
+                  />
+                  <img
+                    alt={`${selectedElement.name} inspector mask overlay`}
+                    src={workspaceAssetUrl(selectedElement.mask) ?? undefined}
+                  />
+                  <div className="checkerboard-preview">
+                    <img
+                      alt={`${selectedElement.name} inspector transparent asset`}
+                      src={assetIncompleteUrl(selectedElement)}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="panel-copy">No extraction mask saved for this element.</p>
+              )}
+            </section>
             <label className="field-group">
               <span>Split selected element into</span>
               <input
@@ -242,4 +309,12 @@ export function InspectorPanel({
       </div>
     </aside>
   );
+}
+
+function formatCanvas(element: WorkspaceElement): string {
+  return `Canvas ${element.canvas.w} x ${element.canvas.h} at ${element.canvas.x}, ${element.canvas.y}`;
+}
+
+function formatBBox(element: WorkspaceElement): string {
+  return `BBox ${element.bbox.w} x ${element.bbox.h} at ${element.bbox.x}, ${element.bbox.y}`;
 }

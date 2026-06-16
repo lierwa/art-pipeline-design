@@ -8,6 +8,7 @@ import {
   SourceMetadata,
   WorkspaceElement,
   thumbnailUrl,
+  workspaceAssetUrl,
 } from "../workspace";
 
 type CanvasStageProps = {
@@ -266,6 +267,18 @@ function CanvasArtboard({
         src={sourceUrl}
       />
       <div className="canvas-overlay-layer" aria-hidden="true">
+        {overlayElements.map((element) =>
+          overlays.showMasks && element.mask ? (
+            <img
+              key={`${element.id}-mask`}
+              alt=""
+              data-testid={`overlay-mask-${element.id}`}
+              className="overlay-mask-image"
+              src={workspaceAssetUrl(element.mask) ?? undefined}
+              style={boxToPercentStyle(element.canvas, source)}
+            />
+          ) : null,
+        )}
         {overlayElements.map((element) => {
           const overlayStyle = boxToPercentStyle(element.bbox, source);
           const isSelected = selectedElementId === element.id;
@@ -297,9 +310,6 @@ function CanvasArtboard({
                   className="overlay-thumb"
                   src={thumbnailUrl(element.thumbnail) ?? undefined}
                 />
-              ) : null}
-              {overlays.showMasks ? (
-                <div className="overlay-mask-placeholder">No mask</div>
               ) : null}
             </div>
           );

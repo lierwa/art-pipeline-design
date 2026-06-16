@@ -38,6 +38,17 @@ def make_synthetic_scene_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def make_gradient_scene_bytes(width: int = 8, height: int = 6) -> bytes:
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    for x in range(width):
+        for y in range(height):
+            image.putpixel((x, y), ((x * 31) % 256, (y * 41) % 256, ((x + y) * 23) % 256, 255))
+
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def test_upload_png_initializes_workspace_state(client: TestClient, tmp_path: Path) -> None:
     response = client.post(
         "/api/workspace/source",
@@ -529,3 +540,309 @@ def test_create_split_request_rejects_blank_description(client: TestClient) -> N
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Split description must not be blank."
+
+
+def test_extract_selected_element_writes_mask_asset_and_metadata(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+
+    response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "bbox_alpha"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    extracted = payload["extractions"][0]
+    assert extracted["elementId"] == "element_001"
+    assert extracted["strategy"] == "bbox_alpha"
+    assert extracted["maskPath"] == "elements/element_001/mask.png"
+    assert extracted["assetPath"] == "elements/element_001/asset_incomplete.png"
+
+    element = payload["state"]["elements"][0]
+    assert element["status"] == "extracted"
+    assert element["mask"] == "elements/element_001/mask.png"
+
+    element_dir = tmp_path / "workspace" / "elements" / "element_001"
+    mask_path = element_dir / "mask.png"
+    asset_path = element_dir / "asset_incomplete.png"
+    metadata_path = element_dir / "extraction.json"
+    assert mask_path.exists()
+    assert asset_path.exists()
+    assert metadata_path.exists()
+
+    metadata = workspace_api.json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["elementId"] == "element_001"
+    assert metadata["sourcePixelsOnly"] is True
+    assert metadata["canvas"] == {"x": 1, "y": 1, "w": 5, "h": 4}
+    assert metadata["bbox"] == {"x": 3, "y": 2, "w": 2, "h": 2}
+
+    with Image.open(mask_path) as mask:
+        assert mask.mode == "L"
+        assert mask.size == (5, 4)
+        assert mask.getpixel((0, 0)) == 0
+        assert mask.getpixel((2, 1)) == 255
+        assert mask.getpixel((3, 2)) == 255
+
+    with Image.open(tmp_path / "workspace" / "source" / "original.png") as source:
+        with Image.open(asset_path) as asset:
+            assert asset.mode == "RGBA"
+            assert asset.size == (5, 4)
+            assert asset.getpixel((0, 0))[3] == 0
+            for local_x in range(5):
+                for local_y in range(4):
+                    absolute = (1 + local_x, 1 + local_y)
+                    pixel = asset.getpixel((local_x, local_y))
+                    if 2 <= local_x <= 3 and 1 <= local_y <= 2:
+                        assert pixel == source.getpixel(absolute)
+                    else:
+                        assert pixel[3] == 0
+
+
+def test_extract_without_ids_only_processes_accepted_or_extract_ready_elements(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(20, 10), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    elements = [
+        {
+            "id": "element_001",
+            "name": "Accepted",
+            "status": "accepted",
+            "mode": "visible_only",
+            "bbox": {"x": 1, "y": 1, "w": 2, "h": 2},
+            "canvas": {"x": 0, "y": 0, "w": 4, "h": 4},
+            "layer": 1,
+            "thumbnail": None,
+            "mask": None,
+            "parentId": None,
+            "source": "manual",
+            "notes": "",
+            "visible": True,
+            "confidence": None,
+        },
+        {
+            "id": "element_002",
+            "name": "Ready",
+            "status": "extract_ready",
+            "mode": "visible_only",
+            "bbox": {"x": 6, "y": 1, "w": 2, "h": 2},
+            "canvas": {"x": 5, "y": 0, "w": 4, "h": 4},
+            "layer": 2,
+            "thumbnail": None,
+            "mask": None,
+            "parentId": None,
+            "source": "manual",
+            "notes": "",
+            "visible": True,
+            "confidence": None,
+        },
+        {
+            "id": "element_003",
+            "name": "Proposal",
+            "status": "proposal",
+            "mode": "visible_only",
+            "bbox": {"x": 11, "y": 1, "w": 2, "h": 2},
+            "canvas": {"x": 10, "y": 0, "w": 4, "h": 4},
+            "layer": 3,
+            "thumbnail": None,
+            "mask": None,
+            "parentId": None,
+            "source": "manual",
+            "notes": "",
+            "visible": True,
+            "confidence": None,
+        },
+        {
+            "id": "element_004",
+            "name": "Split Parent",
+            "status": "split_parent",
+            "mode": "visible_only",
+            "bbox": {"x": 15, "y": 1, "w": 2, "h": 2},
+            "canvas": {"x": 14, "y": 0, "w": 4, "h": 4},
+            "layer": 4,
+            "thumbnail": None,
+            "mask": None,
+            "parentId": None,
+            "source": "manual",
+            "notes": "",
+            "visible": True,
+            "confidence": None,
+        },
+        {
+            "id": "element_005",
+            "name": "Rejected",
+            "status": "proposal",
+            "mode": "rejected",
+            "bbox": {"x": 1, "y": 6, "w": 2, "h": 2},
+            "canvas": {"x": 0, "y": 5, "w": 4, "h": 4},
+            "layer": 5,
+            "thumbnail": None,
+            "mask": None,
+            "parentId": None,
+            "source": "manual",
+            "notes": "",
+            "visible": False,
+            "confidence": None,
+        },
+    ]
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 20,
+                "height": 10,
+            },
+            "elements": elements,
+        },
+    )
+    assert state_response.status_code == 200
+
+    response = client.post("/api/workspace/extract", json={"strategy": "bbox_alpha"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["elementId"] for item in payload["extractions"]] == [
+        "element_001",
+        "element_002",
+    ]
+    by_id = {element["id"]: element for element in payload["state"]["elements"]}
+    assert by_id["element_001"]["status"] == "extracted"
+    assert by_id["element_002"]["status"] == "extracted"
+    assert by_id["element_003"]["status"] == "proposal"
+    assert by_id["element_004"]["status"] == "split_parent"
+    assert by_id["element_005"]["mode"] == "rejected"
+    assert not (tmp_path / "workspace" / "elements" / "element_003" / "mask.png").exists()
+    assert not (tmp_path / "workspace" / "elements" / "element_004" / "mask.png").exists()
+    assert not (tmp_path / "workspace" / "elements" / "element_005" / "mask.png").exists()
+
+
+def test_sam2_subject_strategy_reports_unavailable(client: TestClient) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "sam2_subject"},
+    )
+
+    assert response.status_code == 501
+    assert response.json()["detail"] == "sam2_subject extraction is not available in this demo build."
+
+
+def test_clear_mask_removes_extraction_outputs_and_marks_element_ready(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    state_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": {
+                "filename": "original.png",
+                "path": "source/original.png",
+                "width": 8,
+                "height": 6,
+            },
+            "elements": [
+                {
+                    "id": "element_001",
+                    "name": "Cup",
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
+                    "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
+                    "layer": 1,
+                    "thumbnail": None,
+                    "mask": None,
+                    "parentId": None,
+                    "source": "manual",
+                    "notes": "",
+                    "visible": True,
+                    "confidence": None,
+                }
+            ],
+        },
+    )
+    assert state_response.status_code == 200
+    extract_response = client.post(
+        "/api/workspace/extract",
+        json={"elementIds": ["element_001"], "strategy": "bbox_alpha"},
+    )
+    assert extract_response.status_code == 200
+    assert (tmp_path / "workspace" / "elements" / "element_001" / "mask.png").exists()
+    assert (
+        tmp_path / "workspace" / "elements" / "element_001" / "asset_incomplete.png"
+    ).exists()
+
+    response = client.post("/api/workspace/elements/element_001/mask/clear")
+
+    assert response.status_code == 200
+    element = response.json()["state"]["elements"][0]
+    assert element["status"] == "extract_ready"
+    assert element["mask"] is None
+    assert not (tmp_path / "workspace" / "elements" / "element_001" / "mask.png").exists()
+    assert not (
+        tmp_path / "workspace" / "elements" / "element_001" / "asset_incomplete.png"
+    ).exists()
+
+
+def test_empty_mask_validation_fails_clearly() -> None:
+    from art_pipeline.mask_refine import validate_non_empty_mask
+
+    empty_mask = Image.new("L", (3, 2), 0)
+
+    with pytest.raises(ValueError, match="Mask for element element_001 is empty."):
+        validate_non_empty_mask("element_001", empty_mask)
