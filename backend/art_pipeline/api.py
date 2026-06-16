@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -89,10 +90,12 @@ def _load_png(data: bytes) -> Image.Image:
 def _write_state(workspace_root: Path, state: WorkspaceState) -> None:
     state_path = _state_path(workspace_root)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
+    temp_path = state_path.with_suffix(".json.tmp")
+    temp_path.write_text(
         json.dumps(state.model_dump(mode="json"), indent=2),
         encoding="utf-8",
     )
+    os.replace(temp_path, state_path)
 
 
 def _source_path(workspace_root: Path) -> Path:

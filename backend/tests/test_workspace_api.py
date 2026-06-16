@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import art_pipeline.api as workspace_api
 from art_pipeline.api import create_app
 
 
@@ -58,3 +59,49 @@ def test_upload_rejects_non_png(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Only PNG uploads are supported."
+
+
+def test_put_state_round_trips_elements_payload(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = {
+        "source": {
+            "filename": "original.png",
+            "path": "source/original.png",
+            "width": 8,
+            "height": 6,
+        },
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "Cat",
+                "status": "proposal",
+                "bbox": {"x": 1, "y": 2, "w": 3, "h": 4},
+            }
+        ],
+    }
+    replace_calls: list[tuple[Path, Path]] = []
+
+    original_replace = workspace_api.os.replace
+
+    def tracking_replace(source: Path | str, target: Path | str) -> None:
+        replace_calls.append((Path(source), Path(target)))
+        original_replace(source, target)
+
+    monkeypatch.setattr(workspace_api.os, "replace", tracking_replace)
+
+    response = client.put("/api/workspace/state", json=payload)
+
+    assert response.status_code == 200
+    assert response.json() == payload
+
+    state_response = client.get("/api/workspace/state")
+    assert state_response.status_code == 200
+    assert state_response.json() == payload
+
+    state_path = tmp_path / "workspace" / "state.json"
+    assert state_path.exists()
+    assert replace_calls == [(state_path.with_suffix(".json.tmp"), state_path)]
+    assert list(state_path.parent.glob("state.json.*")) == []

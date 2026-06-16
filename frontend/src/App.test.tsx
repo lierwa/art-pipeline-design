@@ -54,4 +54,37 @@ describe("App", () => {
       global.fetch = originalFetch;
     }
   });
+
+  it("clears the optimistic preview when upload fails", async () => {
+    const user = userEvent.setup();
+    const originalFetch = global.fetch;
+    const createObjectUrl = vi.spyOn(URL, "createObjectURL");
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ detail: "Only PNG uploads are supported." }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
+
+    try {
+      render(<App />);
+      const input = screen.getByLabelText(/upload png/i);
+      const file = new File(["fake"], "scene.png", { type: "image/png" });
+
+      await user.upload(input, file);
+
+      expect(createObjectUrl).toHaveBeenCalledWith(file);
+      expect(revokeObjectUrl).toHaveBeenCalledWith("blob:mock-preview");
+      expect(screen.queryByRole("img", { name: /uploaded source/i })).not.toBeInTheDocument();
+      expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
+      expect(screen.getByText(/only png uploads are supported\./i)).toBeInTheDocument();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

@@ -72,6 +72,8 @@ export function App() {
       setWorkspace(nextState);
       setStatus("Source image uploaded.");
     } catch (uploadError) {
+      URL.revokeObjectURL(nextPreviewUrl);
+      setPreviewUrl(null);
       setWorkspace(EMPTY_STATE);
       setStatus("Upload failed.");
       setError(
