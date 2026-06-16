@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from io import BytesIO
 from pathlib import Path
 
@@ -37,7 +38,10 @@ from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import (
     MissingMaskRequest,
+    clear_repair_outputs,
     create_repair_task_package,
+    read_repair_metadata,
+    repair_task_package_exists,
     write_missing_mask_from_shape,
 )
 from art_pipeline.segmentation import (
@@ -68,6 +72,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         image = _load_png(data)
 
         root = app.state.workspace_root
+        _clear_element_outputs(root)
         source_path = _source_path(root)
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_bytes(data)
@@ -218,6 +223,8 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             extraction["elementId"]: extraction["maskPath"]
             for extraction in extractions
         }
+        for element_id in mask_paths:
+            clear_repair_outputs(root, element_id)
         next_state = WorkspaceState(
             source=state.source,
             elements=[
@@ -252,6 +259,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         clear_stale_asset_outputs(root, element.id)
+        clear_repair_outputs(root, element.id)
         mask_path = write_mask_output(root, element, mask)
         next_state = WorkspaceState(
             source=state.source,
@@ -259,6 +267,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
                 element.model_copy(
                     update={
                         "status": "extract_ready",
+                        "mode": _reset_repair_mode(element),
                         "mask": mask_path,
                     }
                 )
@@ -277,6 +286,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         try:
             _get_element(state, element_id)
             clear_extraction_outputs(root, element_id)
+            clear_repair_outputs(root, element_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -285,9 +295,8 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             elements=[
                 element.model_copy(
                     update={
-                        "status": "extract_ready"
-                        if element.status == "extracted"
-                        else element.status,
+                        "status": _status_after_extraction_invalidation(element),
+                        "mode": _reset_repair_mode(element),
                         "mask": None,
                     }
                 )
@@ -310,10 +319,34 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=[
+                element.model_copy(
+                    update={
+                        "status": _status_after_repair_package_invalidation(element),
+                        "mode": _reset_repair_mode(element),
+                    }
+                )
+                if element.id == element_id
+                else element
+                for element in state.elements
+            ],
+        )
+        _write_state(root, next_state)
+        next_element = _get_element(next_state, element_id)
         return {
             "missingMaskPath": missing_mask_path,
-            "state": state.model_dump(mode="json"),
+            "repair": read_repair_metadata(root, next_element),
+            "state": next_state.model_dump(mode="json"),
         }
+
+    @app.get("/api/workspace/elements/{element_id:path}/repair/metadata")
+    def get_repair_metadata(element_id: str) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        element = _get_element(state, element_id)
+        return read_repair_metadata(root, element)
 
     @app.post("/api/workspace/elements/{element_id:path}/repair/task")
     def post_repair_task(element_id: str) -> dict:
@@ -337,8 +370,10 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             ],
         )
         _write_state(root, next_state)
+        next_element = _get_element(next_state, element_id)
         return {
             "paths": paths,
+            "repair": read_repair_metadata(root, next_element),
             "state": next_state.model_dump(mode="json"),
         }
 
@@ -347,6 +382,17 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         root = app.state.workspace_root
         state = _read_state(root)
         element = _get_element(state, element_id)
+        if not _is_repair_workflow_element(element):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Element {element.id} is not in the repair workflow.",
+            )
+        if not repair_task_package_exists(root, element):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Element {element.id} needs a repair task package before validation.",
+            )
+
         qa_report = validate_repair_output(root, element)
         next_state = WorkspaceState(
             source=state.source,
@@ -367,8 +413,10 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
             ],
         )
         _write_state(root, next_state)
+        next_element = _get_element(next_state, element_id)
         return {
             "qa": qa_report,
+            "repair": read_repair_metadata(root, next_element),
             "state": next_state.model_dump(mode="json"),
         }
 
@@ -469,6 +517,17 @@ def _state_path(workspace_root: Path) -> Path:
     return workspace_root / "state.json"
 
 
+def _clear_element_outputs(workspace_root: Path) -> None:
+    workspace_path = workspace_root.resolve()
+    elements_dir = (workspace_path / "elements").resolve()
+    try:
+        elements_dir.relative_to(workspace_path)
+    except ValueError as exc:
+        raise ValueError("Workspace element output path must stay inside workspace root.") from exc
+    if elements_dir.exists():
+        shutil.rmtree(elements_dir)
+
+
 def _require_source_image(workspace_root: Path) -> Image.Image:
     source_path = _source_path(workspace_root)
     if not source_path.exists():
@@ -533,6 +592,46 @@ def _is_extractable_element(
     return element.status in statuses and element.mode != "rejected"
 
 
+def _is_repair_workflow_element(element: ElementRecord) -> bool:
+    return element.mode in {"needs_completion", "completed_by_codex"}
+
+
+def _status_after_geometry_invalidation(element: ElementRecord) -> str:
+    return (
+        "extract_ready"
+        if _is_geometry_extract_ready_status(element)
+        else element.status
+    )
+
+
+def _status_after_extraction_invalidation(element: ElementRecord) -> str:
+    return (
+        "extract_ready"
+        if element.status in {
+            "accepted",
+            "extract_ready",
+            "extracted",
+            "repair_pending",
+            "repair_complete",
+            "qa_failed",
+        }
+        and element.mode != "rejected"
+        else element.status
+    )
+
+
+def _status_after_repair_package_invalidation(element: ElementRecord) -> str:
+    return (
+        "extracted"
+        if element.status in {"repair_pending", "repair_complete", "qa_failed"}
+        else element.status
+    )
+
+
+def _reset_repair_mode(element: ElementRecord) -> str:
+    return "needs_completion" if element.mode == "completed_by_codex" else element.mode
+
+
 def _invalidate_geometry_changes(
     workspace_root: Path,
     previous_state: WorkspaceState,
@@ -547,12 +646,12 @@ def _invalidate_geometry_changes(
             continue
 
         clear_extraction_outputs(workspace_root, element.id)
+        clear_repair_outputs(workspace_root, element.id)
         next_elements.append(
             element.model_copy(
                 update={
-                    "status": "extract_ready"
-                    if _is_geometry_extract_ready_status(element)
-                    else element.status,
+                    "status": _status_after_geometry_invalidation(element),
+                    "mode": _reset_repair_mode(element),
                     "mask": None,
                 }
             )
@@ -581,7 +680,15 @@ def _boxes_equal(left: BoundingBox | CanvasBox, right: BoundingBox | CanvasBox) 
 
 def _is_geometry_extract_ready_status(element: ElementRecord) -> bool:
     return (
-        element.status in {"accepted", "extract_ready", "extracted"}
+        element.status
+        in {
+            "accepted",
+            "extract_ready",
+            "extracted",
+            "repair_pending",
+            "repair_complete",
+            "qa_failed",
+        }
         and element.mode != "rejected"
     )
 

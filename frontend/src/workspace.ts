@@ -107,6 +107,27 @@ export type RepairQaReport = {
   changedPixelsOverlayPath: string | null;
 };
 
+export type RepairMetadata = {
+  elementId: string;
+  files: {
+    missingMask: boolean;
+    repairPackage: boolean;
+    completedAsset: boolean;
+    repairReport: boolean;
+    qaReport: boolean;
+    changedPixelsOverlay: boolean;
+    [key: string]: boolean;
+  };
+  paths: {
+    missingMaskPath: string | null;
+    completedAssetPath: string | null;
+    repairReportPath: string | null;
+    qaReportPath: string | null;
+    changedPixelsOverlayPath: string | null;
+  };
+  qaReport: RepairQaReport | null;
+};
+
 export type CanvasTool = "select" | "draw" | "split" | "missing-mask";
 
 export type DraftRegion = {

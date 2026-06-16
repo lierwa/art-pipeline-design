@@ -18,6 +18,7 @@ import {
   normalizeWorkspaceState,
   OverlayState,
   repairAssetUrl,
+  RepairMetadata,
   RepairQaReport,
   sourceCropUrl,
   updateElement,
@@ -62,16 +63,19 @@ type ReplaceMaskResponse = {
 
 type SaveMissingMaskResponse = {
   missingMaskPath: string;
+  repair?: RepairMetadata;
   state: WorkspaceState;
 };
 
 type CreateRepairTaskResponse = {
   paths: Record<string, string>;
+  repair?: RepairMetadata;
   state: WorkspaceState;
 };
 
 type ValidateRepairResponse = {
   qa: RepairQaReport;
+  repair?: RepairMetadata;
   state: WorkspaceState;
 };
 
@@ -96,6 +100,7 @@ export function App() {
   const [missingMaskDraft, setMissingMaskDraft] = useState<MissingMaskDraft | null>(null);
   const [savedMissingMaskElementIds, setSavedMissingMaskElementIds] = useState<string[]>([]);
   const [repairQaReport, setRepairQaReport] = useState<RepairQaReport | null>(null);
+  const [repairMetadataByElementId, setRepairMetadataByElementId] = useState<Record<string, RepairMetadata>>({});
   const [isRepairing, setIsRepairing] = useState(false);
   const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
 
@@ -158,10 +163,23 @@ export function App() {
   }, [elementDraft, selectedElement]);
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
+  const selectedRepairMetadata = selectedElement
+    ? repairMetadataByElementId[selectedElement.id] ?? null
+    : null;
+  const selectedRepairQaReport =
+    repairQaReport?.elementId === selectedElement?.id
+      ? repairQaReport
+      : selectedRepairMetadata?.qaReport ?? null;
   const selectedHasMissingMask = selectedElement
-    ? savedMissingMaskElementIds.includes(selectedElement.id) || hasRepairPackage(selectedElement)
+    ? selectedRepairMetadata
+      ? selectedRepairMetadata.files.missingMask
+      : savedMissingMaskElementIds.includes(selectedElement.id)
     : false;
-  const selectedHasRepairPackage = selectedElement ? hasRepairPackage(selectedElement) : false;
+  const selectedHasRepairPackage = selectedElement
+    ? selectedRepairMetadata
+      ? selectedRepairMetadata.files.repairPackage
+      : hasRepairPackage(selectedElement)
+    : false;
   const canDrawMissingMask =
     selectedElement !== null
     && selectedElement.mode === "needs_completion"
@@ -196,6 +214,74 @@ export function App() {
     );
   }, [selectedElement]);
 
+  useEffect(() => {
+    if (!selectedElement || !shouldLoadRepairMetadata(selectedElement)) {
+      return;
+    }
+
+    const elementId = selectedElement.id;
+    let cancelled = false;
+    async function loadMetadata() {
+      try {
+        const metadata = await fetchRepairMetadata(elementId);
+        if (!cancelled) {
+          applyRepairMetadata(metadata);
+        }
+      } catch {
+        if (!cancelled) {
+          setRepairMetadataByElementId((current) => {
+            const next = { ...current };
+            delete next[elementId];
+            return next;
+          });
+        }
+      }
+    }
+
+    void loadMetadata();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedElement?.id, selectedElement?.mode, selectedElement?.status]);
+
+  async function fetchRepairMetadata(elementId: string): Promise<RepairMetadata> {
+    const response = await fetch(`/api/workspace/elements/${elementId}/repair/metadata`);
+    if (!response.ok) {
+      throw new Error("Could not load repair metadata.");
+    }
+    return (await response.json()) as RepairMetadata;
+  }
+
+  function applyRepairMetadata(metadata: RepairMetadata) {
+    setRepairMetadataByElementId((current) => ({
+      ...current,
+      [metadata.elementId]: metadata,
+    }));
+    setSavedMissingMaskElementIds((current) => {
+      if (metadata.files.missingMask) {
+        return current.includes(metadata.elementId) ? current : [...current, metadata.elementId];
+      }
+      return current.filter((elementId) => elementId !== metadata.elementId);
+    });
+    setRepairQaReport((current) => {
+      if (metadata.qaReport) {
+        return metadata.qaReport;
+      }
+      return current?.elementId === metadata.elementId ? null : current;
+    });
+  }
+
+  function clearLocalRepairMetadata(elementIds: string[]) {
+    const ids = new Set(elementIds);
+    setRepairMetadataByElementId((current) => {
+      return Object.fromEntries(
+        Object.entries(current).filter(([elementId]) => !ids.has(elementId)),
+      );
+    });
+    setSavedMissingMaskElementIds((current) => current.filter((elementId) => !ids.has(elementId)));
+    setRepairQaReport((current) => current && ids.has(current.elementId) ? null : current);
+  }
+
   async function loadWorkspace() {
     setError(null);
     try {
@@ -219,6 +305,12 @@ export function App() {
   function replaceWorkspace(nextState: WorkspaceState, nextStatus: string, nextSelectionId?: string | null) {
     const normalized = normalizeWorkspaceState(nextState);
     setWorkspace(normalized);
+    setRepairMetadataByElementId((current) => {
+      const existingIds = new Set(normalized.elements.map((element) => element.id));
+      return Object.fromEntries(
+        Object.entries(current).filter(([elementId]) => existingIds.has(elementId)),
+      );
+    });
     setAssetCacheKey((current) => current + 1);
     setSelectedElementId((current) => {
       if (nextSelectionId !== undefined) {
@@ -232,7 +324,7 @@ export function App() {
     setStatus(nextStatus);
   }
 
-  async function persistWorkspace(nextState: WorkspaceState, nextStatus: string) {
+  async function persistWorkspace(nextState: WorkspaceState, nextStatus: string): Promise<boolean> {
     const previousState = workspace;
     const previousSelection = selectedElementId;
     replaceWorkspace(nextState, nextStatus);
@@ -255,6 +347,7 @@ export function App() {
 
       const persistedState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
       replaceWorkspace(persistedState, nextStatus, previousSelection);
+      return true;
     } catch (saveError) {
       setWorkspace(previousState);
       setSelectedElementId(previousSelection);
@@ -262,6 +355,7 @@ export function App() {
       setError(
         saveError instanceof Error ? saveError.message : "Could not save workspace state.",
       );
+      return false;
     } finally {
       setIsSavingState(false);
     }
@@ -303,6 +397,8 @@ export function App() {
       setDraftRegion(null);
       setMissingMaskRegion(null);
       setSplitRegions([]);
+      setSavedMissingMaskElementIds([]);
+      setRepairQaReport(null);
     } catch (uploadError) {
       URL.revokeObjectURL(optimisticUrl);
       setSourceUrl(null);
@@ -406,6 +502,7 @@ export function App() {
       }
 
       const payload = (await response.json()) as ExtractWorkspaceResponse;
+      clearLocalRepairMetadata(payload.extractions.map((extraction) => extraction.elementId));
       replaceWorkspace(
         payload.state,
         options.successStatus(payload.extractions.length),
@@ -440,6 +537,7 @@ export function App() {
       }
 
       const payload = (await response.json()) as ClearMaskResponse;
+      clearLocalRepairMetadata([selectedElement.id]);
       replaceWorkspace(payload.state, "Mask cleared.", selectedElement.id);
     } catch (clearError) {
       setStatus("Mask clear failed.");
@@ -476,6 +574,7 @@ export function App() {
       }
 
       const payload = (await response.json()) as ReplaceMaskResponse;
+      clearLocalRepairMetadata([selectedElement.id]);
       replaceWorkspace(payload.state, "Mask replaced.", selectedElement.id);
     } catch (replaceError) {
       setStatus("Mask replace failed.");
@@ -511,6 +610,11 @@ export function App() {
     if (!bbox || bbox.w <= 0 || bbox.h <= 0) {
       setStatus("Missing mask save failed.");
       setError("Missing mask rectangle values must be positive whole numbers.");
+      return;
+    }
+    if (!boxFitsInsideElementCanvas(bbox, selectedElement)) {
+      setStatus("Missing mask save failed.");
+      setError("Missing mask rectangle must stay inside the selected element canvas.");
       return;
     }
 
@@ -570,6 +674,9 @@ export function App() {
         current.includes(element.id) ? current : [...current, element.id],
       );
       replaceWorkspace(payload.state, "Missing mask saved.", element.id);
+      if (payload.repair) {
+        applyRepairMetadata(payload.repair);
+      }
       setMissingMaskDraft(savedDraft);
     } catch (repairError) {
       setStatus("Missing mask save failed.");
@@ -611,6 +718,9 @@ export function App() {
         current.includes(selectedElement.id) ? current : [...current, selectedElement.id],
       );
       replaceWorkspace(payload.state, "Codex repair task created.", selectedElement.id);
+      if (payload.repair) {
+        applyRepairMetadata(payload.repair);
+      }
     } catch (repairError) {
       setStatus("Repair task creation failed.");
       setError(
@@ -643,6 +753,9 @@ export function App() {
       const payload = (await response.json()) as ValidateRepairResponse;
       replaceWorkspace(payload.state, `Repair validation: ${payload.qa.status}.`, selectedElement.id);
       setRepairQaReport(payload.qa);
+      if (payload.repair) {
+        applyRepairMetadata(payload.repair);
+      }
     } catch (repairError) {
       setStatus("Repair validation failed.");
       setError(
@@ -741,11 +854,15 @@ export function App() {
       return;
     }
 
+    const geometryChanged = isGeometryDraftDirty(selectedElement, elementDraft);
     const nextState = {
       ...workspace,
       elements: updateElement(workspace.elements, selectedElement.id, () => nextElement),
     };
-    await persistWorkspace(nextState, "Element details updated.");
+    const saved = await persistWorkspace(nextState, "Element details updated.");
+    if (saved && geometryChanged) {
+      clearLocalRepairMetadata([selectedElement.id]);
+    }
   }
 
   async function handleCreateElement() {
@@ -973,7 +1090,7 @@ export function App() {
           draft={elementDraft}
           splitRequestDescription={splitRequestDescription}
           missingMaskDraft={missingMaskDraft}
-          repairQaReport={repairQaReport}
+          repairQaReport={selectedRepairQaReport}
           hasMissingMaskPreview={selectedHasMissingMask}
           hasRepairPackage={selectedHasRepairPackage}
           onDraftChange={setElementDraft}
@@ -1016,7 +1133,8 @@ export function App() {
           <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
           <RepairComparison
             selectedElement={selectedElement}
-            qaReport={repairQaReport}
+            qaReport={selectedRepairQaReport}
+            repairMetadata={selectedRepairMetadata}
             assetCacheKey={assetCacheKey}
             hasMissingMaskPreview={selectedHasMissingMask}
           />
@@ -1039,6 +1157,14 @@ function hasExtractedAssetPreview(element: WorkspaceElement): boolean {
 
 function hasRepairPackage(element: WorkspaceElement): boolean {
   return ["repair_pending", "repair_complete", "qa_failed"].includes(element.status);
+}
+
+function shouldLoadRepairMetadata(element: WorkspaceElement): boolean {
+  return (
+    element.mode === "needs_completion"
+    || element.mode === "completed_by_codex"
+    || hasRepairPackage(element)
+  );
 }
 
 function ExtractionPreview({
@@ -1114,21 +1240,24 @@ function ExtractionPreview({
 function RepairComparison({
   selectedElement,
   qaReport,
+  repairMetadata,
   assetCacheKey,
   hasMissingMaskPreview,
 }: {
   selectedElement: WorkspaceElement | null;
   qaReport: RepairQaReport | null;
+  repairMetadata: RepairMetadata | null;
   assetCacheKey: number;
   hasMissingMaskPreview: boolean;
 }) {
-  if (!selectedElement || !isRepairVisible(selectedElement, qaReport)) {
+  if (!selectedElement || !isRepairVisible(selectedElement, qaReport, repairMetadata)) {
     return null;
   }
 
-  const changedOverlayUrl = qaReport?.changedPixelsOverlayPath
+  const changedOverlayUrl = repairMetadata?.files.changedPixelsOverlay && qaReport?.changedPixelsOverlayPath
     ? workspaceAssetUrl(qaReport.changedPixelsOverlayPath, assetCacheKey)
     : null;
+  const hasCompletedAsset = repairMetadata?.files.completedAsset ?? false;
 
   return (
     <div className="repair-comparison">
@@ -1156,7 +1285,7 @@ function RepairComparison({
           </div>
           <figcaption>Before asset</figcaption>
         </figure>
-        {hasRepairPackage(selectedElement) || qaReport ? (
+        {hasCompletedAsset ? (
           <figure>
             <div className="checkerboard-preview">
               <img
@@ -1193,12 +1322,14 @@ function RepairComparison({
 function isRepairVisible(
   selectedElement: WorkspaceElement,
   qaReport: RepairQaReport | null,
+  repairMetadata: RepairMetadata | null,
 ): boolean {
   return (
     selectedElement.mode === "needs_completion"
     || selectedElement.mode === "completed_by_codex"
     || hasRepairPackage(selectedElement)
     || qaReport?.elementId === selectedElement.id
+    || repairMetadata?.elementId === selectedElement.id
   );
 }
 
@@ -1249,16 +1380,36 @@ function boxToDraft(box: Box): { x: string; y: string; w: string; h: string } {
 }
 
 function parseBox(box: { x: string; y: string; w: string; h: string }): Box | null {
-  const x = Number.parseInt(box.x, 10);
-  const y = Number.parseInt(box.y, 10);
-  const w = Number.parseInt(box.w, 10);
-  const h = Number.parseInt(box.h, 10);
+  const x = parseWholeNumber(box.x);
+  const y = parseWholeNumber(box.y);
+  const w = parseWholeNumber(box.w);
+  const h = parseWholeNumber(box.h);
 
-  if ([x, y, w, h].some(Number.isNaN)) {
+  if (x === null || y === null || w === null || h === null) {
     return null;
   }
 
   return { x, y, w, h };
+}
+
+function parseWholeNumber(value: string): number | null {
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function boxFitsInsideElementCanvas(box: Box, element: WorkspaceElement): boolean {
+  return (
+    box.x >= 0
+    && box.y >= 0
+    && box.w > 0
+    && box.h > 0
+    && box.x + box.w <= element.canvas.w
+    && box.y + box.h <= element.canvas.h
+  );
 }
 
 function isGeometryDraftDirty(

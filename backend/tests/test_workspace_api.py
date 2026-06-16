@@ -744,6 +744,53 @@ def test_put_state_geometry_change_invalidates_extracted_outputs(
     assert not (element_dir / "extraction.json").exists()
 
 
+def test_put_state_geometry_change_clears_stale_repair_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"filled missing pixel"}', encoding="utf-8")
+    validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
+    assert validate_response.status_code == 200
+    assert validate_response.json()["state"]["elements"][0]["mode"] == "completed_by_codex"
+
+    next_state = validate_response.json()["state"]
+    next_state["elements"][0]["bbox"] = {"x": 4, "y": 2, "w": 1, "h": 2}
+    response = client.put("/api/workspace/state", json=next_state)
+
+    assert response.status_code == 200
+    element = response.json()["elements"][0]
+    assert element["status"] == "extract_ready"
+    assert element["mode"] == "needs_completion"
+    assert element["mask"] is None
+    assert not (element_dir / "missing_mask.png").exists()
+    assert not repair_dir.exists()
+
+
+def test_upload_source_clears_previous_element_repair_artifacts(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    assert (element_dir / "missing_mask.png").exists()
+    assert (element_dir / "repair").exists()
+
+    response = client.post(
+        "/api/workspace/source",
+        files={"file": ("replacement.png", make_gradient_scene_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["elements"] == []
+    assert not element_dir.exists()
+
+
 def test_extract_rejects_persisted_path_like_element_id_without_writing_outside(
     client: TestClient,
     tmp_path: Path,
@@ -1241,6 +1288,26 @@ def test_clear_mask_removes_extraction_outputs_and_marks_element_ready(
     ).exists()
 
 
+def test_clear_mask_clears_stale_repair_artifacts_and_resets_repair_state(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+    assert (element_dir / "missing_mask.png").exists()
+    assert repair_dir.exists()
+
+    response = client.post("/api/workspace/elements/element_001/mask/clear")
+
+    assert response.status_code == 200
+    element = response.json()["state"]["elements"][0]
+    assert element["status"] == "extract_ready"
+    assert element["mode"] == "needs_completion"
+    assert element["mask"] is None
+    assert not (element_dir / "missing_mask.png").exists()
+    assert not repair_dir.exists()
+
+
 def test_clear_mask_rejects_path_like_element_id_without_deleting_outside(
     client: TestClient,
     tmp_path: Path,
@@ -1336,6 +1403,105 @@ def test_create_repair_task_writes_required_canvas_aligned_files(
     assert "Write repair_report.json." in prompt
 
 
+def test_repair_metadata_reports_files_and_latest_qa(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    package_metadata = client.get("/api/workspace/elements/element_001/repair/metadata")
+    assert package_metadata.status_code == 200
+    body = package_metadata.json()
+    assert body["elementId"] == "element_001"
+    assert body["files"]["missingMask"] is True
+    assert body["files"]["repairPackage"] is True
+    assert body["files"]["completedAsset"] is False
+    assert body["files"]["repairReport"] is False
+    assert body["files"]["qaReport"] is False
+    assert body["paths"]["missingMaskPath"] == "elements/element_001/missing_mask.png"
+    assert body["paths"]["completedAssetPath"] is None
+    assert body["qaReport"] is None
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"filled missing pixel"}', encoding="utf-8")
+    validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
+    assert validate_response.status_code == 200
+
+    qa_metadata = client.get("/api/workspace/elements/element_001/repair/metadata")
+
+    assert qa_metadata.status_code == 200
+    body = qa_metadata.json()
+    assert body["files"]["completedAsset"] is True
+    assert body["files"]["repairReport"] is True
+    assert body["files"]["qaReport"] is True
+    assert body["files"]["changedPixelsOverlay"] is True
+    assert body["paths"]["completedAssetPath"] == "elements/element_001/repair/completed_asset.png"
+    assert body["paths"]["changedPixelsOverlayPath"] == (
+        "elements/element_001/repair/changed_pixels_overlay.png"
+    )
+    assert body["qaReport"]["status"] == "pass"
+
+
+def test_repair_validate_requires_repair_workflow_and_package(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path, mode="visible_only")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Element element_001 is not in the repair workflow."
+    state = client.get("/api/workspace/state").json()
+    assert state["elements"][0]["status"] == "extracted"
+    assert state["elements"][0]["mode"] == "visible_only"
+    assert not (element_dir / "repair" / "qa_report.json").exists()
+
+
+def test_repair_validate_requires_existing_repair_package(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path)
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Element element_001 needs a repair task package before validation."
+    state = client.get("/api/workspace/state").json()
+    assert state["elements"][0]["status"] == "extracted"
+    assert state["elements"][0]["mode"] == "needs_completion"
+    assert not (element_dir / "repair" / "qa_report.json").exists()
+
+
+def test_missing_mask_rejects_rectangle_outside_asset_canvas(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path)
+
+    response = client.post(
+        "/api/workspace/elements/element_001/repair/missing-mask",
+        json={
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 4, "y": 1, "w": 2, "h": 1},
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Missing mask rectangle for element element_001 must stay inside the 5 x 4 asset canvas."
+    )
+    assert not (element_dir / "missing_mask.png").exists()
+
+
 def test_repair_qa_fails_if_preserved_pixels_change(
     client: TestClient,
     tmp_path: Path,
@@ -1412,6 +1578,78 @@ def test_repair_qa_passes_for_missing_mask_only_edit(
     assert element["mode"] == "completed_by_codex"
 
 
+def test_repair_qa_fails_for_wrong_size_completed_asset(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    completed = Image.new("RGBA", (6, 4), (1, 2, 3, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"wrong size"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "fail"
+    assert "completed_asset_wrong_dimensions" in body["qa"]["reasons"]
+    assert body["state"]["elements"][0]["status"] == "qa_failed"
+
+
+def test_repair_qa_fails_for_completed_asset_without_alpha(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    completed = Image.new("RGB", (5, 4), (1, 2, 3))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"rgb only"}', encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "fail"
+    assert "completed_asset_missing_alpha" in body["qa"]["reasons"]
+    assert body["state"]["elements"][0]["status"] == "qa_failed"
+
+
+@pytest.mark.parametrize(
+    ("report_contents", "expected_reason"),
+    [
+        (None, "repair_report_missing"),
+        ("{not valid json", "repair_report_invalid_json"),
+    ],
+)
+def test_repair_qa_requires_valid_repair_report(
+    client: TestClient,
+    tmp_path: Path,
+    report_contents: str | None,
+    expected_reason: str,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    if report_contents is not None:
+        (repair_dir / "repair_report.json").write_text(report_contents, encoding="utf-8")
+
+    response = client.post("/api/workspace/elements/element_001/repair/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["qa"]["status"] == "fail"
+    assert expected_reason in body["qa"]["reasons"]
+    assert body["state"]["elements"][0]["status"] == "qa_failed"
+
+
 def _prepare_repair_package(client: TestClient, tmp_path: Path) -> Path:
     element_dir = _prepare_completion_element(client, tmp_path)
     mask_response = client.post(
@@ -1430,7 +1668,11 @@ def _prepare_repair_package(client: TestClient, tmp_path: Path) -> Path:
     return element_dir
 
 
-def _prepare_completion_element(client: TestClient, tmp_path: Path) -> Path:
+def _prepare_completion_element(
+    client: TestClient,
+    tmp_path: Path,
+    mode: str = "needs_completion",
+) -> Path:
     upload_response = client.post(
         "/api/workspace/source",
         files={"file": ("scene.png", make_gradient_scene_bytes(), "image/png")},
@@ -1451,7 +1693,7 @@ def _prepare_completion_element(client: TestClient, tmp_path: Path) -> Path:
                     "id": "element_001",
                     "name": "Cup",
                     "status": "accepted",
-                    "mode": "needs_completion",
+                    "mode": mode,
                     "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
                     "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
                     "layer": 1,
