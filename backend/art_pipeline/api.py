@@ -116,7 +116,7 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         persisted_elements = [
             element
             for element in state.elements
-            if element.status not in {"proposal"} and element.mode != "rejected"
+            if element.status != "proposal" or element.mode == "rejected"
         ]
         next_state = WorkspaceState(
             source=state.source,

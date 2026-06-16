@@ -63,6 +63,12 @@ type OverlayState = {
   showRejected: boolean;
 };
 
+type AcceptedElementDraft = {
+  name: string;
+  mode: ElementMode;
+  layer: string;
+};
+
 const EMPTY_STATE: WorkspaceState = {
   source: null,
   elements: [],
@@ -117,6 +123,7 @@ export function App() {
   const [overlays, setOverlays] = useState<OverlayState>(DEFAULT_OVERLAYS);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isSavingState, setIsSavingState] = useState(false);
+  const [acceptedDraft, setAcceptedDraft] = useState<AcceptedElementDraft | null>(null);
 
   useEffect(() => {
     return () => {
@@ -149,6 +156,19 @@ export function App() {
   const selectedElement = useMemo(() => {
     return workspace.elements.find((element) => element.id === selectedElementId) ?? null;
   }, [selectedElementId, workspace.elements]);
+
+  useEffect(() => {
+    if (!selectedElement || selectedElement.status !== "accepted") {
+      setAcceptedDraft(null);
+      return;
+    }
+
+    setAcceptedDraft({
+      name: selectedElement.name,
+      mode: selectedElement.mode,
+      layer: String(selectedElement.layer),
+    });
+  }, [selectedElement]);
 
   async function persistWorkspace(nextState: WorkspaceState, nextStatus: string) {
     const previousState = workspace;
@@ -307,6 +327,30 @@ export function App() {
       })),
     };
     await persistWorkspace(nextState, "Element visibility updated.");
+  }
+
+  async function handleAcceptedElementSave() {
+    if (!selectedElement || selectedElement.status !== "accepted" || !acceptedDraft) {
+      return;
+    }
+
+    const parsedLayer = Number.parseInt(acceptedDraft.layer, 10);
+    if (Number.isNaN(parsedLayer)) {
+      setError("Element layer must be a whole number.");
+      setStatus("State save failed.");
+      return;
+    }
+
+    const nextState = {
+      ...workspace,
+      elements: updateElement(workspace.elements, selectedElement.id, (element) => ({
+        ...element,
+        name: acceptedDraft.name.trim() || element.name,
+        mode: acceptedDraft.mode,
+        layer: parsedLayer,
+      })),
+    };
+    await persistWorkspace(nextState, "Element details updated.");
   }
 
   return (
@@ -538,7 +582,61 @@ export function App() {
             <h2>Inspector</h2>
           </div>
           <div className="panel-body">
-            {selectedElement ? (
+            {selectedElement?.status === "accepted" && acceptedDraft ? (
+              <form
+                className="inspector-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void handleAcceptedElementSave();
+                }}
+              >
+                <label className="field-group">
+                  <span>Element name</span>
+                  <input
+                    aria-label="Element name"
+                    type="text"
+                    value={acceptedDraft.name}
+                    onChange={(event) =>
+                      setAcceptedDraft((current) =>
+                        current ? { ...current, name: event.target.value } : current,
+                      )
+                    }
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Element mode</span>
+                  <select
+                    aria-label="Element mode"
+                    value={acceptedDraft.mode}
+                    onChange={(event) =>
+                      setAcceptedDraft((current) =>
+                        current
+                          ? { ...current, mode: event.target.value as ElementMode }
+                          : current,
+                      )
+                    }
+                  >
+                    <option value="visible_only">visible_only</option>
+                    <option value="needs_completion">needs_completion</option>
+                    <option value="completed_by_codex">completed_by_codex</option>
+                  </select>
+                </label>
+                <label className="field-group">
+                  <span>Element layer</span>
+                  <input
+                    aria-label="Element layer"
+                    type="number"
+                    value={acceptedDraft.layer}
+                    onChange={(event) =>
+                      setAcceptedDraft((current) =>
+                        current ? { ...current, layer: event.target.value } : current,
+                      )
+                    }
+                  />
+                </label>
+                <button type="submit">Save element</button>
+              </form>
+            ) : selectedElement ? (
               <div className="inspector-details">
                 <strong>{selectedElement.name}</strong>
                 <span>Status: {selectedElement.status}</span>

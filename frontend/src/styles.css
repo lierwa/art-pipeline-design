@@ -16,7 +16,8 @@ body {
 
 button,
 input,
-label {
+label,
+select {
   font: inherit;
 }
 
@@ -342,6 +343,28 @@ button {
 .inspector-details span {
   color: #9da7ba;
   font-size: 0.84rem;
+}
+
+.inspector-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.field-group {
+  display: grid;
+  gap: 0.35rem;
+  color: #c7d0df;
+  font-size: 0.84rem;
+}
+
+.field-group input,
+.field-group select {
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #2f3749;
+  border-radius: 8px;
+  background: #11151d;
+  color: #f3f6fb;
 }
 
 .element-actions {

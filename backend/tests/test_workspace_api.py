@@ -203,3 +203,53 @@ def test_auto_annotate_prefers_imported_proposals_when_present(
     assert imported["source"] == "imported"
     assert imported["confidence"] == pytest.approx(0.91)
     assert (tmp_path / "workspace" / imported["thumbnail"]).exists()
+
+
+def test_auto_annotate_preserves_rejected_elements_and_avoids_id_collisions(
+    client: TestClient,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+
+    first_response = client.post("/api/workspace/auto-annotate")
+    assert first_response.status_code == 200
+    first_payload = first_response.json()
+
+    rejected = dict(first_payload["elements"][0])
+    rejected["mode"] = "rejected"
+    rejected["visible"] = False
+
+    accepted = dict(first_payload["elements"][1])
+    accepted["status"] = "accepted"
+
+    put_response = client.put(
+        "/api/workspace/state",
+        json={
+            "source": first_payload["source"],
+            "elements": [rejected, accepted],
+        },
+    )
+    assert put_response.status_code == 200
+
+    second_response = client.post("/api/workspace/auto-annotate")
+    assert second_response.status_code == 200
+    second_payload = second_response.json()
+
+    by_id = {element["id"]: element for element in second_payload["elements"]}
+    assert rejected["id"] in by_id
+    assert by_id[rejected["id"]]["mode"] == "rejected"
+    assert by_id[rejected["id"]]["visible"] is False
+    assert accepted["id"] in by_id
+    assert by_id[accepted["id"]]["status"] == "accepted"
+
+    active_proposal_ids = {
+        element["id"]
+        for element in second_payload["elements"]
+        if element["status"] == "proposal" and element["mode"] != "rejected"
+    }
+    assert rejected["id"] not in active_proposal_ids
+    assert accepted["id"] not in active_proposal_ids
+    assert active_proposal_ids == {"element_003", "element_004"}

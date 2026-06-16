@@ -187,7 +187,7 @@ describe("App", () => {
     }
   });
 
-  it("hides box and name overlays when toggles are turned off", async () => {
+  it("hides bbox box and name overlays when toggles are turned off", async () => {
     const user = userEvent.setup();
     const originalFetch = global.fetch;
     const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -275,6 +275,71 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
 
       expect(screen.getByAltText("Region 2 thumbnail")).toBeInTheDocument();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("shows minimal editable inspector fields for accepted elements and persists edits", async () => {
+    const user = userEvent.setup();
+    const originalFetch = global.fetch;
+    const mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/source" && init?.method === "POST") {
+        return new Response(JSON.stringify(uploadedState), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (input === "/api/workspace/auto-annotate" && init?.method === "POST") {
+        return new Response(JSON.stringify(annotatedState), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        return new Response(String(init.body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    global.fetch = mockFetch as typeof fetch;
+
+    try {
+      render(<App />);
+      const input = screen.getByLabelText(/upload png/i);
+      const file = new File(["fake"], "scene.png", { type: "image/png" });
+
+      await user.upload(input, file);
+      await user.click(screen.getByRole("button", { name: /auto annotate/i }));
+      await user.click(screen.getAllByRole("button", { name: /accept/i })[0]);
+
+      const nameField = screen.getByLabelText(/element name/i);
+      const modeField = screen.getByLabelText(/element mode/i);
+      const layerField = screen.getByLabelText(/element layer/i);
+
+      expect(nameField).toHaveValue("Region 1");
+      expect(modeField).toHaveValue("visible_only");
+      expect(layerField).toHaveValue(1);
+
+      await user.clear(nameField);
+      await user.type(nameField, "Hero Cat");
+      await user.selectOptions(modeField, "needs_completion");
+      await user.clear(layerField);
+      await user.type(layerField, "7");
+      await user.click(screen.getByRole("button", { name: /save element/i }));
+
+      expect(screen.getByAltText("Hero Cat thumbnail")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Hero Cat");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "/api/workspace/state",
+        expect.objectContaining({ method: "PUT" }),
+      );
     } finally {
       global.fetch = originalFetch;
     }
