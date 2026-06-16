@@ -780,6 +780,7 @@ export function App() {
     setIsExporting(true);
     setStatus("Exporting asset pack...");
     setError(null);
+    setExportSummary(null);
 
     try {
       const response = await fetch("/api/workspace/export", {
@@ -800,6 +801,7 @@ export function App() {
       setAssetCacheKey((current) => current + 1);
       setStatus(formatExportStatus(payload));
     } catch (exportError) {
+      setExportSummary(null);
       setStatus("Export failed.");
       setError(exportError instanceof Error ? exportError.message : "Export failed.");
     } finally {
@@ -1429,6 +1431,20 @@ function ExportPanel({
             ) : (
               <p className="panel-copy">No export warnings.</p>
             )}
+            {summary.blockedElements.length > 0 ? (
+              <div className="export-blocked">
+                <span className="preview-label">Blocked elements</span>
+                <ul>
+                  {summary.blockedElements.map((blocked) => (
+                    <li key={blocked.elementId}>
+                      <strong>{blocked.elementId}</strong>
+                      <span>{blocked.name}</span>
+                      <span>{blocked.reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <figure className="export-contact-sheet">
               <img
                 alt="Export contact sheet preview"

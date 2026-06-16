@@ -562,11 +562,52 @@ describe("App", () => {
       expect(screen.getByText("1 exportable")).toBeInTheDocument();
       expect(screen.getByText("1 blocked")).toBeInTheDocument();
       expect(screen.getByText(/element_002 needs_completion is blocked/i)).toBeInTheDocument();
+      expect(screen.getByText(/blocked elements/i)).toBeInTheDocument();
+      expect(screen.getByText("element_002")).toBeInTheDocument();
+      expect(screen.getByText("Gap")).toBeInTheDocument();
+      expect(screen.getByText("needs_completion_without_valid_repair")).toBeInTheDocument();
       expect(screen.getByText("D:/work/art-pipeline-v2-demo/workspace/export")).toBeInTheDocument();
       expect(screen.getByAltText("Export contact sheet preview")).toHaveAttribute(
         "src",
         expect.stringMatching(/^\/api\/workspace\/assets\/export\/contact_sheet\.png\?cache=\d+$/),
       );
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("clears the previous export summary when a later export fails", async () => {
+    const user = userEvent.setup();
+    let exportCalls = 0;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(extractedState);
+      }
+
+      if (input === "/api/workspace/export" && init?.method === "POST") {
+        exportCalls += 1;
+        if (exportCalls === 1) {
+          return jsonResponse(exportSummary);
+        }
+        return jsonResponse({ detail: "Export source file is missing." }, 400);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /export asset pack/i }));
+      expect(await screen.findByAltText("Export contact sheet preview")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /export asset pack/i }));
+
+      expect(await screen.findByText(/export source file is missing\./i)).toBeInTheDocument();
+      expect(screen.getByText(/no export yet/i)).toBeInTheDocument();
+      expect(screen.queryByAltText("Export contact sheet preview")).not.toBeInTheDocument();
+      expect(screen.queryByText("D:/work/art-pipeline-v2-demo/workspace/export")).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }

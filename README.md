@@ -7,14 +7,12 @@ This repository contains a local web workbench for turning one scene PNG into a 
 Install the backend package and development dependencies:
 
 ```powershell
-cd D:\work\art-pipeline-v2-demo\backend
-python -m pip install -e .[dev]
+python -m pip install -e "backend[dev]"
 ```
 
 Run the FastAPI server from the repository root:
 
 ```powershell
-cd D:\work\art-pipeline-v2-demo
 uvicorn art_pipeline.api:app --reload --app-dir backend
 ```
 
@@ -25,7 +23,7 @@ The API uses `workspace/` as its default workspace root.
 Install frontend dependencies:
 
 ```powershell
-cd D:\work\art-pipeline-v2-demo\frontend
+cd frontend
 npm install
 ```
 
@@ -145,14 +143,13 @@ The export panel shows the exportable count, blocked count, warnings, contact sh
 Run backend tests:
 
 ```powershell
-cd D:\work\art-pipeline-v2-demo
 python -m pytest backend/tests -q
 ```
 
 Run frontend tests and build:
 
 ```powershell
-cd D:\work\art-pipeline-v2-demo\frontend
+cd frontend
 npm test -- --run
 npm run build
 ```

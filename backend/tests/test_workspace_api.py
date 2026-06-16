@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import art_pipeline.api as workspace_api
+import art_pipeline.exporter as workspace_exporter
 from art_pipeline.api import create_app
 
 
@@ -1958,6 +1959,99 @@ def test_export_blocks_asset_without_source_mask_or_alpha_channel(
     assert not (tmp_path / "workspace" / "export" / "masks" / "element_001.png").exists()
 
 
+def test_export_completed_repair_mask_matches_completed_asset_alpha(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path)
+    repair_dir = element_dir / "repair"
+    repair_dir.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(element_dir / "asset_incomplete.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((0, 0), (12, 34, 56, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"expanded alpha"}', encoding="utf-8")
+    _write_repair_qa_report(repair_dir, status="pass")
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 1
+    assert body["blockedCount"] == 0
+    assert body["exportedElements"][0]["sourceAssetPath"] == (
+        "elements/element_001/repair/completed_asset.png"
+    )
+    assert body["exportedElements"][0]["maskPath"] == "export/masks/element_001.png"
+
+    with Image.open(repair_dir / "completed_asset.png") as exported_source:
+        expected_mask = exported_source.getchannel("A").point(lambda value: 255 if value > 0 else 0)
+    with Image.open(tmp_path / "workspace" / "export" / "masks" / "element_001.png") as mask:
+        assert mask.mode == "L"
+        assert list(mask.getdata()) == list(expected_mask.getdata())
+        assert mask.getpixel((0, 0)) == 255
+
+
+def test_export_accepts_warn_repair_qa_and_carries_warning(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_completion_element(client, tmp_path)
+    repair_dir = element_dir / "repair"
+    repair_dir.mkdir(parents=True, exist_ok=True)
+
+    with Image.open(element_dir / "asset_incomplete.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text('{"summary":"usable with warning"}', encoding="utf-8")
+    _write_repair_qa_report(repair_dir, status="warn", warnings=["missing_area_ratio_high"])
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 1
+    assert body["blockedCount"] == 0
+    assert body["exportedElements"][0]["warnings"] == [
+        "repair QA warning: missing_area_ratio_high"
+    ]
+    assert body["warnings"] == [
+        "element_001 repair QA warning: missing_area_ratio_high"
+    ]
+
+    qa_report = workspace_api.json.loads(
+        (tmp_path / "workspace" / "export" / "qa_report.json").read_text(encoding="utf-8")
+    )
+    assert qa_report["repairQaReports"]["element_001"]["status"] == "warn"
+    assert qa_report["warnings"] == body["warnings"]
+
+
+def test_failed_export_preserves_previous_export_manifest(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _prepare_completion_element(client, tmp_path, mode="visible_only")
+    export_dir = tmp_path / "workspace" / "export"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = export_dir / "manifest.json"
+    marker_path.write_text('{"marker":"previous export"}', encoding="utf-8")
+
+    def fail_copy(*args: object, **kwargs: object) -> None:
+        _ = args
+        _ = kwargs
+        raise ValueError("simulated export copy failure")
+
+    monkeypatch.setattr(workspace_exporter, "_copy_workspace_file", fail_copy)
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "simulated export copy failure"
+    assert marker_path.read_text(encoding="utf-8") == '{"marker":"previous export"}'
+
+
 def test_export_uses_completed_asset_after_repair_qa_pass(
     client: TestClient,
     tmp_path: Path,
@@ -2008,6 +2102,35 @@ def _prepare_repair_package(client: TestClient, tmp_path: Path) -> Path:
     task_response = client.post("/api/workspace/elements/element_001/repair/task")
     assert task_response.status_code == 200
     return element_dir
+
+
+def _write_repair_qa_report(
+    repair_dir: Path,
+    status: str,
+    warnings: list[str] | None = None,
+) -> None:
+    qa_report = {
+        "elementId": "element_001",
+        "status": status,
+        "reasons": [],
+        "warnings": warnings or [],
+        "metrics": {
+            "totalPixels": 20,
+            "missingMaskPixels": 1,
+            "changedPixels": 1,
+            "insideMissingChangedPixels": 1,
+            "outsideMissingChangedPixels": 0,
+            "preserveChangedPixels": 0,
+            "missingAreaRatio": 0.05,
+            "changedAreaRatio": 0.05,
+        },
+        "reportPath": "elements/element_001/repair/qa_report.json",
+        "changedPixelsOverlayPath": None,
+    }
+    (repair_dir / "qa_report.json").write_text(
+        workspace_api.json.dumps(qa_report, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _prepare_completion_element(

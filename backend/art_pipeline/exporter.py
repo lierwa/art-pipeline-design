@@ -5,7 +5,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
@@ -30,6 +30,8 @@ class PlannedExport:
 
 
 EXPORT_RELATIVE_ROOT = "export"
+TEMP_EXPORT_RELATIVE_ROOT = "export.tmp"
+BACKUP_EXPORT_RELATIVE_ROOT = "export.previous"
 EXPORT_ASSETS_DIR = "export/assets"
 EXPORT_MASKS_DIR = "export/masks"
 MANIFEST_PATH = "export/manifest.json"
@@ -38,6 +40,7 @@ CONTACT_SHEET_PATH = "export/contact_sheet.png"
 QA_REPORT_PATH = "export/qa_report.json"
 MASK_DERIVED_FROM_ALPHA_WARNING = "mask derived from asset alpha because source mask was missing."
 MASK_UNAVAILABLE_REASON = "mask_missing_and_asset_alpha_unavailable"
+COMPLETED_ASSET_MASK_UNAVAILABLE_REASON = "completed_asset_alpha_mask_unavailable"
 
 
 def export_workspace(
@@ -49,117 +52,139 @@ def export_workspace(
         raise ValueError("Upload a source image before export.")
 
     workspace_path = Path(workspace_root).resolve()
-    export_dir = _prepare_export_dir(workspace_path)
     planned, blocked, warnings, repair_qa_reports = _plan_exports(
         workspace_path,
         state,
         allow_incomplete_visible_only,
     )
+    export_dir = _resolve_workspace_path(workspace_path, EXPORT_RELATIVE_ROOT)
+    temp_export_dir = _prepare_temp_export_dir(workspace_path)
 
     exported_elements: list[dict[str, Any]] = []
     manifest_elements: list[dict[str, Any]] = []
     placements: list[dict[str, Any]] = []
-    for planned_export in sorted(
-        planned,
-        key=lambda item: (item.element.layer, item.element.id),
-    ):
-        element = planned_export.element
-        _copy_workspace_file(
-            workspace_path,
-            planned_export.source_asset_path,
-            planned_export.export_asset_path,
-        )
-        if planned_export.source_mask_path and planned_export.export_mask_path:
+    try:
+        for planned_export in sorted(
+            planned,
+            key=lambda item: (item.element.layer, item.element.id),
+        ):
+            element = planned_export.element
             _copy_workspace_file(
                 workspace_path,
-                planned_export.source_mask_path,
-                planned_export.export_mask_path,
-            )
-        elif planned_export.derive_mask_from_asset:
-            _write_alpha_mask(
-                workspace_path,
                 planned_export.source_asset_path,
-                planned_export.export_mask_path,
+                _temp_export_relative(planned_export.export_asset_path),
             )
-        else:
-            raise ValueError(f"Mask source is missing for exported element {element.id}.")
+            if planned_export.source_mask_path and planned_export.export_mask_path:
+                _copy_workspace_file(
+                    workspace_path,
+                    planned_export.source_mask_path,
+                    _temp_export_relative(planned_export.export_mask_path),
+                )
+            elif planned_export.derive_mask_from_asset:
+                _write_alpha_mask(
+                    workspace_path,
+                    planned_export.source_asset_path,
+                    _temp_export_relative(planned_export.export_mask_path),
+                )
+            else:
+                raise ValueError(f"Mask source is missing for exported element {element.id}.")
 
-        exported_entry = {
-            "elementId": element.id,
-            "name": element.name,
-            "assetPath": planned_export.export_asset_path,
-            "maskPath": planned_export.export_mask_path,
-            "sourceAssetPath": planned_export.source_asset_path,
-            "warnings": planned_export.warnings,
-        }
-        exported_elements.append(exported_entry)
-
-        manifest_elements.append(
-            {
-                "id": element.id,
-                "name": element.name,
-                "mode": element.mode,
-                "status": element.status,
-                "sourceAssetPath": planned_export.source_asset_path,
-                "assetPath": planned_export.export_asset_path,
-                "maskPath": planned_export.export_mask_path,
-                "bbox": element.bbox.model_dump(mode="json"),
-                "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
-                "layer": element.layer,
-                "parentId": element.parentId,
-                "notes": element.notes,
-                "warnings": planned_export.warnings,
-                "visible": element.visible,
-                "source": element.source,
-            }
-        )
-        placements.append(
-            {
+            exported_entry = {
                 "elementId": element.id,
                 "name": element.name,
                 "assetPath": planned_export.export_asset_path,
                 "maskPath": planned_export.export_mask_path,
-                "layer": element.layer,
-                "bbox": element.bbox.model_dump(mode="json"),
-                "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
-                "parentId": element.parentId,
+                "sourceAssetPath": planned_export.source_asset_path,
+                "warnings": planned_export.warnings,
             }
+            exported_elements.append(exported_entry)
+
+            manifest_elements.append(
+                {
+                    "id": element.id,
+                    "name": element.name,
+                    "mode": element.mode,
+                    "status": element.status,
+                    "sourceAssetPath": planned_export.source_asset_path,
+                    "assetPath": planned_export.export_asset_path,
+                    "maskPath": planned_export.export_mask_path,
+                    "bbox": element.bbox.model_dump(mode="json"),
+                    "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
+                    "layer": element.layer,
+                    "parentId": element.parentId,
+                    "notes": element.notes,
+                    "warnings": planned_export.warnings,
+                    "visible": element.visible,
+                    "source": element.source,
+                }
+            )
+            placements.append(
+                {
+                    "elementId": element.id,
+                    "name": element.name,
+                    "assetPath": planned_export.export_asset_path,
+                    "maskPath": planned_export.export_mask_path,
+                    "layer": element.layer,
+                    "bbox": element.bbox.model_dump(mode="json"),
+                    "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
+                    "parentId": element.parentId,
+                }
+            )
+
+        summary: dict[str, Any] = {
+            "exportableCount": len(exported_elements),
+            "blockedCount": len(blocked),
+            "warnings": warnings,
+            "outputDir": str(export_dir),
+            "paths": _export_paths(),
+            "exportedElements": exported_elements,
+            "blockedElements": blocked,
+        }
+
+        manifest = {
+            "assetPackVersion": 1,
+            "generatedAt": _utc_now(),
+            "source": state.source.model_dump(mode="json"),
+            "paths": _export_paths(),
+            "elements": manifest_elements,
+        }
+        level = {
+            "source": state.source.model_dump(mode="json"),
+            "placements": placements,
+        }
+        qa_report = {
+            "generatedAt": manifest["generatedAt"],
+            "exportableCount": summary["exportableCount"],
+            "blockedCount": summary["blockedCount"],
+            "warnings": warnings,
+            "blockedElements": blocked,
+            "repairQaReports": repair_qa_reports,
+        }
+
+        _write_json(
+            _resolve_workspace_path(workspace_path, _temp_export_relative(MANIFEST_PATH)),
+            manifest,
         )
+        _write_json(
+            _resolve_workspace_path(workspace_path, _temp_export_relative(LEVEL_PATH)),
+            level,
+        )
+        _write_json(
+            _resolve_workspace_path(workspace_path, _temp_export_relative(QA_REPORT_PATH)),
+            qa_report,
+        )
+        _write_contact_sheet(
+            workspace_path,
+            exported_elements,
+            output_relative_path=_temp_export_relative(CONTACT_SHEET_PATH),
+            asset_path_mapper=_temp_export_relative,
+        )
+        _replace_export_dir(workspace_path, temp_export_dir)
+    except Exception:
+        if temp_export_dir.exists():
+            shutil.rmtree(temp_export_dir)
+        raise
 
-    summary: dict[str, Any] = {
-        "exportableCount": len(exported_elements),
-        "blockedCount": len(blocked),
-        "warnings": warnings,
-        "outputDir": str(export_dir),
-        "paths": _export_paths(),
-        "exportedElements": exported_elements,
-        "blockedElements": blocked,
-    }
-
-    manifest = {
-        "assetPackVersion": 1,
-        "generatedAt": _utc_now(),
-        "source": state.source.model_dump(mode="json"),
-        "paths": _export_paths(),
-        "elements": manifest_elements,
-    }
-    level = {
-        "source": state.source.model_dump(mode="json"),
-        "placements": placements,
-    }
-    qa_report = {
-        "generatedAt": manifest["generatedAt"],
-        "exportableCount": summary["exportableCount"],
-        "blockedCount": summary["blockedCount"],
-        "warnings": warnings,
-        "blockedElements": blocked,
-        "repairQaReports": repair_qa_reports,
-    }
-
-    _write_json(workspace_path / MANIFEST_PATH, manifest)
-    _write_json(workspace_path / LEVEL_PATH, level)
-    _write_json(workspace_path / QA_REPORT_PATH, qa_report)
-    _write_contact_sheet(workspace_path, exported_elements)
     return summary
 
 
@@ -214,13 +239,16 @@ def _plan_exports(
                 repair_qa_reports[element.id] = metadata["qaReport"]
 
             completed_asset_path = repair_relative_path(element.id, "completed_asset.png")
+            qa_report = metadata.get("qaReport") or {}
+            qa_status = qa_report.get("status")
             valid_repair = (
                 metadata["files"]["completedAsset"]
                 and metadata["files"]["repairReport"]
-                and metadata.get("qaReport", {}).get("status") == "pass"
+                and qa_status in {"pass", "warn"}
                 and _workspace_file_exists(workspace_root, completed_asset_path)
             )
             if valid_repair:
+                repair_warnings = _repair_qa_export_warnings(qa_report)
                 _append_planned_export(
                     planned,
                     blocked,
@@ -228,7 +256,10 @@ def _plan_exports(
                     workspace_root,
                     element,
                     completed_asset_path,
-                    [],
+                    repair_warnings,
+                    force_mask_from_asset=True,
+                    mask_unavailable_reason=COMPLETED_ASSET_MASK_UNAVAILABLE_REASON,
+                    promote_element_warnings=True,
                 )
                 continue
 
@@ -277,26 +308,30 @@ def _append_planned_export(
     element: ElementRecord,
     source_asset_path: str,
     element_warnings: list[str],
+    force_mask_from_asset: bool = False,
+    mask_unavailable_reason: str = MASK_UNAVAILABLE_REASON,
+    promote_element_warnings: bool = False,
 ) -> None:
     planned_export = _planned_export(
         workspace_root,
         element,
         source_asset_path,
         element_warnings,
+        force_mask_from_asset=force_mask_from_asset,
     )
     if planned_export is None:
         blocked.append(
             {
                 "elementId": element.id,
                 "name": element.name,
-                "reason": MASK_UNAVAILABLE_REASON,
+                "reason": mask_unavailable_reason,
             }
         )
         return
 
     planned.append(planned_export)
     for warning in planned_export.warnings:
-        if warning not in element_warnings:
+        if promote_element_warnings or warning not in element_warnings:
             warnings.append(f"{element.id} {warning}")
 
 
@@ -305,15 +340,16 @@ def _planned_export(
     element: ElementRecord,
     source_asset_path: str,
     warnings: list[str],
+    force_mask_from_asset: bool = False,
 ) -> PlannedExport | None:
-    source_mask_path = _source_mask_path(workspace_root, element)
+    source_mask_path = None if force_mask_from_asset else _source_mask_path(workspace_root, element)
     export_mask_path = f"{EXPORT_MASKS_DIR}/{element.id}.png"
-    if source_mask_path is None and not _asset_has_alpha_channel(workspace_root, source_asset_path):
+    derive_mask_from_asset = force_mask_from_asset or source_mask_path is None
+    if derive_mask_from_asset and not _asset_has_alpha_channel(workspace_root, source_asset_path):
         return None
 
     export_warnings = list(warnings)
-    derive_mask_from_asset = source_mask_path is None
-    if derive_mask_from_asset:
+    if derive_mask_from_asset and not force_mask_from_asset:
         export_warnings.append(MASK_DERIVED_FROM_ALPHA_WARNING)
 
     return PlannedExport(
@@ -325,6 +361,15 @@ def _planned_export(
         derive_mask_from_asset=derive_mask_from_asset,
         warnings=export_warnings,
     )
+
+
+def _repair_qa_export_warnings(qa_report: dict[str, Any]) -> list[str]:
+    qa_warnings = qa_report.get("warnings", [])
+    if qa_warnings:
+        return [f"repair QA warning: {warning}" for warning in qa_warnings]
+    if qa_report.get("status") == "warn":
+        return ["repair QA warning: status warn"]
+    return []
 
 
 def _source_mask_path(workspace_root: Path, element: ElementRecord) -> str | None:
@@ -350,13 +395,43 @@ def _export_paths() -> dict[str, str]:
     }
 
 
-def _prepare_export_dir(workspace_root: Path) -> Path:
+def _prepare_temp_export_dir(workspace_root: Path) -> Path:
+    temp_export_dir = _resolve_workspace_path(workspace_root, TEMP_EXPORT_RELATIVE_ROOT)
+    if temp_export_dir.exists():
+        shutil.rmtree(temp_export_dir)
+    (temp_export_dir / "assets").mkdir(parents=True, exist_ok=True)
+    (temp_export_dir / "masks").mkdir(parents=True, exist_ok=True)
+    return temp_export_dir
+
+
+def _replace_export_dir(workspace_root: Path, temp_export_dir: Path) -> None:
     export_dir = _resolve_workspace_path(workspace_root, EXPORT_RELATIVE_ROOT)
-    if export_dir.exists():
-        shutil.rmtree(export_dir)
-    (workspace_root / EXPORT_ASSETS_DIR).mkdir(parents=True, exist_ok=True)
-    (workspace_root / EXPORT_MASKS_DIR).mkdir(parents=True, exist_ok=True)
-    return export_dir
+    backup_dir = _resolve_workspace_path(workspace_root, BACKUP_EXPORT_RELATIVE_ROOT)
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+
+    moved_existing = False
+    try:
+        if export_dir.exists():
+            export_dir.rename(backup_dir)
+            moved_existing = True
+        temp_export_dir.rename(export_dir)
+    except Exception:
+        if moved_existing and backup_dir.exists() and not export_dir.exists():
+            backup_dir.rename(export_dir)
+        raise
+    else:
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+
+def _temp_export_relative(export_relative_path: str) -> str:
+    if export_relative_path == EXPORT_RELATIVE_ROOT:
+        return TEMP_EXPORT_RELATIVE_ROOT
+    prefix = f"{EXPORT_RELATIVE_ROOT}/"
+    if export_relative_path.startswith(prefix):
+        return f"{TEMP_EXPORT_RELATIVE_ROOT}/{export_relative_path.removeprefix(prefix)}"
+    raise ValueError("Temporary export paths must be under the export directory.")
 
 
 def _copy_workspace_file(workspace_root: Path, source_relative: str, target_relative: str) -> None:
@@ -410,8 +485,13 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_contact_sheet(workspace_root: Path, exported_elements: list[dict[str, Any]]) -> None:
-    contact_sheet_path = workspace_root / CONTACT_SHEET_PATH
+def _write_contact_sheet(
+    workspace_root: Path,
+    exported_elements: list[dict[str, Any]],
+    output_relative_path: str = CONTACT_SHEET_PATH,
+    asset_path_mapper: Callable[[str], str] | None = None,
+) -> None:
+    contact_sheet_path = _resolve_workspace_path(workspace_root, output_relative_path)
     contact_sheet_path.parent.mkdir(parents=True, exist_ok=True)
 
     font = ImageFont.load_default()
@@ -434,7 +514,10 @@ def _write_contact_sheet(workspace_root: Path, exported_elements: list[dict[str,
         row = index // columns
         left = column * cell_width
         top = row * cell_height
-        asset_path = _resolve_workspace_path(workspace_root, exported["assetPath"])
+        asset_relative_path = exported["assetPath"]
+        if asset_path_mapper is not None:
+            asset_relative_path = asset_path_mapper(asset_relative_path)
+        asset_path = _resolve_workspace_path(workspace_root, asset_relative_path)
         with Image.open(asset_path) as asset:
             asset.load()
             preview = _fit_asset_on_checkerboard(asset.convert("RGBA"), (144, 128))

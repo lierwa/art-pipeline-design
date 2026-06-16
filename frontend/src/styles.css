@@ -667,6 +667,7 @@ button {
 
 .export-panel-summary span:not(.preview-label),
 .export-warnings li,
+.export-blocked li,
 .export-contact-sheet figcaption {
   color: #9da7ba;
   font-size: 0.86rem;
@@ -696,6 +697,34 @@ button {
 .export-warnings ul {
   margin: 0;
   padding-left: 1.1rem;
+}
+
+.export-blocked {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid #493132;
+  border-radius: 8px;
+  background: rgba(244, 91, 105, 0.08);
+}
+
+.export-blocked ul {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.export-blocked li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: baseline;
+}
+
+.export-blocked strong {
+  color: #f0f4fb;
 }
 
 .export-contact-sheet {
