@@ -235,6 +235,12 @@ button {
   background: rgba(255, 159, 93, 0.12);
 }
 
+.overlay-box-missing {
+  border-style: dashed;
+  border-color: #ff7272;
+  background: rgba(255, 114, 114, 0.16);
+}
+
 .overlay-label,
 .overlay-mask-placeholder {
   position: absolute;

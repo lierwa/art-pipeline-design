@@ -28,6 +28,7 @@ type InspectorPanelProps = {
   onClearMask: () => void;
   onReExtract: () => void;
   onDrawMissingMask: () => void;
+  onSaveMissingMaskFromDraft: () => void;
   onCreateRepairTask: () => void;
   onValidateRepairOutput: () => void;
   canExtractSelected: boolean;
@@ -54,6 +55,7 @@ export function InspectorPanel({
   onClearMask,
   onReExtract,
   onDrawMissingMask,
+  onSaveMissingMaskFromDraft,
   onCreateRepairTask,
   onValidateRepairOutput,
   canExtractSelected,
@@ -413,6 +415,13 @@ export function InspectorPanel({
                     onClick={onDrawMissingMask}
                   >
                     Draw missing mask
+                  </button>
+                  <button
+                    type="button"
+                    disabled={repairActionsDisabled}
+                    onClick={onSaveMissingMaskFromDraft}
+                  >
+                    Save numeric missing mask
                   </button>
                   <button
                     type="button"

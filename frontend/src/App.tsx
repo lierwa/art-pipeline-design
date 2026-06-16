@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { CanvasStage } from "./components/CanvasStage";
 import { ElementPanel } from "./components/ElementPanel";
@@ -89,6 +89,7 @@ export function App() {
   const [assetCacheKey, setAssetCacheKey] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("select");
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
+  const [missingMaskRegion, setMissingMaskRegion] = useState<DraftRegion | null>(null);
   const [manualElementName, setManualElementName] = useState("Manual Element");
   const [splitRegions, setSplitRegions] = useState<DraftRegion[]>([]);
   const [splitRequestDescription, setSplitRequestDescription] = useState("");
@@ -96,6 +97,7 @@ export function App() {
   const [savedMissingMaskElementIds, setSavedMissingMaskElementIds] = useState<string[]>([]);
   const [repairQaReport, setRepairQaReport] = useState<RepairQaReport | null>(null);
   const [isRepairing, setIsRepairing] = useState(false);
+  const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
 
   useEffect(() => {
     void loadWorkspace();
@@ -160,6 +162,11 @@ export function App() {
     ? savedMissingMaskElementIds.includes(selectedElement.id) || hasRepairPackage(selectedElement)
     : false;
   const selectedHasRepairPackage = selectedElement ? hasRepairPackage(selectedElement) : false;
+  const canDrawMissingMask =
+    selectedElement !== null
+    && selectedElement.mode === "needs_completion"
+    && !hasUnsavedGeometryChanges
+    && !isRepairing;
 
   const hasBatchExtractTargets = useMemo(() => {
     return workspace.elements.some(
@@ -180,7 +187,10 @@ export function App() {
 
     setElementDraft(draftFromElement(selectedElement));
     setSplitRequestDescription("");
-    setMissingMaskDraft(missingMaskDraftFromElement(selectedElement));
+    setMissingMaskDraft(
+      missingMaskDraftsRef.current[selectedElement.id]
+        ?? missingMaskDraftFromElement(selectedElement),
+    );
     setRepairQaReport((current) =>
       current?.elementId === selectedElement.id ? current : null,
     );
@@ -291,6 +301,7 @@ export function App() {
       setSourceUrl(buildSourceUrl(Date.now()));
       setTool("select");
       setDraftRegion(null);
+      setMissingMaskRegion(null);
       setSplitRegions([]);
     } catch (uploadError) {
       URL.revokeObjectURL(optimisticUrl);
@@ -472,7 +483,20 @@ export function App() {
     }
   }
 
-  async function handleDrawMissingMask() {
+  function handleStartMissingMaskDrawing() {
+    if (!canDrawMissingMask) {
+      return;
+    }
+
+    setTool("missing-mask");
+    setDraftRegion(null);
+    setSplitRegions([]);
+    setMissingMaskRegion(null);
+    setStatus("Drag on the canvas to draw the missing mask.");
+    setError(null);
+  }
+
+  async function handleSaveMissingMaskFromDraft() {
     if (
       !selectedElement
       || !missingMaskDraft
@@ -490,6 +514,27 @@ export function App() {
       return;
     }
 
+    await saveMissingMaskBox(selectedElement, bbox);
+  }
+
+  async function handleCompleteMissingMaskRegion(region: DraftRegion) {
+    if (!selectedElement || !canDrawMissingMask) {
+      return;
+    }
+
+    const bbox = sourceBoxToElementCanvasBox(region.bbox, selectedElement);
+    if (!bbox) {
+      setStatus("Missing mask save failed.");
+      setError("Draw the missing mask inside the selected element canvas.");
+      return;
+    }
+
+    const nextDraft = boxToDraft(bbox);
+    setMissingMaskDraft(nextDraft);
+    await saveMissingMaskBox(selectedElement, bbox);
+  }
+
+  async function saveMissingMaskBox(element: WorkspaceElement, bbox: Box) {
     setIsRepairing(true);
     setStatus("Saving missing mask...");
     setError(null);
@@ -497,7 +542,7 @@ export function App() {
 
     try {
       const response = await fetch(
-        `/api/workspace/elements/${selectedElement.id}/repair/missing-mask`,
+        `/api/workspace/elements/${element.id}/repair/missing-mask`,
         {
           method: "POST",
           headers: {
@@ -519,10 +564,13 @@ export function App() {
       }
 
       const payload = (await response.json()) as SaveMissingMaskResponse;
+      const savedDraft = boxToDraft(bbox);
+      missingMaskDraftsRef.current[element.id] = savedDraft;
       setSavedMissingMaskElementIds((current) =>
-        current.includes(selectedElement.id) ? current : [...current, selectedElement.id],
+        current.includes(element.id) ? current : [...current, element.id],
       );
-      replaceWorkspace(payload.state, "Missing mask saved.", selectedElement.id);
+      replaceWorkspace(payload.state, "Missing mask saved.", element.id);
+      setMissingMaskDraft(savedDraft);
     } catch (repairError) {
       setStatus("Missing mask save failed.");
       setError(
@@ -616,19 +664,28 @@ export function App() {
     setTool(nextTool);
     if (nextTool === "draw") {
       setSplitRegions([]);
+      setMissingMaskRegion(null);
     }
     if (nextTool === "split") {
       setDraftRegion(null);
+      setMissingMaskRegion(null);
+    }
+    if (nextTool === "missing-mask") {
+      setDraftRegion(null);
+      setSplitRegions([]);
+      setMissingMaskRegion(null);
     }
     if (nextTool === "select") {
       setDraftRegion(null);
       setSplitRegions([]);
+      setMissingMaskRegion(null);
     }
   }
 
   function clearDrafts() {
     setDraftRegion(null);
     setSplitRegions([]);
+    setMissingMaskRegion(null);
   }
 
   async function handleAccept(elementId: string) {
@@ -879,12 +936,16 @@ export function App() {
             tool={tool}
             draftRegion={draftRegion}
             splitRegions={splitRegions}
+            missingMaskRegion={missingMaskRegion}
             assetCacheKey={assetCacheKey}
             canSplit={selectedElement !== null}
+            canDrawMissingMask={canDrawMissingMask}
             onToggleOverlay={handleOverlayToggle}
             onSelectTool={handleSelectTool}
             onDraftRegionChange={setDraftRegion}
             onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
+            onMissingMaskRegionChange={setMissingMaskRegion}
+            onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
             onClearDrafts={clearDrafts}
             onApplySplit={() => void handleApplySplit()}
           />
@@ -923,7 +984,8 @@ export function App() {
           onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
           onClearMask={() => void handleClearMask()}
           onReExtract={() => void handleExtractSelected()}
-          onDrawMissingMask={() => void handleDrawMissingMask()}
+          onDrawMissingMask={handleStartMissingMaskDrawing}
+          onSaveMissingMaskFromDraft={() => void handleSaveMissingMaskFromDraft()}
           onCreateRepairTask={() => void handleCreateRepairTask()}
           onValidateRepairOutput={() => void handleValidateRepairOutput()}
           canExtractSelected={canRunSelectedExtraction}
@@ -1219,6 +1281,25 @@ function boxesEqual(left: Box, right: Box): boolean {
     && left.w === right.w
     && left.h === right.h
   );
+}
+
+function sourceBoxToElementCanvasBox(sourceBox: Box, element: WorkspaceElement): Box | null {
+  const canvas = element.canvas;
+  const left = clampInteger(sourceBox.x, canvas.x, canvas.x + canvas.w);
+  const top = clampInteger(sourceBox.y, canvas.y, canvas.y + canvas.h);
+  const right = clampInteger(sourceBox.x + sourceBox.w, canvas.x, canvas.x + canvas.w);
+  const bottom = clampInteger(sourceBox.y + sourceBox.h, canvas.y, canvas.y + canvas.h);
+
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+
+  return {
+    x: left - canvas.x,
+    y: top - canvas.y,
+    w: right - left,
+    h: bottom - top,
+  };
 }
 
 function clampInteger(value: number, min: number, max: number): number {

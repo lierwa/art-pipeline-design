@@ -21,12 +21,16 @@ type CanvasStageProps = {
   tool: CanvasTool;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
+  missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
   canSplit: boolean;
+  canDrawMissingMask: boolean;
   onToggleOverlay: (key: keyof OverlayState) => void;
   onSelectTool: (tool: CanvasTool) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
+  onMissingMaskRegionChange: (region: DraftRegion | null) => void;
+  onCompleteMissingMaskRegion: (region: DraftRegion) => void;
   onClearDrafts: () => void;
   onApplySplit: () => void;
 };
@@ -48,12 +52,16 @@ export function CanvasStage({
   tool,
   draftRegion,
   splitRegions,
+  missingMaskRegion,
   assetCacheKey,
   canSplit,
+  canDrawMissingMask,
   onToggleOverlay,
   onSelectTool,
   onDraftRegionChange,
   onAddSplitRegion,
+  onMissingMaskRegionChange,
+  onCompleteMissingMaskRegion,
   onClearDrafts,
   onApplySplit,
 }: CanvasStageProps) {
@@ -61,6 +69,9 @@ export function CanvasStage({
 
   function beginDraw(event: DrawingEvent) {
     if (!source || tool === "select") {
+      return;
+    }
+    if (tool === "missing-mask" && !canDrawMissingMask) {
       return;
     }
 
@@ -87,6 +98,9 @@ export function CanvasStage({
       onDraftRegionChange({ bbox });
       return;
     }
+    if (tool === "missing-mask") {
+      onMissingMaskRegionChange({ bbox });
+    }
   }
 
   function endDraw(event: DrawingEvent) {
@@ -107,6 +121,9 @@ export function CanvasStage({
       if (tool === "draw") {
         onDraftRegionChange(null);
       }
+      if (tool === "missing-mask") {
+        onMissingMaskRegionChange(null);
+      }
       return;
     }
 
@@ -117,6 +134,13 @@ export function CanvasStage({
 
     if (tool === "split") {
       onAddSplitRegion({ bbox });
+      return;
+    }
+
+    if (tool === "missing-mask") {
+      const region = { bbox };
+      onMissingMaskRegionChange(region);
+      onCompleteMissingMaskRegion(region);
     }
   }
 
@@ -129,6 +153,7 @@ export function CanvasStage({
       selectedElementId={selectedElementId}
       draftRegion={draftRegion}
       splitRegions={splitRegions}
+      missingMaskRegion={missingMaskRegion}
       assetCacheKey={assetCacheKey}
       onPointerDown={beginDraw}
       onPointerMove={updateDraw}
@@ -203,6 +228,14 @@ export function CanvasStage({
           >
             Split selected
           </button>
+          <button
+            type="button"
+            className={tool === "missing-mask" ? "is-active" : ""}
+            disabled={!source || !canDrawMissingMask}
+            onClick={() => onSelectTool("missing-mask")}
+          >
+            Missing mask
+          </button>
         </div>
       </div>
       <div className="canvas-stage">
@@ -212,10 +245,13 @@ export function CanvasStage({
           </div>
         )}
       </div>
-      {(draftRegion || splitRegions.length > 0) && (
+      {(draftRegion || splitRegions.length > 0 || missingMaskRegion) && (
         <div className="canvas-draft-panel">
           {draftRegion ? <span>Draft region {draftRegion.bbox.w} x {draftRegion.bbox.h}</span> : null}
           {splitRegions.length > 0 ? <span>Split regions: {splitRegions.length}</span> : null}
+          {missingMaskRegion ? (
+            <span>Missing mask draft {missingMaskRegion.bbox.w} x {missingMaskRegion.bbox.h}</span>
+          ) : null}
           <div className="canvas-draft-actions">
             <button type="button" onClick={onClearDrafts}>
               Clear drafts
@@ -240,6 +276,7 @@ type CanvasArtboardProps = {
   selectedElementId: string | null;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
+  missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
   onPointerDown: (event: DrawingEvent) => void;
   onPointerMove: (event: DrawingEvent) => void;
@@ -254,6 +291,7 @@ function CanvasArtboard({
   selectedElementId,
   draftRegion,
   splitRegions,
+  missingMaskRegion,
   assetCacheKey,
   onPointerDown,
   onPointerMove,
@@ -333,6 +371,14 @@ function CanvasArtboard({
             <div className="overlay-box overlay-box-split" />
           </div>
         ))}
+        {missingMaskRegion ? (
+          <div
+            className="overlay-item overlay-item-missing"
+            style={boxToPercentStyle(missingMaskRegion.bbox, source)}
+          >
+            <div className="overlay-box overlay-box-missing" />
+          </div>
+        ) : null}
       </div>
       <div
         className="canvas-drawing-surface"

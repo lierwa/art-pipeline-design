@@ -671,7 +671,7 @@ describe("App", () => {
             shape: {
               type: "rectangle",
               coordinateSpace: "canvas",
-              bbox: { x: 8, y: 8, w: 30, h: 32 },
+              bbox: { x: 10, y: 10, w: 20, h: 20 },
             },
           }),
         );
@@ -722,8 +722,19 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: /validate repair output/i })).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: /draw missing mask/i }));
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        "/api/workspace/elements/element_001/repair/missing-mask",
+        expect.anything(),
+      );
+
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      await drawRectangle(surface, { x: 70, y: 90 }, { x: 170, y: 190 });
 
       expect(await screen.findAllByText(/missing mask saved\./i)).toHaveLength(2);
+      expect(screen.getByLabelText(/missing x/i)).toHaveValue(10);
+      expect(screen.getByLabelText(/missing y/i)).toHaveValue(10);
+      expect(screen.getByLabelText(/missing width/i)).toHaveValue(20);
+      expect(screen.getByLabelText(/missing height/i)).toHaveValue(20);
       expect(screen.getByAltText("Region 1 missing mask overlay")).toHaveAttribute(
         "src",
         expect.stringMatching(

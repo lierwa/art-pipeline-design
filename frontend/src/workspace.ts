@@ -107,7 +107,7 @@ export type RepairQaReport = {
   changedPixelsOverlayPath: string | null;
 };
 
-export type CanvasTool = "select" | "draw" | "split";
+export type CanvasTool = "select" | "draw" | "split" | "missing-mask";
 
 export type DraftRegion = {
   bbox: Box;
