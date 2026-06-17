@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 try:
@@ -62,17 +63,15 @@ class GroundingDinoProvider:
             processed["boxes"],
         ):
             x1, y1, x2, y2 = [float(value) for value in box.tolist()]
+            bbox = _clamped_bbox(x1, y1, x2, y2, image.width, image.height)
+            if bbox is None:
+                continue
             normalized_label = str(label).strip().lower()
             results.append(
                 {
                     "label": normalized_label,
                     "confidence": round(float(score), 4),
-                    "bbox": {
-                        "x": round(x1),
-                        "y": round(y1),
-                        "w": round(x2 - x1),
-                        "h": round(y2 - y1),
-                    },
+                    "bbox": bbox,
                     "sourcePrompt": normalized_label,
                 }
             )
@@ -84,3 +83,32 @@ def _grounding_dino_prompt(vocabulary: list[str]) -> str:
     if not labels:
         raise ValueError("Grounding DINO vocabulary must not be empty.")
     return ". ".join(labels) + "."
+
+
+def _clamped_bbox(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    image_width: int,
+    image_height: int,
+) -> dict[str, int] | None:
+    if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
+        return None
+
+    clamped_x1 = min(max(x1, 0.0), float(image_width))
+    clamped_y1 = min(max(y1, 0.0), float(image_height))
+    clamped_x2 = min(max(x2, 0.0), float(image_width))
+    clamped_y2 = min(max(y2, 0.0), float(image_height))
+
+    left = math.floor(clamped_x1)
+    top = math.floor(clamped_y1)
+    right = math.ceil(clamped_x2)
+    bottom = math.ceil(clamped_y2)
+
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        return None
+
+    return {"x": left, "y": top, "w": width, "h": height}

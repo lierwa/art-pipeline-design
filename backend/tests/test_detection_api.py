@@ -60,7 +60,13 @@ def test_detect_reports_config_error_when_grounding_dino_dependencies_are_missin
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    sys.modules.pop("art_pipeline.model_runners.grounding_dino", None)
+    monkeypatch.delitem(
+        sys.modules,
+        "art_pipeline.model_runners.grounding_dino",
+        raising=False,
+    )
+    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
     monkeypatch.setenv("ART_PIPELINE_DETECTION_PROVIDER", "grounding_dino")
 
     app = create_app(workspace_root=tmp_path / "workspace")
@@ -98,6 +104,31 @@ def test_grounding_dino_provider_formats_prompt_and_normalizes_results(
     ]
 
 
+def test_grounding_dino_provider_clamps_boxes_and_skips_degenerate_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_grounding_dino_dependencies(
+        monkeypatch,
+        detections=[
+            (0.88, "cabinet", [-2.0, 3.0, 103.0, 82.0]),
+            (0.77, "plant", [120.0, 10.0, 130.0, 20.0]),
+        ],
+    )
+    module = importlib.import_module("art_pipeline.model_runners.grounding_dino")
+
+    provider = module.GroundingDinoProvider()
+    results = provider.detect(Image.new("RGB", (100, 80)), ["cabinet", "plant"], "ignored")
+
+    assert results == [
+        {
+            "label": "cabinet",
+            "confidence": 0.88,
+            "bbox": {"x": 0, "y": 3, "w": 100, "h": 77},
+            "sourcePrompt": "cabinet",
+        }
+    ]
+
+
 class _FakeInputs(dict):
     input_ids = [[1, 2, 3]]
 
@@ -122,8 +153,16 @@ class _FakeNoGrad:
         return False
 
 
-def _install_fake_grounding_dino_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    sys.modules.pop("art_pipeline.model_runners.grounding_dino", None)
+def _install_fake_grounding_dino_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    detections: list[tuple[float, str, list[float]]] | None = None,
+) -> None:
+    monkeypatch.delitem(
+        sys.modules,
+        "art_pipeline.model_runners.grounding_dino",
+        raising=False,
+    )
+    fake_detections = detections or [(0.88, "cabinet", [10.0, 12.0, 40.0, 52.0])]
 
     fake_torch = types.SimpleNamespace(
         backends=types.SimpleNamespace(
@@ -155,9 +194,9 @@ def _install_fake_grounding_dino_dependencies(monkeypatch: pytest.MonkeyPatch) -
         ):
             return [
                 {
-                    "scores": [0.88],
-                    "labels": ["cabinet"],
-                    "boxes": [_FakeBox([10.0, 12.0, 40.0, 52.0])],
+                    "scores": [score for score, _label, _box in fake_detections],
+                    "labels": [label for _score, label, _box in fake_detections],
+                    "boxes": [_FakeBox(box) for _score, _label, box in fake_detections],
                 }
             ]
 
