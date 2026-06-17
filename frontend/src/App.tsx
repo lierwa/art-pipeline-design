@@ -21,6 +21,7 @@ import {
   repairAssetUrl,
   RepairMetadata,
   RepairQaReport,
+  SelectedElementIds,
   sourceCropUrl,
   updateElement,
   WorkspaceElement,
@@ -31,6 +32,27 @@ import {
 type CreateElementResponse = {
   element: WorkspaceElement;
   state: WorkspaceState;
+};
+
+type WorkspaceElementMutationResponse = {
+  element: WorkspaceElement;
+  state: WorkspaceState;
+};
+
+type PatchWorkspaceElementRequest = {
+  bbox?: Box;
+  label?: string;
+  visible?: boolean;
+};
+
+type ChildWorkspaceElementRequest = {
+  label: string;
+  bbox: Box;
+};
+
+type MergeWorkspaceElementsRequest = {
+  elementIds: SelectedElementIds;
+  label?: string;
 };
 
 type SplitElementResponse = {
@@ -80,12 +102,94 @@ type ValidateRepairResponse = {
   state: WorkspaceState;
 };
 
+type Fetcher = typeof fetch;
+
+export async function runWorkspaceDetection(fetcher: Fetcher = fetch): Promise<WorkspaceState> {
+  return requestJson<WorkspaceState>(
+    fetcher,
+    "/api/workspace/detect",
+    { method: "POST" },
+    "Detection failed.",
+  );
+}
+
+export async function patchWorkspaceElement(
+  elementId: string,
+  request: PatchWorkspaceElementRequest,
+  fetcher: Fetcher = fetch,
+): Promise<WorkspaceElementMutationResponse> {
+  return requestJson<WorkspaceElementMutationResponse>(
+    fetcher,
+    `/api/workspace/elements/${elementId}`,
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    },
+    "Could not save element.",
+  );
+}
+
+export async function createWorkspaceChildElement(
+  elementId: string,
+  request: ChildWorkspaceElementRequest,
+  fetcher: Fetcher = fetch,
+): Promise<WorkspaceElementMutationResponse> {
+  return requestJson<WorkspaceElementMutationResponse>(
+    fetcher,
+    `/api/workspace/elements/${elementId}/children`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    },
+    "Could not create child element.",
+  );
+}
+
+export async function mergeWorkspaceElements(
+  request: MergeWorkspaceElementsRequest,
+  fetcher: Fetcher = fetch,
+): Promise<WorkspaceElementMutationResponse> {
+  return requestJson<WorkspaceElementMutationResponse>(
+    fetcher,
+    "/api/workspace/elements/merge",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    },
+    "Could not merge elements.",
+  );
+}
+
+async function requestJson<T>(
+  fetcher: Fetcher,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  fallbackError: string,
+): Promise<T> {
+  const response = await fetcher(input, init);
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? fallbackError);
+  }
+  return (await response.json()) as T;
+}
+
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_STATE);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
+  const [selectedElementIds, setSelectedElementIds] = useState<SelectedElementIds>([]);
   const [overlays, setOverlays] = useState<OverlayState>(DEFAULT_OVERLAYS);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -96,6 +200,7 @@ export function App() {
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
   const [missingMaskRegion, setMissingMaskRegion] = useState<DraftRegion | null>(null);
   const [manualElementName, setManualElementName] = useState("Manual Element");
+  const [mergeLabel, setMergeLabel] = useState("Merged Asset");
   const [splitRegions, setSplitRegions] = useState<DraftRegion[]>([]);
   const [splitRequestDescription, setSplitRequestDescription] = useState("");
   const [missingMaskDraft, setMissingMaskDraft] = useState<MissingMaskDraft | null>(null);
@@ -295,7 +400,9 @@ export function App() {
 
       const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
       setWorkspace(nextState);
-      setSelectedElementId(nextState.elements[0]?.id ?? null);
+      const firstElementId = nextState.elements[0]?.id ?? null;
+      setSelectedElementId(firstElementId);
+      setSelectedElementIds(firstElementId ? [firstElementId] : []);
       setExportSummary(null);
       setStatus(nextState.source ? "Workspace loaded." : "Ready");
     } catch (loadError) {
@@ -325,6 +432,20 @@ export function App() {
         return current;
       }
       return normalized.elements[0]?.id ?? null;
+    });
+    setSelectedElementIds((current) => {
+      if (nextSelectionId !== undefined) {
+        return nextSelectionId ? [nextSelectionId] : [];
+      }
+
+      const existingIds = new Set(normalized.elements.map((element) => element.id));
+      const preserved = current.filter((elementId) => existingIds.has(elementId));
+      if (preserved.length > 0) {
+        return preserved;
+      }
+
+      const firstElementId = normalized.elements[0]?.id;
+      return firstElementId ? [firstElementId] : [];
     });
     setStatus(nextStatus);
   }
@@ -419,35 +540,26 @@ export function App() {
     }
   }
 
-  async function handleAutoAnnotate() {
+  async function handleRunDetection() {
     if (!workspace.source || isAnnotating) {
       return;
     }
 
     setIsAnnotating(true);
-    setStatus("Generating annotation proposals...");
+    setStatus("Running model detection...");
     setError(null);
 
     try {
-      const response = await fetch("/api/workspace/auto-annotate", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
-        throw new Error(payload?.detail ?? "Auto annotate failed.");
-      }
-
-      const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+      const nextState = normalizeWorkspaceState(await runWorkspaceDetection());
       replaceWorkspace(
         nextState,
-        `Generated ${nextState.elements.length} annotation proposals.`,
+        `Detected ${nextState.elements.length} model candidate${nextState.elements.length === 1 ? "" : "s"}.`,
         nextState.elements[0]?.id ?? null,
       );
     } catch (annotateError) {
-      setStatus("Auto annotate failed.");
+      setStatus("Detection failed.");
       setError(
-        annotateError instanceof Error ? annotateError.message : "Auto annotate failed.",
+        annotateError instanceof Error ? annotateError.message : "Detection failed.",
       );
     } finally {
       setIsAnnotating(false);
@@ -816,6 +928,21 @@ export function App() {
     }));
   }
 
+  function handleSelectElement(elementId: string) {
+    setSelectedElementId(elementId);
+    setSelectedElementIds((current) =>
+      current.includes(elementId) ? current : [...current, elementId],
+    );
+  }
+
+  function handleMergeSelectionToggle(elementId: string) {
+    setSelectedElementIds((current) =>
+      current.includes(elementId)
+        ? current.filter((currentId) => currentId !== elementId)
+        : [...current, elementId],
+    );
+  }
+
   function handleSelectTool(nextTool: CanvasTool) {
     setTool(nextTool);
     if (nextTool === "draw") {
@@ -898,6 +1025,33 @@ export function App() {
     }
 
     const geometryChanged = isGeometryDraftDirty(selectedElement, elementDraft);
+    if (canPatchElementDraft(selectedElement, elementDraft)) {
+      const patchRequest = buildElementPatchFromDraft(selectedElement, elementDraft);
+      if (!patchRequest) {
+        setError("Element geometry values must be whole numbers.");
+        setStatus("State save failed.");
+        return;
+      }
+
+      setIsSavingState(true);
+      setError(null);
+
+      try {
+        const payload = await patchWorkspaceElement(selectedElement.id, patchRequest);
+        replaceWorkspace(payload.state, "Element details updated.", payload.element.id);
+        if (geometryChanged) {
+          clearLocalRepairMetadata([selectedElement.id]);
+        }
+      } catch (saveError) {
+        setStatus("State save failed.");
+        setError(saveError instanceof Error ? saveError.message : "Could not save element.");
+        setElementDraft(draftFromElement(selectedElement));
+      } finally {
+        setIsSavingState(false);
+      }
+      return;
+    }
+
     const nextState = {
       ...workspace,
       elements: updateElement(workspace.elements, selectedElement.id, () => nextElement),
@@ -943,6 +1097,54 @@ export function App() {
       setError(
         createError instanceof Error ? createError.message : "Could not create element.",
       );
+    }
+  }
+
+  async function handleCreateChildElement() {
+    if (!workspace.source || !draftRegion || !selectedElement) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Creating child element...");
+
+    try {
+      const label = manualElementName.trim() || "Child Element";
+      const payload = await createWorkspaceChildElement(selectedElement.id, {
+        label,
+        bbox: draftRegion.bbox,
+      });
+      replaceWorkspace(payload.state, "Child element created.", payload.element.id);
+      setManualElementName("Manual Element");
+      setDraftRegion(null);
+      setTool("select");
+    } catch (createError) {
+      setStatus("Child element creation failed.");
+      setError(
+        createError instanceof Error ? createError.message : "Could not create child element.",
+      );
+    }
+  }
+
+  async function handleMergeSelectedElements() {
+    if (selectedElementIds.length < 2) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Merging selected elements...");
+
+    try {
+      const label = mergeLabel.trim();
+      const payload = await mergeWorkspaceElements({
+        elementIds: selectedElementIds,
+        ...(label ? { label } : {}),
+      });
+      replaceWorkspace(payload.state, "Merged selected elements.", payload.element.id);
+      setMergeLabel("Merged Asset");
+    } catch (mergeError) {
+      setStatus("Merge failed.");
+      setError(mergeError instanceof Error ? mergeError.message : "Could not merge elements.");
     }
   }
 
@@ -1040,10 +1242,10 @@ export function App() {
           />
           <button
             type="button"
-            onClick={handleAutoAnnotate}
+            onClick={handleRunDetection}
             disabled={!workspace.source || isAnnotating}
           >
-            Auto Annotate
+            Run Detection
           </button>
           <button
             type="button"
@@ -1082,7 +1284,7 @@ export function App() {
           elements={visibleElements}
           selectedElementId={selectedElementId}
           showRejected={overlays.showRejected}
-          onSelectElement={setSelectedElementId}
+          onSelectElement={handleSelectElement}
           onToggleShowRejected={() => handleOverlayToggle("showRejected")}
           onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
           onAccept={(elementId) => void handleAccept(elementId)}
@@ -1126,6 +1328,46 @@ export function App() {
               </label>
               <button type="button" onClick={() => void handleCreateElement()}>
                 Create element
+              </button>
+              <button
+                type="button"
+                disabled={!selectedElement}
+                onClick={() => void handleCreateChildElement()}
+              >
+                Create child
+              </button>
+            </div>
+          ) : null}
+          {workspace.elements.length >= 2 ? (
+            <div className="manual-create-panel" aria-label="Merge controls">
+              <label className="field-group">
+                <span>Merge label</span>
+                <input
+                  aria-label="Merge label"
+                  type="text"
+                  value={mergeLabel}
+                  onChange={(event) => setMergeLabel(event.target.value)}
+                />
+              </label>
+              <div className="element-action-buttons">
+                {workspace.elements.map((element) => (
+                  <label key={element.id} className="panel-checkbox">
+                    <input
+                      aria-label={`Select ${element.name} for merge`}
+                      type="checkbox"
+                      checked={selectedElementIds.includes(element.id)}
+                      onChange={() => handleMergeSelectionToggle(element.id)}
+                    />
+                    <span>{element.name}</span>
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={selectedElementIds.length < 2}
+                onClick={() => void handleMergeSelectedElements()}
+              >
+                Merge selected
               </button>
             </div>
           ) : null}
@@ -1558,6 +1800,40 @@ function isGeometryDraftDirty(
   return !boxesEqual(element.bbox, bbox) || !boxesEqual(element.canvas, canvas);
 }
 
+function canPatchElementDraft(
+  element: WorkspaceElement,
+  draft: ElementEditorDraft,
+): boolean {
+  const layer = Number.parseInt(draft.layer, 10);
+  const canvas = parseBox(draft.canvas);
+  if (Number.isNaN(layer) || !canvas) {
+    return false;
+  }
+
+  return (
+    draft.mode === element.mode
+    && layer === element.layer
+    && boxesEqual(element.canvas, canvas)
+    && draft.notes === element.notes
+  );
+}
+
+function buildElementPatchFromDraft(
+  element: WorkspaceElement,
+  draft: ElementEditorDraft,
+): PatchWorkspaceElementRequest | null {
+  const bbox = parseBox(draft.bbox);
+  if (!bbox) {
+    return null;
+  }
+
+  return {
+    bbox,
+    label: draft.name.trim() || element.name,
+    visible: draft.visible,
+  };
+}
+
 function boxesEqual(left: Box, right: Box): boolean {
   return (
     left.x === right.x
@@ -1604,6 +1880,7 @@ function buildElementFromDraft(
   return {
     ...element,
     name: draft.name.trim() || element.name,
+    label: draft.name.trim() || element.name,
     mode: draft.mode,
     layer,
     bbox,

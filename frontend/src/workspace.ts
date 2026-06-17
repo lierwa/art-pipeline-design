@@ -13,15 +13,20 @@ export type Box = {
 };
 
 export type ElementStatus =
-  | "proposal"
+  | "model_detected"
+  | "edited"
+  | "child"
+  | "merged"
   | "accepted"
+  | "rejected"
+  | "exported"
+  | "proposal"
   | "split_parent"
   | "extract_ready"
   | "extracted"
   | "repair_pending"
   | "repair_complete"
-  | "qa_failed"
-  | "exported";
+  | "qa_failed";
 
 export type ElementMode =
   | "visible_only"
@@ -29,9 +34,17 @@ export type ElementMode =
   | "completed_by_codex"
   | "rejected";
 
+export type CandidateHistoryEntry = {
+  kind: string;
+  at: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+};
+
 export type WorkspaceElement = {
   id: string;
   name: string;
+  label: string | null;
   status: ElementStatus;
   mode: ElementMode;
   bbox: Box;
@@ -41,9 +54,14 @@ export type WorkspaceElement = {
   mask: string | null;
   parentId: string | null;
   source: string;
+  sourceProvider: string | null;
+  sourcePrompt: string | null;
   notes: string;
   visible: boolean;
   confidence?: number | null;
+  history: CandidateHistoryEntry[];
+  mergedInto: string | null;
+  exportParent: boolean;
 };
 
 export type WorkspaceState = {
@@ -166,6 +184,8 @@ export type DraftRegion = {
   bbox: Box;
 };
 
+export type SelectedElementIds = string[];
+
 export const EMPTY_STATE: WorkspaceState = {
   source: null,
   elements: [],
@@ -220,6 +240,7 @@ export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState
     source: payload.source,
     elements: payload.elements.map((element) => ({
       ...element,
+      label: element.label ?? null,
       visible: element.visible ?? true,
       notes: element.notes ?? "",
       mode: element.mode ?? "visible_only",
@@ -228,6 +249,11 @@ export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState
       mask: element.mask ?? null,
       parentId: element.parentId ?? null,
       confidence: element.confidence ?? null,
+      sourceProvider: element.sourceProvider ?? null,
+      sourcePrompt: element.sourcePrompt ?? null,
+      history: element.history ?? [],
+      mergedInto: element.mergedInto ?? null,
+      exportParent: element.exportParent ?? false,
     })),
   };
 }

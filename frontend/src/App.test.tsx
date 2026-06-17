@@ -31,6 +31,37 @@ const loadedState = {
   ],
 };
 
+const loadedStateWithoutElements = {
+  source: loadedState.source,
+  elements: [],
+};
+
+const detectedElement = {
+  ...loadedState.elements[0],
+  id: "element_010",
+  name: "cabinet",
+  label: "cabinet",
+  status: "model_detected",
+  source: "model_detection",
+  sourceProvider: "test_provider",
+  sourcePrompt: "cabinet",
+  history: [
+    {
+      kind: "model_detected",
+      at: "2026-06-17T00:00:00+00:00",
+      before: {},
+      after: { status: "model_detected" },
+    },
+  ],
+  mergedInto: null,
+  exportParent: false,
+};
+
+const detectedState = {
+  source: loadedState.source,
+  elements: [detectedElement],
+};
+
 const createdManualElement = {
   id: "element_002",
   name: "Manual Lamp",
@@ -46,6 +77,29 @@ const createdManualElement = {
   notes: "",
   visible: true,
   confidence: null,
+};
+
+const createdChildElement = {
+  id: "element_002",
+  name: "Shelf Handle",
+  label: "Shelf Handle",
+  status: "child",
+  mode: "visible_only",
+  bbox: { x: 16, y: 20, w: 10, h: 12 },
+  canvas: { x: 16, y: 20, w: 10, h: 12 },
+  layer: 2,
+  thumbnail: "elements/element_002/thumb.png",
+  mask: null,
+  parentId: "element_001",
+  source: "manual_child",
+  sourceProvider: "manual",
+  sourcePrompt: "Shelf Handle",
+  notes: "",
+  visible: true,
+  confidence: null,
+  history: [],
+  mergedInto: null,
+  exportParent: false,
 };
 
 const splitState = {
@@ -86,6 +140,68 @@ const splitState = {
       notes: "",
       visible: true,
       confidence: null,
+    },
+  ],
+};
+
+const mergeSourceState = {
+  source: loadedState.source,
+  elements: [
+    loadedState.elements[0],
+    {
+      ...loadedState.elements[0],
+      id: "element_002",
+      name: "Region 2",
+      bbox: { x: 48, y: 20, w: 18, h: 22 },
+      canvas: { x: 44, y: 16, w: 26, h: 30 },
+      layer: 2,
+      thumbnail: "elements/element_002/thumb.png",
+      confidence: 0.8,
+    },
+  ],
+};
+
+const mergedState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...mergeSourceState.elements[0],
+      visible: false,
+      mergedInto: "element_003",
+    },
+    {
+      ...mergeSourceState.elements[1],
+      visible: false,
+      mergedInto: "element_003",
+    },
+    {
+      id: "element_003",
+      name: "Fixture group",
+      label: "Fixture group",
+      status: "merged",
+      mode: "visible_only",
+      bbox: { x: 12, y: 16, w: 54, h: 32 },
+      canvas: { x: 8, y: 12, w: 62, h: 40 },
+      layer: 3,
+      thumbnail: "elements/element_003/thumb.png",
+      mask: null,
+      parentId: null,
+      source: "manual_merge",
+      sourceProvider: "manual",
+      sourcePrompt: "Fixture group",
+      notes: "",
+      visible: true,
+      confidence: null,
+      history: [
+        {
+          kind: "manual_merge",
+          at: "2026-06-17T00:00:00+00:00",
+          before: { sourceIds: ["element_001", "element_002"] },
+          after: { status: "merged" },
+        },
+      ],
+      mergedInto: null,
+      exportParent: false,
     },
   ],
 };
@@ -253,6 +369,38 @@ describe("App", () => {
     }
   });
 
+  it("runs model detection and renders returned model-detected elements", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedStateWithoutElements);
+      }
+
+      if (input === "/api/workspace/detect" && init?.method === "POST") {
+        return jsonResponse(detectedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /run detection/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/detect",
+        expect.objectContaining({ method: "POST" }),
+      );
+      expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
+      expect(screen.getByText("model_detected")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_010")).toHaveTextContent("cabinet");
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("creates a manual element from a drawn rectangle", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -304,15 +452,92 @@ describe("App", () => {
     }
   });
 
-  it("edits inspector fields for the selected element and persists them", async () => {
+  it("creates a child element from a drawn rectangle", async () => {
     const user = userEvent.setup();
+    const childState = {
+      source: loadedState.source,
+      elements: [...loadedState.elements, createdChildElement],
+    };
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(loadedState);
       }
 
-      if (input === "/api/workspace/state" && init?.method === "PUT") {
-        return jsonResponse(JSON.parse(String(init.body)));
+      if (input === "/api/workspace/elements/element_001/children" && init?.method === "POST") {
+        return jsonResponse({
+          element: createdChildElement,
+          state: childState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /draw element/i }));
+
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      await drawRectangle(surface, { x: 80, y: 100 }, { x: 130, y: 160 });
+
+      const nameField = screen.getByLabelText(/new element name/i);
+      await user.clear(nameField);
+      await user.type(nameField, "Shelf Handle");
+      await user.click(screen.getByRole("button", { name: /create child/i }));
+
+      await screen.findByAltText("Shelf Handle thumbnail");
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/element_001/children",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            label: "Shelf Handle",
+            bbox: { x: 16, y: 20, w: 10, h: 12 },
+          }),
+        }),
+      );
+      expect(screen.getByTestId("overlay-label-element_002")).toHaveTextContent("Shelf Handle");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("edits inspector fields for the selected element and persists them", async () => {
+    const user = userEvent.setup();
+    const patchedElement = {
+      ...loadedState.elements[0],
+      name: "Hero Shelf",
+      label: "Hero Shelf",
+      status: "edited",
+      bbox: { x: 12, y: 16, w: 34, h: 32 },
+      canvas: { x: 12, y: 16, w: 34, h: 32 },
+      visible: false,
+      history: [
+        {
+          kind: "manual_edit",
+          at: "2026-06-17T00:00:00+00:00",
+          before: {},
+          after: {},
+        },
+      ],
+      mergedInto: null,
+      exportParent: false,
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: loadedState.source,
+            elements: [patchedElement],
+          },
+        });
       }
 
       throw new Error(`Unexpected fetch call: ${String(input)}`);
@@ -323,26 +548,26 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const nameField = screen.getByLabelText(/element name/i);
-      const modeField = screen.getByLabelText(/element mode/i);
-      const layerField = screen.getByLabelText(/element layer/i);
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
-      const notesField = screen.getByLabelText(/element notes/i);
       const visibilityField = screen.getByRole("checkbox", { name: /element visible/i });
 
       await user.clear(nameField);
       await user.type(nameField, "Hero Shelf");
-      await user.selectOptions(modeField, "needs_completion");
-      await user.clear(layerField);
-      await user.type(layerField, "7");
       await user.clear(bboxWidthField);
       await user.type(bboxWidthField, "34");
-      await user.type(notesField, "Need to preserve the handle");
       await user.click(visibilityField);
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
-        "/api/workspace/state",
-        expect.objectContaining({ method: "PUT" }),
+        "/api/workspace/elements/element_001",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            bbox: { x: 12, y: 16, w: 34, h: 32 },
+            label: "Hero Shelf",
+            visible: false,
+          }),
+        }),
       );
       expect(screen.getAllByText(/element details updated\./i)).toHaveLength(2);
       expect(screen.getByAltText("Hero Shelf thumbnail")).toBeInTheDocument();
@@ -358,7 +583,7 @@ describe("App", () => {
         return jsonResponse(loadedState);
       }
 
-      if (input === "/api/workspace/state" && init?.method === "PUT") {
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
         return jsonResponse(
           { detail: "Element element_001 bbox width/height must be > 0." },
           400,
@@ -381,6 +606,50 @@ describe("App", () => {
       expect(screen.getAllByText(/state save failed\./i)).toHaveLength(2);
       expect(screen.getByTestId("overlay-box-element_001")).toBeInTheDocument();
       expect(screen.getByLabelText(/bbox width/i)).toHaveValue(30);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("merges selected element ids with the merge endpoint", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+
+      if (input === "/api/workspace/elements/merge" && init?.method === "POST") {
+        return jsonResponse({
+          element: mergedState.elements[2],
+          state: mergedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+      const labelField = screen.getByLabelText(/merge label/i);
+      await user.clear(labelField);
+      await user.type(labelField, "Fixture group");
+      await user.click(screen.getByRole("button", { name: /merge selected/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/merge",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementIds: ["element_001", "element_002"],
+            label: "Fixture group",
+          }),
+        }),
+      );
+      expect(await screen.findByAltText("Fixture group thumbnail")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Fixture group");
     } finally {
       restoreFetch();
     }
