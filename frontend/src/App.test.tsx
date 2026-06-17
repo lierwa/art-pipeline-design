@@ -716,6 +716,56 @@ describe("App", () => {
     }
   });
 
+  it("resizes the selected canvas box with keyboard handles and saves PATCH", async () => {
+    const user = userEvent.setup();
+    const patchedElement = {
+      ...loadedState.elements[0],
+      status: "edited",
+      bbox: { x: 12, y: 16, w: 40, h: 42 },
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: loadedState.source,
+            elements: [patchedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const resizeHandle = await screen.findByTestId("resize-handle-element_001-se");
+      resizeHandle.focus();
+      fireEvent.keyDown(resizeHandle, { key: "ArrowRight", shiftKey: true });
+      fireEvent.keyDown(resizeHandle, { key: "ArrowDown", shiftKey: true });
+
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({
+          bbox: { x: 12, y: 16, w: 40, h: 42 },
+        });
+      });
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders a merge preview outline for multiple selected assets", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {

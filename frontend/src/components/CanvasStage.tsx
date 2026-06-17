@@ -514,6 +514,22 @@ function CanvasArtboard({
     onBoxDraftChange(element.id, moveBox(element.bbox, delta.x, delta.y, source));
   }
 
+  function handleResizeKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    element: WorkspaceElement,
+    handle: ResizeHandle,
+  ) {
+    const step = event.shiftKey ? 10 : 1;
+    const delta = keyboardDelta(event.key, step);
+    if (!delta) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onBoxDraftChange(element.id, resizeBox(element.bbox, handle, delta.x, delta.y, source));
+  }
+
   function findTopmostHitElement(event: DrawingEvent): WorkspaceElement | null {
     const artboard = artboardRef.current;
     if (!artboard) {
@@ -668,6 +684,7 @@ function CanvasArtboard({
                     data-element-id={element.id}
                     data-resize-handle={handle}
                     data-testid={`resize-handle-${element.id}-${handle}`}
+                    onKeyDown={(event) => handleResizeKeyDown(event, element, handle)}
                     onPointerDown={(event) => beginBoxResize(event, element, handle)}
                     onPointerMove={updateBoxEdit}
                     onPointerUp={endBoxEdit}
