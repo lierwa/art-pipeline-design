@@ -42,6 +42,7 @@ QA_REPORT_PATH = "export/qa_report.json"
 MASK_DERIVED_FROM_ALPHA_WARNING = "mask derived from asset alpha because source mask was missing."
 MASK_UNAVAILABLE_REASON = "mask_missing_and_asset_alpha_unavailable"
 COMPLETED_ASSET_MASK_UNAVAILABLE_REASON = "completed_asset_alpha_mask_unavailable"
+ACCEPTED_ASSET_MISSING_MASK_REASON = "accepted_asset_missing_mask"
 
 
 def export_workspace(
@@ -213,6 +214,16 @@ def _plan_exports(
             continue
 
         if element.mode == "visible_only":
+            if _explicit_source_mask_path(workspace_root, element) is None:
+                blocked.append(
+                    {
+                        "elementId": element.id,
+                        "name": element.name,
+                        "reason": ACCEPTED_ASSET_MISSING_MASK_REASON,
+                    }
+                )
+                continue
+
             source_asset_path = _incomplete_asset_path(element.id)
             if not _workspace_file_exists(workspace_root, source_asset_path):
                 blocked.append(
@@ -386,6 +397,12 @@ def _source_mask_path(workspace_root: Path, element: ElementRecord) -> str | Non
 
     fallback = f"elements/{element.id}/mask.png"
     return fallback if _workspace_file_exists(workspace_root, fallback) else None
+
+
+def _explicit_source_mask_path(workspace_root: Path, element: ElementRecord) -> str | None:
+    if element.mask and _workspace_file_exists(workspace_root, element.mask):
+        return element.mask
+    return None
 
 
 def _incomplete_asset_path(element_id: str) -> str:

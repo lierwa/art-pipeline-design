@@ -2431,7 +2431,55 @@ def test_export_can_explicitly_override_unrepaired_completion_with_warning(
     assert (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
 
 
-def test_export_derives_required_mask_from_asset_alpha_when_source_mask_is_missing(
+def test_export_blocks_accepted_candidates_without_masks(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    state = {
+        "source": {
+            "filename": "original.png",
+            "path": "source/original.png",
+            "width": 120,
+            "height": 90,
+        },
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "cabinet",
+                "label": "cabinet",
+                "status": "accepted",
+                "mode": "visible_only",
+                "bbox": {"x": 10, "y": 20, "w": 30, "h": 40},
+                "canvas": {"x": 10, "y": 20, "w": 30, "h": 40},
+                "mask": None,
+                "sourceProvider": "grounding_dino",
+                "sourcePrompt": "cabinet",
+                "confidence": 0.88,
+                "history": [],
+                "visible": True,
+            }
+        ],
+    }
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+    element_dir = tmp_path / "workspace" / "elements" / "element_001"
+    element_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (30, 40), (20, 30, 40, 255)).save(
+        element_dir / "asset_incomplete.png",
+        format="PNG",
+    )
+
+    response = client.post("/api/workspace/export", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 0
+    assert body["blockedCount"] == 1
+    assert body["exportedElements"] == []
+    assert body["blockedElements"][0]["reason"] == "accepted_asset_missing_mask"
+    assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
+
+
+def test_export_blocks_visible_asset_when_source_mask_file_is_missing(
     client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -2442,36 +2490,26 @@ def test_export_derives_required_mask_from_asset_alpha_when_source_mask_is_missi
 
     assert response.status_code == 200
     body = response.json()
-    assert body["exportableCount"] == 1
-    assert body["blockedCount"] == 0
-    assert body["exportedElements"][0]["maskPath"] == "export/masks/element_001.png"
-    assert body["exportedElements"][0]["warnings"] == [
-        "mask derived from asset alpha because source mask was missing."
+    assert body["exportableCount"] == 0
+    assert body["blockedCount"] == 1
+    assert body["exportedElements"] == []
+    assert body["blockedElements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "reason": "accepted_asset_missing_mask",
+        }
     ]
-    assert body["warnings"] == [
-        "element_001 mask derived from asset alpha because source mask was missing."
-    ]
+    assert body["warnings"] == []
 
-    export_mask = tmp_path / "workspace" / "export" / "masks" / "element_001.png"
-    assert export_mask.exists()
-    with Image.open(export_mask) as mask:
-        assert mask.mode == "L"
-        assert mask.size == (5, 4)
-        assert mask.getpixel((0, 0)) == 0
-        assert mask.getpixel((2, 1)) == 255
-
-    manifest = workspace_api.json.loads(
-        (tmp_path / "workspace" / "export" / "manifest.json").read_text(encoding="utf-8")
-    )
-    assert manifest["elements"][0]["maskPath"] == "export/masks/element_001.png"
-    assert manifest["elements"][0]["warnings"] == [
-        "mask derived from asset alpha because source mask was missing."
-    ]
+    export_root = tmp_path / "workspace" / "export"
+    assert not (export_root / "assets" / "element_001.png").exists()
+    assert not (export_root / "masks" / "element_001.png").exists()
 
     qa_report = workspace_api.json.loads(
-        (tmp_path / "workspace" / "export" / "qa_report.json").read_text(encoding="utf-8")
+        (export_root / "qa_report.json").read_text(encoding="utf-8")
     )
-    assert qa_report["warnings"] == body["warnings"]
+    assert qa_report["blockedElements"] == body["blockedElements"]
 
 
 def test_export_blocks_asset_without_source_mask_or_alpha_channel(
@@ -2532,7 +2570,7 @@ def test_export_blocks_asset_without_source_mask_or_alpha_channel(
         {
             "elementId": "element_001",
             "name": "RGB Asset",
-            "reason": "mask_missing_and_asset_alpha_unavailable",
+            "reason": "accepted_asset_missing_mask",
         }
     ]
     assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()

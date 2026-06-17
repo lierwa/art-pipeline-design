@@ -5,6 +5,7 @@ import os
 import shutil
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -35,6 +36,7 @@ from art_pipeline.candidates import (
 from art_pipeline.detection import (
     DEFAULT_ASSET_VOCABULARY,
     DetectionProvider,
+    DetectionProviderNotConfigured,
     DetectionResult,
 )
 from art_pipeline.elements import (
@@ -75,6 +77,8 @@ ASSET_MEDIA_TYPES = {
 
 # Some providers return "cabinet" for the "bathroom cabinet" prompt.
 DETECTION_FILTER_VOCABULARY = [*DEFAULT_ASSET_VOCABULARY, "cabinet"]
+DETECTION_PROVIDER_ENV = "ART_PIPELINE_DETECTION_PROVIDER"
+GROUNDING_DINO_MODEL_ENV = "ART_PIPELINE_GROUNDING_DINO_MODEL"
 
 
 class PatchElementRequest(BaseModel):
@@ -99,7 +103,16 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Art Pipeline Workbench API")
     app.state.workspace_root = (workspace_root or Path("workspace")).resolve()
+    detection_provider_config_error = None
+    detection_provider_factory = None
+    if detection_provider is None:
+        try:
+            detection_provider_factory = _detection_provider_factory_from_env()
+        except DetectionProviderNotConfigured as exc:
+            detection_provider_config_error = str(exc)
     app.state.detection_provider = detection_provider
+    app.state.detection_provider_factory = detection_provider_factory
+    app.state.detection_provider_config_error = detection_provider_config_error
 
     @app.get("/api/workspace/source")
     def get_source() -> FileResponse:
@@ -688,9 +701,13 @@ def create_app(
 
     @app.post("/api/workspace/detect")
     def detect_workspace() -> WorkspaceState:
-        provider = app.state.detection_provider
+        provider = _get_detection_provider(app)
         if provider is None:
-            raise HTTPException(status_code=503, detail="Detection provider is not configured.")
+            detail = (
+                app.state.detection_provider_config_error
+                or "Detection provider is not configured."
+            )
+            raise HTTPException(status_code=503, detail=detail)
 
         root = app.state.workspace_root
         state = _read_state(root)
@@ -730,6 +747,57 @@ def create_app(
         return next_state
 
     return app
+
+
+def _get_detection_provider(app: FastAPI) -> DetectionProvider | None:
+    provider = app.state.detection_provider
+    if provider is not None:
+        return provider
+
+    provider_factory = app.state.detection_provider_factory
+    if provider_factory is None:
+        return None
+
+    try:
+        provider = provider_factory()
+    except DetectionProviderNotConfigured as exc:
+        app.state.detection_provider_config_error = str(exc)
+        return None
+
+    app.state.detection_provider = provider
+    app.state.detection_provider_config_error = None
+    return provider
+
+
+def _detection_provider_factory_from_env() -> Callable[[], DetectionProvider] | None:
+    provider_name = os.getenv(DETECTION_PROVIDER_ENV, "").strip().lower()
+    if not provider_name:
+        return None
+
+    if provider_name != "grounding_dino":
+        raise DetectionProviderNotConfigured(
+            f"Unsupported detection provider {provider_name!r}. "
+            f"Set {DETECTION_PROVIDER_ENV}=grounding_dino."
+        )
+
+    model_id = os.getenv(GROUNDING_DINO_MODEL_ENV, "").strip()
+    return lambda: _create_grounding_dino_provider(model_id or None)
+
+
+def _create_grounding_dino_provider(model_id: str | None = None) -> DetectionProvider:
+    try:
+        from art_pipeline.model_runners.grounding_dino import GroundingDinoProvider
+    except ImportError as exc:
+        raise DetectionProviderNotConfigured(str(exc)) from exc
+
+    try:
+        if model_id:
+            return GroundingDinoProvider(model_id=model_id)
+        return GroundingDinoProvider()
+    except Exception as exc:
+        raise DetectionProviderNotConfigured(
+            f"Detection provider 'grounding_dino' could not be initialized: {exc}"
+        ) from exc
 
 
 def _load_png(data: bytes) -> Image.Image:
