@@ -265,7 +265,7 @@ def test_detect_uses_configured_provider_without_cv_fallback(
     def fail_if_called(*args, **kwargs):
         raise AssertionError("/api/workspace/detect must not call generate_proposals")
 
-    monkeypatch.setattr(workspace_api, "generate_proposals", fail_if_called)
+    monkeypatch.setattr(workspace_api, "generate_proposals", fail_if_called, raising=False)
     app = create_app(
         workspace_root=tmp_path / "workspace",
         detection_provider=StaticProvider(),

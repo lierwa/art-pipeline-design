@@ -1,6 +1,6 @@
 # Art Pipeline V2 Workbench Demo
 
-This repository contains a local web workbench for turning one scene PNG into a structured asset pack. The backend stores all workspace files under `workspace/`; the frontend drives upload, annotation, element edits, extraction, repair task packaging, QA validation, and export.
+This repository contains a local web workbench for turning one scene PNG into a structured asset pack. The backend stores all workspace files under `workspace/`; the frontend drives upload, model-backed detection, candidate review, element edits, extraction, repair task packaging, QA validation, and export.
 
 ## Start The Backend
 
@@ -10,13 +10,26 @@ Install the backend package and development dependencies:
 python -m pip install -e "backend[dev]"
 ```
 
+For local GroundingDINO-style detection, also install the optional model dependencies:
+
+```powershell
+python -m pip install -e "backend[dev,model]"
+```
+
 Run the FastAPI server from the repository root:
 
 ```powershell
 uvicorn art_pipeline.api:app --reload --app-dir backend
 ```
 
-The API uses `workspace/` as its default workspace root.
+The API uses `workspace/` as its default workspace root. Detection is disabled unless a real provider is configured:
+
+```powershell
+$env:ART_PIPELINE_DETECTION_PROVIDER = "grounding_dino"
+uvicorn art_pipeline.api:app --reload --app-dir backend
+```
+
+`ART_PIPELINE_GROUNDING_DINO_MODEL` can optionally point at a local or hosted model id supported by the provider.
 
 ## Start The Frontend
 
@@ -35,7 +48,7 @@ npm run dev
 
 Open the URL Vite prints, usually `http://localhost:5173`. Keep the backend running in a separate terminal.
 
-## Upload And Auto Annotate
+## Upload And Run Detection
 
 Use **Upload PNG** to select a source image. The app accepts PNG files only and writes the active source to:
 
@@ -50,7 +63,15 @@ For the demo image, upload:
 source-demo/cat-bathroom-core-scene-v5.png
 ```
 
-After upload, use **Auto Annotate**. The backend proposes deterministic regions from the source image and writes thumbnails under `workspace/elements/<element_id>/thumb.png`. Proposals appear in the element list and can be accepted or rejected.
+After upload, use **Run Detection**. The backend calls the configured detection provider and normalizes model results into reviewable candidates with labels, confidence, bounding boxes, provider metadata, and history. The legacy auto-CV route is retired; `/api/workspace/auto-annotate` returns `410 Gone`.
+
+There is no heuristic fallback. If `ART_PIPELINE_DETECTION_PROVIDER` is not set, `/api/workspace/detect` returns a clear configuration error instead of fabricating candidates. If the provider fails, the error is surfaced and existing review state is preserved. If the provider returns no usable results after filtering, the workspace remains empty for review.
+
+The approved UI reference for this model-backed workflow is:
+
+```text
+docs/assets/model-backed-pipeline-ui-v1.png
+```
 
 ## Add And Split Elements
 
@@ -104,7 +125,7 @@ Then choose **Validate repair output**. QA passes only when the completed asset 
 
 ## Export
 
-Use **Export Asset Pack** after extraction and any available repair validation. The backend writes:
+Use **Export Asset Pack** after accepted assets have masks and any available repair validation. The backend writes:
 
 ```text
 workspace/export/
@@ -119,14 +140,15 @@ workspace/export/
 Default export rules are conservative:
 
 ```text
-visible_only -> export asset_incomplete.png
-needs_completion with valid repair -> export completed_asset.png
-needs_completion without valid repair -> blocked
-split_parent -> skipped
+accepted standalone/child/merged with mask -> exported
+accepted parent with exportParent and mask -> exported
+accepted asset without mask -> blocked
+needs_completion with valid repair and mask -> exported
+needs_completion without valid repair or mask -> blocked
 rejected -> skipped
 ```
 
-Every exported asset has a matching `export/masks/<element_id>.png`. If the source mask is missing but the exported PNG has an alpha channel, export derives the mask from alpha and records a warning in `manifest.json` and `qa_report.json`. If neither a mask nor asset alpha is available, the element is blocked.
+Every exported asset has a matching `export/masks/<element_id>.png`. Missing masks block default export for accepted assets; bbox-only or maskless export is not treated as the normal asset-pack path.
 
 The API also supports an explicit override:
 

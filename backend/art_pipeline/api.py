@@ -49,7 +49,6 @@ from art_pipeline.elements import (
     validate_element_id,
 )
 from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
-from art_pipeline.proposals import ImportedProposalsError, generate_proposals
 from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import (
@@ -644,60 +643,14 @@ def create_app(
         }
 
     @app.post("/api/workspace/auto-annotate")
-    def auto_annotate() -> WorkspaceState:
-        root = app.state.workspace_root
-        state = _read_state(root)
-        if state.source is None:
-            raise HTTPException(status_code=400, detail="Upload a source image before auto annotation.")
-
-        source_path = _source_path(root)
-        if not source_path.exists():
-            raise HTTPException(status_code=404, detail="No source image uploaded.")
-
-        source_image = Image.open(source_path)
-        source_image.load()
-
-        generated_elements: list[ElementRecord] = []
-        next_index = 1
-        try:
-            candidates = generate_proposals(root, source_image)
-        except ImportedProposalsError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-        for candidate in candidates:
-            element_id = next_element_id(state.elements + generated_elements, start=next_index)
-            next_index = int(element_id.rsplit("_", 1)[1]) + 1
-            thumbnail_path = write_thumbnail(source_image, root, element_id, candidate.bbox)
-            generated_elements.append(
-                ElementRecord(
-                    id=element_id,
-                    name=candidate.name,
-                    status="proposal",
-                    mode="visible_only",
-                    bbox=candidate.bbox,
-                    canvas=candidate.canvas,
-                    layer=len(generated_elements) + 1,
-                    thumbnail=thumbnail_path,
-                    mask=None,
-                    parentId=None,
-                    source=candidate.source,
-                    notes="",
-                    visible=True,
-                    confidence=candidate.confidence,
-                )
-            )
-
-        persisted_elements = [
-            element
-            for element in state.elements
-            if element.status != "proposal" or element.mode == "rejected"
-        ]
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[*persisted_elements, *generated_elements],
+    def auto_annotate_removed() -> None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Auto annotate was replaced by model-backed detection. "
+                "Use /api/workspace/detect and configure a detection provider."
+            ),
         )
-        _write_state(root, next_state)
-        return next_state
 
     @app.post("/api/workspace/detect")
     def detect_workspace() -> WorkspaceState:

@@ -10,7 +10,6 @@ from PIL import Image
 import art_pipeline.api as workspace_api
 import art_pipeline.exporter as workspace_exporter
 from art_pipeline.api import create_app
-from art_pipeline.proposals import cv_proposals
 
 
 @pytest.fixture()
@@ -350,172 +349,32 @@ def test_put_state_rejects_invalid_element_geometry(
     assert persisted == ok_response.json()
 
 
-def test_auto_annotate_returns_deterministic_candidates_and_thumbnails(
+def test_auto_annotate_returns_410_without_generating_proposals(
     client: TestClient,
-    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     upload_response = client.post(
         "/api/workspace/source",
         files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
     )
     assert upload_response.status_code == 200
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("/api/workspace/auto-annotate must not call generate_proposals")
+
+    monkeypatch.setattr(workspace_api, "generate_proposals", fail_if_called, raising=False)
 
     response = client.post("/api/workspace/auto-annotate")
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["source"]["width"] == 120
-    assert len(payload["elements"]) >= 2
-
-    candidate_sources = {element["source"] for element in payload["elements"]}
-    assert "auto_cv" in candidate_sources
-
-    candidate_names = {element["name"] for element in payload["elements"]}
-    assert {"Region 1", "Region 2"}.issubset(candidate_names)
-
-    by_name = {element["name"]: element for element in payload["elements"]}
-    assert by_name["Region 1"]["bbox"] == {"x": 12, "y": 16, "w": 30, "h": 32}
-    assert by_name["Region 2"]["bbox"] == {"x": 64, "y": 28, "w": 38, "h": 42}
-
-    for element in payload["elements"]:
-        thumb_path = tmp_path / "workspace" / element["thumbnail"]
-        assert thumb_path.exists()
-        with Image.open(thumb_path) as thumb:
-            assert thumb.width == element["bbox"]["w"]
-            assert thumb.height == element["bbox"]["h"]
-
-    state_path = tmp_path / "workspace" / "state.json"
-    state_payload = workspace_api.json.loads(state_path.read_text(encoding="utf-8"))
-    assert state_payload["elements"] == payload["elements"]
-
-
-def test_cv_proposals_are_bounded_and_object_scale_for_demo_image() -> None:
-    demo_path = (
-        Path(__file__).resolve().parents[2]
-        / "source-demo"
-        / "cat-bathroom-core-scene-v5.png"
-    )
-    with Image.open(demo_path) as image:
-        proposals = cv_proposals(image)
-
-    large_boxes = [
-        proposal
-        for proposal in proposals
-        if proposal.bbox.w * proposal.bbox.h > 2500
-    ]
-
-    assert len(proposals) < 80
-    assert len(large_boxes) >= 5
-
-
-def test_auto_annotate_includes_imported_proposals_when_present(
-    client: TestClient,
-    tmp_path: Path,
-) -> None:
-    upload_response = client.post(
-        "/api/workspace/source",
-        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
-    )
-    assert upload_response.status_code == 200
-
-    proposals_dir = tmp_path / "workspace" / "proposals"
-    proposals_dir.mkdir(parents=True, exist_ok=True)
-    imported_path = proposals_dir / "imported_proposals.json"
-    imported_path.write_text(
-        """
-        [
-          {
-            "name": "Imported Block",
-            "bbox": {"x": 10, "y": 12, "w": 22, "h": 20},
-            "canvas": {"x": 8, "y": 10, "w": 26, "h": 24},
-            "confidence": 0.91
-          }
-        ]
-        """.strip(),
-        encoding="utf-8",
+    assert response.status_code == 410
+    assert response.json()["detail"] == (
+        "Auto annotate was replaced by model-backed detection. "
+        "Use /api/workspace/detect and configure a detection provider."
     )
 
-    response = client.post("/api/workspace/auto-annotate")
-
-    assert response.status_code == 200
-    payload = response.json()
-    imported = next(
-        element for element in payload["elements"] if element["name"] == "Imported Block"
-    )
-    assert imported["source"] == "imported"
-    assert imported["confidence"] == pytest.approx(0.91)
-    assert (tmp_path / "workspace" / imported["thumbnail"]).exists()
-
-
-def test_auto_annotate_returns_400_for_malformed_imported_proposals(
-    client: TestClient,
-    tmp_path: Path,
-) -> None:
-    upload_response = client.post(
-        "/api/workspace/source",
-        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
-    )
-    assert upload_response.status_code == 200
-
-    proposals_dir = tmp_path / "workspace" / "proposals"
-    proposals_dir.mkdir(parents=True, exist_ok=True)
-    imported_path = proposals_dir / "imported_proposals.json"
-    imported_path.write_text('{"name":"bad-shape"}', encoding="utf-8")
-
-    response = client.post("/api/workspace/auto-annotate")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Imported proposals must be a JSON array."
-
-
-def test_auto_annotate_preserves_rejected_elements_and_avoids_id_collisions(
-    client: TestClient,
-) -> None:
-    upload_response = client.post(
-        "/api/workspace/source",
-        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
-    )
-    assert upload_response.status_code == 200
-
-    first_response = client.post("/api/workspace/auto-annotate")
-    assert first_response.status_code == 200
-    first_payload = first_response.json()
-
-    rejected = dict(first_payload["elements"][0])
-    rejected["mode"] = "rejected"
-    rejected["visible"] = False
-
-    accepted = dict(first_payload["elements"][1])
-    accepted["status"] = "accepted"
-
-    put_response = client.put(
-        "/api/workspace/state",
-        json={
-            "source": first_payload["source"],
-            "elements": [rejected, accepted],
-        },
-    )
-    assert put_response.status_code == 200
-
-    second_response = client.post("/api/workspace/auto-annotate")
-    assert second_response.status_code == 200
-    second_payload = second_response.json()
-
-    by_id = {element["id"]: element for element in second_payload["elements"]}
-    assert rejected["id"] in by_id
-    assert by_id[rejected["id"]]["mode"] == "rejected"
-    assert by_id[rejected["id"]]["visible"] is False
-    assert accepted["id"] in by_id
-    assert by_id[accepted["id"]]["status"] == "accepted"
-
-    active_proposal_ids = {
-        element["id"]
-        for element in second_payload["elements"]
-        if element["status"] == "proposal" and element["mode"] != "rejected"
-    }
-    assert rejected["id"] not in active_proposal_ids
-    assert accepted["id"] not in active_proposal_ids
-    assert active_proposal_ids == {"element_003", "element_004"}
+    state_response = client.get("/api/workspace/state")
+    assert state_response.status_code == 200
+    assert state_response.json()["elements"] == []
 
 
 def test_create_manual_element_persists_defaults_and_thumbnail(
@@ -2326,7 +2185,10 @@ def test_export_writes_visible_assets_and_blocks_incomplete_completion(
                     "thumbnail": None,
                     "mask": None,
                     "parentId": None,
-                    "source": "auto_cv",
+                    "source": "model_detection",
+                    "sourceProvider": "test_provider",
+                    "sourcePrompt": "draft",
+                    "history": [],
                     "notes": "",
                     "visible": True,
                     "confidence": 0.25,
