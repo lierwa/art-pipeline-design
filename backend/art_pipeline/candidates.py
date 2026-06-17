@@ -238,11 +238,31 @@ def mark_candidate_merged(
     candidate: ElementRecord,
     merged_element_id: str,
 ) -> ElementRecord:
-    return candidate.model_copy(
+    before = candidate.model_dump(mode="json")
+    marked = candidate.model_copy(
         update={
-            "status": "merged",
             "visible": False,
             "mergedInto": merged_element_id,
+        }
+    )
+    return marked.model_copy(
+        update={
+            "history": [
+                *candidate.history,
+                CandidateHistoryEntry(
+                    kind="manual_merge",
+                    before={
+                        "status": before["status"],
+                        "visible": before["visible"],
+                        "mergedInto": before.get("mergedInto"),
+                    },
+                    after={
+                        "status": marked.status,
+                        "visible": marked.visible,
+                        "mergedInto": marked.mergedInto,
+                    },
+                ),
+            ]
         }
     )
 

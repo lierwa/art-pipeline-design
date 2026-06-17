@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from art_pipeline.annotations import (
     ManualElementCreateRequest,
@@ -89,7 +89,7 @@ class ChildElementRequest(BaseModel):
 
 
 class MergeElementsRequest(BaseModel):
-    elementIds: list[str]
+    elementIds: list[str] = Field(default_factory=list)
     label: str | None = None
 
 
