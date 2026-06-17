@@ -25,6 +25,7 @@ from art_pipeline.asset_outputs import (
     clear_stale_asset_outputs,
     write_mask_output,
 )
+from art_pipeline.candidates import filter_detection_results
 from art_pipeline.detection import (
     DEFAULT_ASSET_VOCABULARY,
     DetectionProvider,
@@ -65,6 +66,9 @@ ASSET_MEDIA_TYPES = {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
 }
+
+# Some providers return "cabinet" for the "bathroom cabinet" prompt.
+DETECTION_FILTER_VOCABULARY = [*DEFAULT_ASSET_VOCABULARY, "cabinet"]
 
 
 def create_app(
@@ -537,12 +541,19 @@ def create_app(
             ) from exc
 
         results = _validate_detection_results(source_image, raw_results)
+        filtered_results = [
+            DetectionResult.model_validate(item)
+            for item in filter_detection_results(
+                [result.model_dump(mode="json") for result in results],
+                DETECTION_FILTER_VOCABULARY,
+            )
+        ]
         _clear_generated_workspace_outputs(root)
         generated = _detection_results_to_elements(
             root,
             source_image,
             provider.name,
-            results,
+            filtered_results,
         )
         next_state = WorkspaceState(source=state.source, elements=generated)
         _write_state(root, next_state)

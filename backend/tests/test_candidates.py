@@ -1,6 +1,10 @@
 from typing import get_args
 
-from art_pipeline.candidates import CandidateStatus, edit_candidate_box
+from art_pipeline.candidates import (
+    CandidateStatus,
+    edit_candidate_box,
+    filter_detection_results,
+)
 from art_pipeline.elements import (
     BoundingBox,
     CandidateHistoryEntry,
@@ -86,3 +90,68 @@ def test_edit_candidate_box_preserves_model_box_in_history() -> None:
     assert candidate.status == "model_detected"
     assert candidate.bbox.model_dump() == {"x": 10, "y": 20, "w": 100, "h": 120}
     assert candidate.history == [existing_history]
+
+
+def test_filter_detection_results_drops_generic_and_out_of_vocab_labels() -> None:
+    raw = [
+        {
+            "label": "cabinet",
+            "confidence": 0.88,
+            "bbox": {"x": 0, "y": 0, "w": 50, "h": 50},
+            "sourcePrompt": "cabinet",
+        },
+        {
+            "label": "bathroom",
+            "confidence": 0.99,
+            "bbox": {"x": 0, "y": 0, "w": 100, "h": 100},
+            "sourcePrompt": "bathroom",
+        },
+        {
+            "label": "basket stool",
+            "confidence": 0.70,
+            "bbox": {"x": 10, "y": 10, "w": 20, "h": 20},
+            "sourcePrompt": "basket stool",
+        },
+    ]
+
+    filtered = filter_detection_results(
+        raw,
+        vocabulary=["cabinet", "basket", "stool"],
+        min_confidence=0.45,
+    )
+
+    assert [item["label"] for item in filtered] == ["cabinet"]
+
+
+def test_filter_detection_results_runs_nms_per_label() -> None:
+    raw = [
+        {
+            "label": "plant",
+            "confidence": 0.90,
+            "bbox": {"x": 10, "y": 10, "w": 100, "h": 100},
+            "sourcePrompt": "plant",
+        },
+        {
+            "label": "plant",
+            "confidence": 0.80,
+            "bbox": {"x": 12, "y": 12, "w": 96, "h": 96},
+            "sourcePrompt": "plant",
+        },
+        {
+            "label": "bottle",
+            "confidence": 0.82,
+            "bbox": {"x": 12, "y": 12, "w": 96, "h": 96},
+            "sourcePrompt": "bottle",
+        },
+    ]
+
+    filtered = filter_detection_results(
+        raw,
+        vocabulary=["plant", "bottle"],
+        min_confidence=0.45,
+    )
+
+    assert [(item["label"], item["confidence"]) for item in filtered] == [
+        ("plant", 0.90),
+        ("bottle", 0.82),
+    ]
