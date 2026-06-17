@@ -9,3 +9,4 @@ frontend/tsconfig.tsbuildinfo
 node_modules/
 .codex-runtime/
 workspace/
+.worktrees/
