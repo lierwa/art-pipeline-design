@@ -1,6 +1,10 @@
 import { ChangeEvent } from "react";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { HelpCircle, PackageOpen, Play, Save, Settings } from "lucide-react";
 
-import { SourceMetadata } from "../workspace";
+import { IconButton } from "./IconButton";
+import { ProcessingRecordsPopover } from "./ProcessingRecordsPopover";
+import { SourceMetadata, WorkspaceRunSummary } from "../workspace";
 
 type TopAppBarProps = {
   source: SourceMetadata | null;
@@ -11,10 +15,14 @@ type TopAppBarProps = {
   isExporting: boolean;
   canSave: boolean;
   canExport: boolean;
+  runs: WorkspaceRunSummary[];
+  activeRunId: string | null;
   onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   onRunDetection: () => void;
   onSave: () => void;
   onExport: () => void;
+  onSelectRun: (runId: string) => void;
+  onDeleteRun: (runId: string) => void | Promise<void>;
 };
 
 export function TopAppBar({
@@ -26,10 +34,14 @@ export function TopAppBar({
   isExporting,
   canSave,
   canExport,
+  runs,
+  activeRunId,
   onUpload,
   onRunDetection,
   onSave,
   onExport,
+  onSelectRun,
+  onDeleteRun,
 }: TopAppBarProps) {
   return (
     <header className="top-app-bar">
@@ -41,60 +53,67 @@ export function TopAppBar({
         </div>
       </div>
 
-      <label className="source-control">
+      <label className="source-control" htmlFor="source-upload">
         <span>Source</span>
-        <select
-          aria-label="Source file"
-          disabled
-          value={source ? source.filename : ""}
-          onChange={() => undefined}
-        >
-          <option value="">
-            {source ? "Select source" : "No source loaded"}
-          </option>
-          {source ? (
-            <option value={source.filename}>{source.filename}</option>
-          ) : null}
-        </select>
+        <strong>{source ? source.filename : "Upload PNG"}</strong>
         <small>{source ? `${source.width} x ${source.height}` : sourceDetails}</small>
       </label>
+      <input
+        id="source-upload"
+        aria-label="Upload PNG"
+        accept="image/png"
+        className="visually-hidden"
+        type="file"
+        onChange={onUpload}
+      />
 
-      <div className="top-app-actions">
-        <label className="upload-button" htmlFor="source-upload">
-          Upload PNG
-        </label>
-        <input
-          id="source-upload"
-          aria-label="Upload PNG"
-          accept="image/png"
-          className="visually-hidden"
-          type="file"
-          onChange={onUpload}
-        />
-        <button
-          type="button"
-          className="primary-action"
-          onClick={onRunDetection}
-          disabled={!source || isAnnotating}
-        >
-          Run Detection
-        </button>
-        <button
-          type="button"
-          disabled={!canSave || isSaving}
-          onClick={onSave}
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          aria-label="Export Asset Pack"
-          disabled={!canExport || isExporting}
-          onClick={onExport}
-        >
-          Export
-        </button>
-      </div>
+      <Tooltip.Provider delayDuration={250}>
+        <div className="top-app-actions">
+          <button
+            type="button"
+            className="primary-action"
+            onClick={onRunDetection}
+            disabled={!source || isAnnotating}
+          >
+            <Play size={16} fill="currentColor" aria-hidden="true" />
+            Run Detection
+          </button>
+          <ProcessingRecordsPopover
+            runs={runs}
+            activeRunId={activeRunId}
+            onSelectRun={onSelectRun}
+            onDeleteRun={onDeleteRun}
+          />
+          <IconButton
+            label="Save"
+            icon={<Save size={16} strokeWidth={2.2} />}
+            showLabel
+            className="icon-button-label"
+            disabled={!canSave || isSaving}
+            onClick={onSave}
+          />
+          <IconButton
+            label="Export"
+            aria-label="Export Asset Pack"
+            icon={<PackageOpen size={16} strokeWidth={2.2} />}
+            showLabel
+            className="icon-button-label"
+            disabled={!canExport || isExporting}
+            onClick={onExport}
+          />
+          <IconButton
+            label="Help"
+            icon={<HelpCircle size={17} strokeWidth={2.2} />}
+            className="top-icon-button"
+          />
+          <IconButton
+            label="Settings"
+            icon={<Settings size={17} strokeWidth={2.2} />}
+            className="top-icon-button"
+          />
+          <div className="user-avatar" aria-label="User profile">U</div>
+        </div>
+      </Tooltip.Provider>
     </header>
   );
 }

@@ -2,6 +2,35 @@
 
 This repository contains a local web workbench for turning one scene PNG into a structured asset pack. The backend stores all workspace files under `workspace/`; the frontend drives upload, model-backed detection, candidate review, element edits, extraction, repair task packaging, QA validation, and export.
 
+## Quick Start
+
+From the repository root, install both backend and frontend dependencies:
+
+```bash
+npm run install:all
+```
+
+Start the backend and frontend together:
+
+```bash
+npm run dev
+```
+
+Open the URL Vite prints, usually `http://localhost:5173`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the real GroundingDINO provider.
+
+Install and cache the real GroundingDINO model before first use:
+
+```bash
+npm run install:all:model
+npm run download:model
+```
+
+For a no-model local demo run:
+
+```bash
+npm run dev:demo
+```
+
 ## Start The Backend
 
 Install the backend package and development dependencies:
@@ -22,10 +51,17 @@ Run the FastAPI server from the repository root:
 uvicorn art_pipeline.api:app --reload --app-dir backend
 ```
 
-The API uses `workspace/` as its default workspace root. Detection is disabled unless a real provider is configured:
+The API uses `workspace/` as its default workspace root. Detection is disabled unless a provider is configured. For real GroundingDINO-style detection:
 
 ```powershell
 $env:ART_PIPELINE_DETECTION_PROVIDER = "grounding_dino"
+uvicorn art_pipeline.api:app --reload --app-dir backend
+```
+
+For a lightweight local demo provider:
+
+```powershell
+$env:ART_PIPELINE_DETECTION_PROVIDER = "demo"
 uvicorn art_pipeline.api:app --reload --app-dir backend
 ```
 
@@ -65,7 +101,7 @@ source-demo/cat-bathroom-core-scene-v5.png
 
 After upload, use **Run Detection**. The backend calls the configured detection provider and normalizes model results into reviewable candidates with labels, confidence, bounding boxes, provider metadata, and history. The legacy auto-CV route is retired; `/api/workspace/auto-annotate` returns `410 Gone`.
 
-There is no heuristic fallback. If `ART_PIPELINE_DETECTION_PROVIDER` is not set, `/api/workspace/detect` returns a clear configuration error instead of fabricating candidates. If the provider fails, the error is surfaced and existing review state is preserved. If the provider returns no usable results after filtering, the workspace remains empty for review.
+The standalone API does not fall back automatically. If `ART_PIPELINE_DETECTION_PROVIDER` is not set, `/api/workspace/detect` returns a clear configuration error instead of fabricating candidates. `npm run dev` sets `grounding_dino` by default, while `npm run dev:demo` opts into the lightweight demo provider. If the provider fails, the error is surfaced and existing review state is preserved. If the provider returns no usable results after filtering, the workspace remains empty for review.
 
 The approved UI reference for this model-backed workflow is:
 

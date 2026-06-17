@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Callable
@@ -78,6 +80,7 @@ ASSET_MEDIA_TYPES = {
 DETECTION_FILTER_VOCABULARY = [*DEFAULT_ASSET_VOCABULARY, "cabinet"]
 DETECTION_PROVIDER_ENV = "ART_PIPELINE_DETECTION_PROVIDER"
 GROUNDING_DINO_MODEL_ENV = "ART_PIPELINE_GROUNDING_DINO_MODEL"
+RUN_ID_PATTERN = re.compile(r"^run_[A-Za-z0-9_-]+$")
 
 
 class PatchElementRequest(BaseModel):
@@ -94,6 +97,16 @@ class ChildElementRequest(BaseModel):
 class MergeElementsRequest(BaseModel):
     elementIds: list[str] = Field(default_factory=list)
     label: str | None = None
+
+
+class WorkspaceRunSummary(BaseModel):
+    id: str
+    title: str
+    sourceFilename: str
+    createdAt: str
+    updatedAt: str
+    status: str
+    elementCount: int
 
 
 def create_app(
@@ -114,8 +127,9 @@ def create_app(
     app.state.detection_provider_config_error = detection_provider_config_error
 
     @app.get("/api/workspace/source")
-    def get_source() -> FileResponse:
-        source_path = _source_path(app.state.workspace_root)
+    def get_source(runId: str | None = None) -> FileResponse:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        source_path = _source_path(root)
         if not source_path.exists():
             raise HTTPException(status_code=404, detail="No source image uploaded.")
         return FileResponse(source_path, media_type="image/png")
@@ -146,10 +160,84 @@ def create_app(
         _write_state(root, state)
         return state
 
+    @app.get("/api/workspace/runs")
+    def list_workspace_runs() -> dict:
+        return {
+            "runs": [
+                run.model_dump(mode="json")
+                for run in _read_runs(app.state.workspace_root)
+            ]
+        }
+
+    @app.post("/api/workspace/runs")
+    async def create_workspace_run(file: UploadFile = File(...)) -> dict:
+        if file.content_type != "image/png":
+            raise HTTPException(status_code=400, detail="Only PNG uploads are supported.")
+
+        data = await file.read()
+        image = _load_png(data)
+        base_root = app.state.workspace_root
+        run_id = _next_run_id(base_root, file.filename or "source.png")
+        run_root = _run_root(base_root, run_id)
+        run_root.mkdir(parents=True, exist_ok=False)
+
+        source_path = _source_path(run_root)
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(data)
+
+        state = WorkspaceState(
+            source=SourceMetadata(
+                filename="original.png",
+                path="source/original.png",
+                width=image.width,
+                height=image.height,
+            ),
+            elements=[],
+        )
+        _write_state(run_root, state)
+        now = _utc_now()
+        run = WorkspaceRunSummary(
+            id=run_id,
+            title=file.filename or "Untitled source",
+            sourceFilename=file.filename or "source.png",
+            createdAt=now,
+            updatedAt=now,
+            status=_derive_run_status(run_root, state),
+            elementCount=0,
+        )
+        _upsert_run(base_root, run)
+        return {
+            "run": run.model_dump(mode="json"),
+            "state": state.model_dump(mode="json"),
+        }
+
+    @app.delete("/api/workspace/runs/{run_id}")
+    def delete_workspace_run(run_id: str) -> dict:
+        base_root = app.state.workspace_root
+        run_root = _run_root(base_root, run_id)
+        runs = _read_runs(base_root)
+        next_runs = [run for run in runs if run.id != run_id]
+        if len(next_runs) == len(runs) and not run_root.exists():
+            raise HTTPException(status_code=404, detail="Processing record not found.")
+
+        if run_root.exists():
+            if run_root.is_dir():
+                shutil.rmtree(run_root)
+            else:
+                run_root.unlink()
+
+        _write_runs(base_root, next_runs)
+        return {
+            "runs": [
+                run.model_dump(mode="json")
+                for run in _read_runs(base_root)
+            ]
+        }
+
     @app.get("/api/workspace/assets/{asset_path:path}")
-    def get_workspace_asset(asset_path: str) -> FileResponse:
-        asset_file = (app.state.workspace_root / asset_path).resolve()
-        workspace_root = app.state.workspace_root
+    def get_workspace_asset(asset_path: str, runId: str | None = None) -> FileResponse:
+        workspace_root = _resolve_workspace_root(app.state.workspace_root, runId)
+        asset_file = (workspace_root / asset_path).resolve()
         try:
             asset_file.relative_to(workspace_root)
         except ValueError as exc:
@@ -162,15 +250,16 @@ def create_app(
         return FileResponse(asset_file, media_type=media_type)
 
     @app.get("/api/workspace/state")
-    def get_state() -> WorkspaceState:
-        state_path = _state_path(app.state.workspace_root)
+    def get_state(runId: str | None = None) -> WorkspaceState:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state_path = _state_path(root)
         if not state_path.exists():
             return WorkspaceState()
         return WorkspaceState.model_validate_json(state_path.read_text(encoding="utf-8"))
 
     @app.put("/api/workspace/state")
-    def put_state(state: WorkspaceState) -> WorkspaceState:
-        root = app.state.workspace_root
+    def put_state(state: WorkspaceState, runId: str | None = None) -> WorkspaceState:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         try:
             validate_workspace_state_geometry(state)
             state = _invalidate_geometry_changes(root, _read_state(root), state)
@@ -180,8 +269,8 @@ def create_app(
         return state
 
     @app.post("/api/workspace/elements")
-    def post_element(request: ManualElementCreateRequest) -> dict:
-        root = app.state.workspace_root
+    def post_element(request: ManualElementCreateRequest, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
 
@@ -201,8 +290,8 @@ def create_app(
         }
 
     @app.patch("/api/workspace/elements/{element_id}")
-    def patch_element(element_id: str, request: PatchElementRequest) -> dict:
-        root = app.state.workspace_root
+    def patch_element(element_id: str, request: PatchElementRequest, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         element = _get_element(state, element_id)
 
@@ -272,8 +361,12 @@ def create_app(
         }
 
     @app.post("/api/workspace/elements/{element_id}/children")
-    def post_child_element(element_id: str, request: ChildElementRequest) -> dict:
-        root = app.state.workspace_root
+    def post_child_element(
+        element_id: str,
+        request: ChildElementRequest,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
         parent = _get_element(state, element_id)
@@ -303,8 +396,8 @@ def create_app(
         }
 
     @app.post("/api/workspace/elements/merge")
-    def post_merge_elements(request: MergeElementsRequest) -> dict:
-        root = app.state.workspace_root
+    def post_merge_elements(request: MergeElementsRequest, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
 
@@ -349,8 +442,8 @@ def create_app(
         }
 
     @app.post("/api/workspace/elements/{element_id}/split")
-    def post_split(element_id: str, request: SplitElementRequest) -> dict:
-        root = app.state.workspace_root
+    def post_split(element_id: str, request: SplitElementRequest, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
         parent = _get_element(state, element_id)
@@ -380,8 +473,8 @@ def create_app(
         }
 
     @app.post("/api/workspace/split-requests")
-    def post_split_request(request: SplitRequestContractCreate) -> dict:
-        root = app.state.workspace_root
+    def post_split_request(request: SplitRequestContractCreate, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
         element = _get_element(state, request.elementId)
@@ -401,8 +494,8 @@ def create_app(
         }
 
     @app.post("/api/workspace/extract")
-    def post_extract(request: ExtractWorkspaceRequest) -> dict:
-        root = app.state.workspace_root
+    def post_extract(request: ExtractWorkspaceRequest, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         if state.source is None:
             raise HTTPException(status_code=400, detail="Upload a source image before extraction.")
@@ -454,8 +547,11 @@ def create_app(
         }
 
     @app.post("/api/workspace/export")
-    def post_export(request: ExportWorkspaceRequest | None = None) -> dict:
-        root = app.state.workspace_root
+    def post_export(
+        request: ExportWorkspaceRequest | None = None,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         export_request = request or ExportWorkspaceRequest()
         try:
@@ -468,8 +564,12 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/workspace/elements/{element_id:path}/mask/replace")
-    def post_replace_mask(element_id: str, request: ReplaceMaskRequest) -> dict:
-        root = app.state.workspace_root
+    def post_replace_mask(
+        element_id: str,
+        request: ReplaceMaskRequest,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         element = _get_element(state, element_id)
         if not _is_extractable_element(element):
@@ -502,8 +602,8 @@ def create_app(
         return {"state": next_state.model_dump(mode="json")}
 
     @app.post("/api/workspace/elements/{element_id:path}/mask/clear")
-    def post_clear_mask(element_id: str) -> dict:
-        root = app.state.workspace_root
+    def post_clear_mask(element_id: str, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         try:
             _get_element(state, element_id)
@@ -531,8 +631,12 @@ def create_app(
         return {"state": next_state.model_dump(mode="json")}
 
     @app.post("/api/workspace/elements/{element_id:path}/repair/missing-mask")
-    def post_missing_mask(element_id: str, request: MissingMaskRequest) -> dict:
-        root = app.state.workspace_root
+    def post_missing_mask(
+        element_id: str,
+        request: MissingMaskRequest,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         element = _get_element(state, element_id)
 
@@ -564,15 +668,15 @@ def create_app(
         }
 
     @app.get("/api/workspace/elements/{element_id:path}/repair/metadata")
-    def get_repair_metadata(element_id: str) -> dict:
-        root = app.state.workspace_root
+    def get_repair_metadata(element_id: str, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         element = _get_element(state, element_id)
         return read_repair_metadata(root, element)
 
     @app.post("/api/workspace/elements/{element_id:path}/repair/task")
-    def post_repair_task(element_id: str) -> dict:
-        root = app.state.workspace_root
+    def post_repair_task(element_id: str, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         source_image = _require_source_image(root)
         element = _get_element(state, element_id)
@@ -600,8 +704,8 @@ def create_app(
         }
 
     @app.post("/api/workspace/elements/{element_id:path}/repair/validate")
-    def post_repair_validate(element_id: str) -> dict:
-        root = app.state.workspace_root
+    def post_repair_validate(element_id: str, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         element = _get_element(state, element_id)
         if not _is_repair_workflow_element(element):
@@ -653,7 +757,7 @@ def create_app(
         )
 
     @app.post("/api/workspace/detect")
-    def detect_workspace() -> WorkspaceState:
+    def detect_workspace(runId: str | None = None) -> WorkspaceState:
         provider = _get_detection_provider(app)
         if provider is None:
             detail = (
@@ -662,7 +766,7 @@ def create_app(
             )
             raise HTTPException(status_code=503, detail=detail)
 
-        root = app.state.workspace_root
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         if state.source is None:
             raise HTTPException(status_code=400, detail="Upload a source image before detection.")
@@ -727,14 +831,23 @@ def _detection_provider_factory_from_env() -> Callable[[], DetectionProvider] | 
     if not provider_name:
         return None
 
+    if provider_name == "demo":
+        return _create_demo_provider
+
     if provider_name != "grounding_dino":
         raise DetectionProviderNotConfigured(
             f"Unsupported detection provider {provider_name!r}. "
-            f"Set {DETECTION_PROVIDER_ENV}=grounding_dino."
+            f"Set {DETECTION_PROVIDER_ENV}=demo or {DETECTION_PROVIDER_ENV}=grounding_dino."
         )
 
     model_id = os.getenv(GROUNDING_DINO_MODEL_ENV, "").strip()
     return lambda: _create_grounding_dino_provider(model_id or None)
+
+
+def _create_demo_provider() -> DetectionProvider:
+    from art_pipeline.model_runners.demo import DemoDetectionProvider
+
+    return DemoDetectionProvider()
 
 
 def _create_grounding_dino_provider(model_id: str | None = None) -> DetectionProvider:
@@ -765,6 +878,123 @@ def _load_png(data: bytes) -> Image.Image:
     return image
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _runs_root(workspace_root: Path) -> Path:
+    return workspace_root / "runs"
+
+
+def _runs_index_path(workspace_root: Path) -> Path:
+    return _runs_root(workspace_root) / "index.json"
+
+
+def _run_root(workspace_root: Path, run_id: str) -> Path:
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise HTTPException(status_code=400, detail=f"Invalid processing record id: {run_id}.")
+    root = (_runs_root(workspace_root) / run_id).resolve()
+    try:
+        root.relative_to(_runs_root(workspace_root).resolve())
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Processing record not found.") from exc
+    return root
+
+
+def _resolve_workspace_root(workspace_root: Path, run_id: str | None) -> Path:
+    if not run_id:
+        return workspace_root
+
+    root = _run_root(workspace_root, run_id)
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="Processing record not found.")
+    return root
+
+
+def _next_run_id(workspace_root: Path, filename: str) -> str:
+    stem = Path(filename).stem or "source"
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "-", stem).strip("-_").lower() or "source"
+    slug = slug[:36]
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    base = f"run_{timestamp}_{slug}"
+    candidate = base
+    suffix = 2
+    while _run_root(workspace_root, candidate).exists():
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _read_runs(workspace_root: Path) -> list[WorkspaceRunSummary]:
+    index_path = _runs_index_path(workspace_root)
+    if not index_path.exists():
+        return []
+
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    raw_runs = payload.get("runs", []) if isinstance(payload, dict) else []
+    runs = [WorkspaceRunSummary.model_validate(run) for run in raw_runs]
+    return sorted(runs, key=lambda run: run.updatedAt, reverse=True)
+
+
+def _write_runs(workspace_root: Path, runs: list[WorkspaceRunSummary]) -> None:
+    index_path = _runs_index_path(workspace_root)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = index_path.with_suffix(".json.tmp")
+    temp_path.write_text(
+        json.dumps(
+            {"runs": [run.model_dump(mode="json") for run in runs]},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    os.replace(temp_path, index_path)
+
+
+def _upsert_run(workspace_root: Path, run: WorkspaceRunSummary) -> None:
+    existing = [current for current in _read_runs(workspace_root) if current.id != run.id]
+    _write_runs(workspace_root, [run, *existing])
+
+
+def _maybe_update_run_index(workspace_root: Path, state: WorkspaceState) -> None:
+    if workspace_root.parent.name != "runs":
+        return
+
+    base_root = workspace_root.parent.parent
+    run_id = workspace_root.name
+    runs = _read_runs(base_root)
+    next_runs: list[WorkspaceRunSummary] = []
+    changed = False
+    for run in runs:
+        if run.id != run_id:
+            next_runs.append(run)
+            continue
+        changed = True
+        next_runs.append(
+            run.model_copy(
+                update={
+                    "updatedAt": _utc_now(),
+                    "status": _derive_run_status(workspace_root, state),
+                    "elementCount": len(state.elements),
+                }
+            )
+        )
+
+    if changed:
+        _write_runs(base_root, next_runs)
+
+
+def _derive_run_status(workspace_root: Path, state: WorkspaceState) -> str:
+    if state.source is None:
+        return "pending"
+    if (workspace_root / "export" / "manifest.json").exists():
+        return "exported"
+    if any(element.status in {"extracted", "repair_pending", "repair_complete"} for element in state.elements):
+        return "extracting"
+    if state.elements:
+        return "reviewing"
+    return "uploaded"
+
+
 def _write_state(workspace_root: Path, state: WorkspaceState) -> None:
     state_path = _state_path(workspace_root)
     state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -774,6 +1004,7 @@ def _write_state(workspace_root: Path, state: WorkspaceState) -> None:
         encoding="utf-8",
     )
     os.replace(temp_path, state_path)
+    _maybe_update_run_index(workspace_root.resolve(), state)
 
 
 def _read_state(workspace_root: Path) -> WorkspaceState:

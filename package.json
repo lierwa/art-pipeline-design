@@ -1,0 +1,14 @@
+{
+  "name": "art-pipeline-v2-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install:all": "node scripts/install.mjs",
+    "install:all:model": "node scripts/install.mjs --model",
+    "download:model": "node scripts/download-model.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:demo": "node scripts/dev.mjs --demo",
+    "test:scripts": "node --test scripts/*.test.mjs"
+  }
+}

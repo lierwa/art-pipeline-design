@@ -435,6 +435,101 @@ async function drawRectangle(surface: HTMLElement, start: { x: number; y: number
 }
 
 describe("App", () => {
+  it("starts on a new pending workspace with processing records in a floating list", async () => {
+    const user = userEvent.setup();
+    const runsPayload = {
+      runs: [
+        {
+          id: "run_scene_001",
+          title: "scene-a.png",
+          sourceFilename: "scene-a.png",
+          createdAt: "2026-06-17T12:00:00+00:00",
+          updatedAt: "2026-06-17T12:01:00+00:00",
+          status: "uploaded",
+          elementCount: 0,
+        },
+      ],
+    };
+    const emptyRunsPayload = { runs: [] };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/runs" && (!init || init.method === "GET")) {
+        return jsonResponse(runsPayload);
+      }
+
+      if (input === "/api/workspace/state?runId=run_scene_001" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedStateWithoutElements);
+      }
+
+      if (input === "/api/workspace/runs/run_scene_001" && init?.method === "DELETE") {
+        return jsonResponse(emptyRunsPayload);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const pipelineRail = await screen.findByRole("navigation", { name: /pipeline stages/i });
+      expect(within(pipelineRail).queryByText(/processing records/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("scene-a.png")).not.toBeInTheDocument();
+      expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/upload png/i)).toBeInTheDocument();
+      expect(globalThis.fetch).not.toHaveBeenCalledWith("/api/workspace/state");
+
+      await user.click(screen.getByRole("button", { name: /processing records/i }));
+      const recordsList = await screen.findByRole("dialog", { name: /processing records/i });
+      expect(within(recordsList).getByText("scene-a.png")).toBeInTheDocument();
+
+      await user.click(within(recordsList).getByRole("button", { name: /open scene-a\.png processing record/i }));
+
+      expect(await screen.findByText(/original\.png - 120 x 90/i)).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: /workspace source/i })).toHaveAttribute(
+        "src",
+        expect.stringContaining("runId=run_scene_001"),
+      );
+
+      await user.click(screen.getByRole("button", { name: /processing records/i }));
+      const reopenedRecordsList = await screen.findByRole("dialog", { name: /processing records/i });
+      await user.click(
+        within(reopenedRecordsList).getByRole("button", { name: /delete scene-a\.png processing record/i }),
+      );
+
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "/api/workspace/runs/run_scene_001",
+          expect.objectContaining({ method: "DELETE" }),
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getAllByText(/processing record deleted/i).length).toBeGreaterThan(0);
+      });
+      expect(within(reopenedRecordsList).getByText(/no processing records/i)).toBeInTheDocument();
+      expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("declares shared UI libraries for icons, tooltips, and resizable panes", async () => {
+    // The app tsconfig omits Node typings, but this regression reads package metadata in Vitest.
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { readFileSync } = await import("node:fs");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { dirname, resolve } = await import("node:path");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { fileURLToPath } = await import("node:url");
+    const packageJson = JSON.parse(
+      readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../package.json"), "utf8"),
+    ) as { dependencies?: Record<string, string> };
+
+    expect(packageJson.dependencies).toEqual(expect.objectContaining({
+      "@radix-ui/react-tooltip": expect.any(String),
+      "lucide-react": expect.any(String),
+      "react-resizable-panels": expect.any(String),
+    }));
+  });
+
   it("allows the stacked shell to grow without clipping", async () => {
     // The app tsconfig omits Node typings, but this regression reads authored CSS in Vitest.
     // @ts-expect-error Test-only Node import without widening app compiler types.
@@ -454,12 +549,34 @@ describe("App", () => {
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto;/);
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*min-height:\s*auto;/);
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*overflow:\s*auto;/);
+    expect(responsiveCss).toMatch(/\.workbench-grid\s*\{[\s\S]*display:\s*grid\s*!important;/);
+    expect(responsiveCss).toMatch(/\.workbench-panel\s*\{[\s\S]*width:\s*100%\s*!important;[\s\S]*flex:\s*none\s*!important;/);
+    expect(responsiveCss).toMatch(/\.workbench-panel-resize-handle\s*\{[\s\S]*display:\s*none\s*!important;/);
 
-    expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*0\.95fr\)\s+minmax\(0,\s*0\.45fr\)\s+minmax\(0,\s*1\.05fr\);/);
+    expect(stylesheet).toMatch(/\.top-app-bar\s*\{[\s\S]*grid-template-columns:\s*228px\s+minmax\(200px,\s*260px\)\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.source-control\s*\{[\s\S]*cursor:\s*pointer;/);
+    expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/);
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.panel\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.right-review-panel\s+\.inspector-panel\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
     expect(stylesheet).toMatch(/\.asset-tree-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.right-review-panel\s+\.asset-tree-panel\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.asset-tree-select\s*\{[\s\S]*min-height:\s*34px;/);
+    expect(stylesheet).toMatch(/\.asset-tree-badges\s*\{[\s\S]*grid-column:\s*auto;/);
+    expect(stylesheet).toMatch(/\.asset-visibility-toggle\s+span\s*\{[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
+    expect(stylesheet).toMatch(/\.canvas-overlay-switches\s+\.overlay-toggle\s+input\s*\{[\s\S]*opacity:\s*0;/);
     expect(stylesheet).toMatch(/\.selection-action-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/);
+    expect(stylesheet).toMatch(/\.selection-action-panel\s*>\s*\.panel-header\s*\{[\s\S]*display:\s*none;/);
     expect(stylesheet).toMatch(/\.selection-action-panel\s+\.panel-body\s*\{[\s\S]*overflow:\s*auto;/);
+    expect(stylesheet).toMatch(/\.selection-action-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
+    expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/);
+    expect(stylesheet).toMatch(/\.canvas-panel\s*>\s*\.canvas-header\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
+    expect(stylesheet).toMatch(/\.canvas-stage\s*\{[\s\S]*align-items:\s*flex-start;/);
+    expect(stylesheet).toMatch(/\.canvas-artboard\s*\{[\s\S]*width:\s*min\(100%,\s*calc\(\(100vh - 100px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
+    expect(stylesheet).toMatch(/\.workbench-panel-resize-handle\s*\{/);
+    expect(stylesheet).toMatch(/\.canvas-pan-viewport\s*\{[\s\S]*transform:/);
+    expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-workspace\s*>\s*\.canvas-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
+    expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.selection-action-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+    expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-artboard\s*\{[\s\S]*width:\s*min\(calc\(100vw - 1\.5rem\),\s*calc\(\(100vh - 260px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
   });
 
   it("renders pipeline rail with stage progress", async () => {
@@ -476,7 +593,8 @@ describe("App", () => {
       const topAppBar = await screen.findByRole("banner");
       expect(within(topAppBar).getByText("Art Asset Pipeline")).toBeInTheDocument();
       expect(within(topAppBar).getByText("original.png")).toBeInTheDocument();
-      expect(within(topAppBar).getByRole("combobox", { name: /source file/i })).toHaveValue("original.png");
+      expect(within(topAppBar).getByLabelText(/upload png/i)).toHaveAttribute("type", "file");
+      expect(within(topAppBar).queryByRole("combobox", { name: /source file/i })).not.toBeInTheDocument();
 
       const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
       expect(within(pipelineRail).getByText("Upload")).toBeInTheDocument();
@@ -485,6 +603,102 @@ describe("App", () => {
       expect(within(pipelineRail).getByText("Segment")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Export")).toBeInTheDocument();
       expect(within(pipelineRail).getByText(/1 candidate/i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("renders draggable separators for the three workbench columns", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.getByRole("separator", { name: /resize pipeline rail/i })).toBeInTheDocument();
+      expect(screen.getByRole("separator", { name: /resize review panel/i })).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("renders reference-style model status metric details", async () => {
+    const statusState = {
+      source: loadedState.source,
+      elements: [
+        loadedState.elements[0],
+        {
+          ...createdManualElement,
+          id: "element_accepted_002",
+          label: "Manual Lamp",
+          sourceProvider: "manual",
+          sourcePrompt: "Manual Lamp",
+          history: [],
+          mergedInto: null,
+          exportParent: false,
+        },
+        {
+          ...detectedElement,
+          id: "element_proposal_001",
+          status: "proposal",
+          name: "plant",
+          label: "plant",
+        },
+        {
+          ...detectedElement,
+          id: "element_proposal_002",
+          status: "edited",
+          name: "mirror",
+          label: "mirror",
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(statusState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const providerLabel = await screen.findByText("Model Provider");
+      const statusStrip = providerLabel.closest("footer");
+      expect(statusStrip).not.toBeNull();
+      const metrics = within(statusStrip as HTMLElement);
+
+      expect(metrics.getByText("Total")).toBeInTheDocument();
+      expect(metrics.getByText("50%")).toBeInTheDocument();
+      expect(metrics.getByText("100% of reviewed")).toBeInTheDocument();
+      expect(metrics.getByText("50% of total")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("keeps the uploaded-source workspace focused on the canvas before detection", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedStateWithoutElements);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.getAllByRole("button", { name: /run detection/i })).toHaveLength(1);
+      expect(screen.getByText(/model proposals pending/i)).toBeInTheDocument();
+      expect(screen.queryByText(/extraction preview/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/export pack/i)).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -532,12 +746,84 @@ describe("App", () => {
 
       const canvasToolbar = await screen.findByRole("toolbar", { name: /canvas tools/i });
       expect(within(canvasToolbar).getByRole("button", { name: /^select$/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /edit box/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^draw/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^split/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^merge/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^delete/i })).toBeDisabled();
-      expect(within(canvasToolbar).getByText("100%")).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^edit box$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^draw element$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^split selected$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^merge$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^delete$/i })).toBeDisabled();
+      expect(within(canvasToolbar).queryByText(/^Select$/i)).not.toBeInTheDocument();
+      expect(within(canvasToolbar).queryByText(/^Draw$/i)).not.toBeInTheDocument();
+      expect(within(canvasToolbar).getByText("80%")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("zooms and enters pan mode from the canvas toolbar", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /zoom in/i }));
+      expect(within(canvasToolbar).getByText("90%")).toBeInTheDocument();
+
+      const panButton = within(canvasToolbar).getByRole("button", { name: /pan canvas/i });
+      await user.click(panButton);
+      expect(panButton).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByTestId("canvas-area")).toHaveAttribute("data-pan-mode", "true");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("zooms with the canvas wheel and switches canvas tools with shortcuts", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const canvasArea = screen.getByTestId("canvas-area");
+      fireEvent.wheel(canvasArea, { deltaY: -120 });
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      expect(within(canvasToolbar).getByText("90%")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "w" });
+      expect(await screen.findByTestId("canvas-edit-region-element_001")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: "e" });
+      expect(within(canvasToolbar).getByRole("button", { name: /draw element/i })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+
+      fireEvent.keyDown(window, { key: "r" });
+      expect(within(canvasToolbar).getByRole("button", { name: /pan canvas/i })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(screen.getByTestId("canvas-area")).toHaveAttribute("data-pan-mode", "true");
+
+      fireEvent.keyDown(window, { key: "q" });
+      expect(within(canvasToolbar).getByRole("button", { name: /^select/i })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
     } finally {
       restoreFetch();
     }
@@ -570,6 +856,24 @@ describe("App", () => {
     }
   });
 
+  it("does not show the selected asset thumbnail on top of the canvas by default", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      const { container } = render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(container.querySelector(".overlay-thumb")).toBeNull();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("enters box editing from the canvas toolbar edit button", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -587,6 +891,42 @@ describe("App", () => {
       await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
 
       expect(await screen.findByTestId("resize-handle-element_001-se")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("undoes and redoes unsaved canvas box edits before applying them", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
+      editRegion.focus();
+      fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
+
+      expect(screen.getByRole("group", { name: /confirm region 1 box edit/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/bbox x/i)).toHaveValue(22);
+
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+
+      expect(screen.queryByRole("group", { name: /confirm region 1 box edit/i })).not.toBeInTheDocument();
+      expect(screen.getByLabelText(/bbox x/i)).toHaveValue(12);
+
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+
+      expect(screen.getByRole("group", { name: /confirm region 1 box edit/i })).toBeInTheDocument();
+      expect(screen.getByLabelText(/bbox x/i)).toHaveValue(22);
     } finally {
       restoreFetch();
     }
@@ -667,6 +1007,72 @@ describe("App", () => {
       expect((patchRequest as { bbox: { w: number; h: number } }).bbox.h).toBeGreaterThan(32);
     } finally {
       window.PointerEvent = originalPointerEvent;
+      restoreFetch();
+    }
+  });
+
+  it("confirms or cancels canvas box edits and refreshes the selected thumbnail", async () => {
+    const user = userEvent.setup();
+    const patchedElement = {
+      ...loadedState.elements[0],
+      status: "edited",
+      bbox: { x: 22, y: 16, w: 30, h: 32 },
+      thumbnail: "elements/element_001/thumb.png",
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: loadedState.source,
+            elements: [patchedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
+      editRegion.focus();
+      fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
+
+      expect(screen.getByRole("group", { name: /confirm region 1 box edit/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /apply box edit/i })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: /cancel box edit/i }));
+
+      expect(patchRequest).toBeNull();
+      expect(screen.queryByRole("group", { name: /confirm region 1 box edit/i })).not.toBeInTheDocument();
+
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const nextEditRegion = await screen.findByTestId("canvas-edit-region-element_001");
+      nextEditRegion.focus();
+      fireEvent.keyDown(nextEditRegion, { key: "ArrowRight", shiftKey: true });
+      await user.click(screen.getByRole("button", { name: /apply box edit/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({
+          bbox: { x: 22, y: 16, w: 30, h: 32 },
+        });
+      });
+      expect(screen.getByAltText("Region 1 thumbnail")).toHaveAttribute(
+        "src",
+        expect.stringMatching(/^\/api\/workspace\/assets\/elements\/element_001\/thumb\.png\?cache=\d+$/),
+      );
+      expect(screen.queryByRole("group", { name: /confirm region 1 box edit/i })).not.toBeInTheDocument();
+    } finally {
       restoreFetch();
     }
   });
@@ -771,6 +1177,51 @@ describe("App", () => {
     }
   });
 
+  it("renames the selected asset from the contextual action panel", async () => {
+    const user = userEvent.setup();
+    const renamedElement = {
+      ...loadedState.elements[0],
+      name: "Main tub",
+      label: "Main tub",
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: renamedElement,
+          state: {
+            source: loadedState.source,
+            elements: [renamedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const nameField = screen.getByLabelText(/selected asset name/i);
+      fireEvent.change(nameField, { target: { value: "Main tub" } });
+      expect(nameField).toHaveValue("Main tub");
+      await user.click(screen.getByRole("button", { name: /save name/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({ label: "Main tub" });
+      });
+      expect(await screen.findAllByText(/element details updated/i)).toHaveLength(2);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders a merge preview outline for multiple selected assets", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -822,6 +1273,33 @@ describe("App", () => {
     }
   });
 
+  it("toggles merge selection from the canvas with shift-click", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      setCanvasRect(screen.getByTestId("canvas-artboard"));
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      fireEvent.mouseDown(surface, { clientX: 100, clientY: 120, shiftKey: true, button: 0 });
+      fireEvent.mouseDown(surface, { clientX: 270, clientY: 130, shiftKey: true, button: 0 });
+
+      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).toBeChecked();
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).getByText(/merge selection/i)).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /merge into one asset/i })).toBeEnabled();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders parent children in the asset tree and hides merged-away sources", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -860,7 +1338,7 @@ describe("App", () => {
       expect(within(actionPanel).getByRole("button", { name: /^edit box$/i })).toBeInTheDocument();
       expect(within(actionPanel).getByRole("button", { name: /^add child$/i })).toBeInTheDocument();
       expect(within(actionPanel).getByRole("button", { name: /run detect inside/i })).toBeDisabled();
-      expect(within(actionPanel).getByRole("button", { name: /^split parent$/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /^split asset$/i })).toBeInTheDocument();
       expect(within(actionPanel).getByRole("button", { name: /^accept$/i })).toBeInTheDocument();
       expect(within(actionPanel).getByRole("button", { name: /^reject$/i })).toBeInTheDocument();
     } finally {
@@ -868,7 +1346,7 @@ describe("App", () => {
     }
   });
 
-  it("shows run detection in selection actions when nothing is selected", async () => {
+  it("uses the top bar as the only run detection CTA when nothing is selected", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(loadedStateWithoutElements);
@@ -880,7 +1358,9 @@ describe("App", () => {
       render(<App />);
 
       const actionPanel = await screen.findByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
+      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /run detection/i })).toHaveLength(1);
     } finally {
       restoreFetch();
     }
@@ -908,7 +1388,8 @@ describe("App", () => {
       expect(screen.queryByText("Rejected Vase")).not.toBeInTheDocument();
       expect(screen.queryByText(/rejected or merged assets are shown for review only/i)).not.toBeInTheDocument();
       const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
+      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -931,7 +1412,8 @@ describe("App", () => {
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
       const actionPanel = screen.getByRole("region", { name: /selection actions/i });
       expect(within(actionPanel).queryByRole("button", { name: /^edit box$/i })).not.toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
+      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1178,8 +1660,9 @@ describe("App", () => {
       await drawRectangle(surface, { x: 100, y: 90 }, { x: 220, y: 190 });
 
       const nameField = screen.getByLabelText(/new element name/i);
-      await user.clear(nameField);
-      await user.type(nameField, "Manual Lamp");
+      expect(nameField.closest(".draft-inline-editor")).not.toBeNull();
+      expect(screen.queryByText(/Draft region/i)).not.toBeInTheDocument();
+      fireEvent.change(nameField, { target: { value: "Manual Lamp" } });
       await user.click(screen.getByRole("button", { name: /create element/i }));
 
       await screen.findByAltText("Manual Lamp thumbnail");
@@ -1230,8 +1713,7 @@ describe("App", () => {
       await drawRectangle(surface, { x: 80, y: 100 }, { x: 130, y: 160 });
 
       const nameField = screen.getByLabelText(/new element name/i);
-      await user.clear(nameField);
-      await user.type(nameField, "Shelf Handle");
+      fireEvent.change(nameField, { target: { value: "Shelf Handle" } });
       await user.click(screen.getByRole("button", { name: /create child/i }));
 
       await screen.findByAltText("Shelf Handle thumbnail");
@@ -1298,10 +1780,8 @@ describe("App", () => {
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
       const visibilityField = screen.getByRole("checkbox", { name: /element visible/i });
 
-      await user.clear(nameField);
-      await user.type(nameField, "Hero Shelf");
-      await user.clear(bboxWidthField);
-      await user.type(bboxWidthField, "34");
+      fireEvent.change(nameField, { target: { value: "Hero Shelf" } });
+      fireEvent.change(bboxWidthField, { target: { value: "34" } });
       await user.click(visibilityField);
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
@@ -1407,8 +1887,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
-      await user.clear(bboxWidthField);
-      await user.type(bboxWidthField, "34");
+      fireEvent.change(bboxWidthField, { target: { value: "34" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
       await waitFor(() => {
@@ -1453,9 +1932,8 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
-      await user.clear(bboxWidthField);
-      await user.type(bboxWidthField, "34");
-      await user.type(screen.getByLabelText(/element notes/i), "Needs legacy review");
+      fireEvent.change(bboxWidthField, { target: { value: "34" } });
+      fireEvent.change(screen.getByLabelText(/element notes/i), { target: { value: "Needs legacy review" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
       await waitFor(() => {
@@ -1491,8 +1969,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
-      await user.clear(bboxWidthField);
-      await user.type(bboxWidthField, "0");
+      fireEvent.change(bboxWidthField, { target: { value: "0" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
       expect(await screen.findByText(/element element_001 bbox width\/height must be > 0\./i)).toBeInTheDocument();
@@ -1530,8 +2007,7 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
       const labelField = screen.getByLabelText(/merge label/i);
-      await user.clear(labelField);
-      await user.type(labelField, "Fixture group");
+      fireEvent.change(labelField, { target: { value: "Fixture group" } });
       await user.click(screen.getByRole("button", { name: /merge selected/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1767,7 +2243,8 @@ describe("App", () => {
       await drawRectangle(surface, { x: 60, y: 80 }, { x: 130, y: 240 });
       await drawRectangle(surface, { x: 130, y: 80 }, { x: 210, y: 240 });
 
-      await user.click(await screen.findByRole("button", { name: /apply split/i }));
+      expect(await screen.findByRole("group", { name: /split draft controls/i })).toBeInTheDocument();
+      await user.click(await screen.findByRole("button", { name: /apply split regions/i }));
 
       await screen.findByAltText("Left Shelf thumbnail");
       expect(screen.getByText("split_parent")).toBeInTheDocument();
@@ -1778,6 +2255,68 @@ describe("App", () => {
 
       expect(screen.queryByTestId("overlay-box-element_002")).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-box-element_003")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("undoes and redoes persisted workspace operations from the history stack", async () => {
+    const user = userEvent.setup();
+    const acceptedState = {
+      source: detectedState.source,
+      elements: [
+        {
+          ...detectedElement,
+          status: "accepted",
+          mode: "visible_only",
+          visible: true,
+        },
+      ],
+    };
+    const savedStates: unknown[] = [];
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        const parsed = JSON.parse(String(init.body));
+        savedStates.push(parsed);
+        return jsonResponse(parsed);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("cabinet thumbnail");
+
+      await user.click(screen.getByRole("button", { name: /^accept$/i }));
+      expect(await screen.findAllByText(/element accepted\./i)).toHaveLength(2);
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      const undoButton = within(canvasToolbar).getByRole("button", { name: /undo/i });
+      const redoButton = within(canvasToolbar).getByRole("button", { name: /redo/i });
+      expect(undoButton).toBeEnabled();
+      expect(redoButton).toBeDisabled();
+
+      await user.click(undoButton);
+      expect(await screen.findAllByText(/undone\./i)).toHaveLength(2);
+      expect(screen.getByText("model_detected")).toBeInTheDocument();
+      expect(redoButton).toBeEnabled();
+
+      fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+      await waitFor(() => {
+        expect(screen.getAllByText(/redone\./i)).toHaveLength(2);
+      });
+      expect(screen.getByText("accepted")).toBeInTheDocument();
+
+      expect(savedStates).toEqual([
+        acceptedState,
+        detectedState,
+        acceptedState,
+      ]);
     } finally {
       restoreFetch();
     }
@@ -1805,7 +2344,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const descriptionField = screen.getByLabelText(/split selected element into/i);
-      await user.type(descriptionField, "frame and glass");
+      fireEvent.change(descriptionField, { target: { value: "frame and glass" } });
       await user.click(screen.getByRole("button", { name: /create split request/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1960,7 +2499,8 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: /export asset pack/i }));
 
       expect(await screen.findByText(/export source file is missing\./i)).toBeInTheDocument();
-      expect(screen.getByText(/no export yet/i)).toBeInTheDocument();
+      expect(screen.queryByText(/no export yet/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /export pack/i })).not.toBeInTheDocument();
       expect(screen.queryByAltText("Export contact sheet preview")).not.toBeInTheDocument();
       expect(screen.queryByText("D:/work/art-pipeline-v2-demo/workspace/export")).not.toBeInTheDocument();
     } finally {

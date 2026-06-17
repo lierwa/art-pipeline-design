@@ -14,7 +14,11 @@ type PipelineStage = {
   state: StageState;
 };
 
-export function PipelineRail({ source, elements, exportSummary }: PipelineRailProps) {
+export function PipelineRail({
+  source,
+  elements,
+  exportSummary,
+}: PipelineRailProps) {
   const stages = buildStages(source, elements, exportSummary);
 
   return (

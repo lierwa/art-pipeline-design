@@ -81,6 +81,86 @@ def test_upload_png_initializes_workspace_state(client: TestClient, tmp_path: Pa
     assert state_response.json()["source"]["path"] == "source/original.png"
 
 
+def test_upload_run_creates_processing_record_without_restoring_legacy_state(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    response = client.post(
+        "/api/workspace/runs",
+        files={"file": ("scene-a.png", make_png_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    run = payload["run"]
+    assert run["id"].startswith("run_")
+    assert run["sourceFilename"] == "scene-a.png"
+    assert run["elementCount"] == 0
+    assert payload["state"]["source"]["path"] == "source/original.png"
+    assert payload["state"]["elements"] == []
+
+    run_root = tmp_path / "workspace" / "runs" / run["id"]
+    assert (run_root / "source" / "original.png").exists()
+    assert (run_root / "state.json").exists()
+    assert not (tmp_path / "workspace" / "state.json").exists()
+
+    runs_response = client.get("/api/workspace/runs")
+    assert runs_response.status_code == 200
+    assert runs_response.json()["runs"][0]["id"] == run["id"]
+
+    legacy_state_response = client.get("/api/workspace/state")
+    assert legacy_state_response.status_code == 200
+    assert legacy_state_response.json() == {"source": None, "elements": []}
+
+    scoped_state_response = client.get(f"/api/workspace/state?runId={run['id']}")
+    assert scoped_state_response.status_code == 200
+    assert scoped_state_response.json()["source"]["width"] == 2
+
+    scoped_source_response = client.get(f"/api/workspace/source?runId={run['id']}")
+    assert scoped_source_response.status_code == 200
+    assert scoped_source_response.headers["content-type"] == "image/png"
+
+    scoped_asset_response = client.get(
+        f"/api/workspace/assets/source/original.png?runId={run['id']}",
+    )
+    assert scoped_asset_response.status_code == 200
+    assert scoped_asset_response.headers["content-type"] == "image/png"
+
+
+def test_delete_run_removes_processing_record_and_files(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    create_response = client.post(
+        "/api/workspace/runs",
+        files={"file": ("scene-a.png", make_png_bytes(), "image/png")},
+    )
+    run = create_response.json()["run"]
+    run_root = tmp_path / "workspace" / "runs" / run["id"]
+    assert run_root.exists()
+
+    delete_response = client.delete(f"/api/workspace/runs/{run['id']}")
+
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"runs": []}
+    assert not run_root.exists()
+
+    runs_response = client.get("/api/workspace/runs")
+    assert runs_response.status_code == 200
+    assert runs_response.json() == {"runs": []}
+
+    scoped_state_response = client.get(f"/api/workspace/state?runId={run['id']}")
+    assert scoped_state_response.status_code == 404
+
+
+def test_delete_run_rejects_invalid_or_missing_record(client: TestClient) -> None:
+    invalid_response = client.delete("/api/workspace/runs/not-a-run")
+    missing_response = client.delete("/api/workspace/runs/run_missing")
+
+    assert invalid_response.status_code == 400
+    assert missing_response.status_code == 404
+
+
 def test_workspace_assets_rejects_non_image_files(
     client: TestClient,
     tmp_path: Path,

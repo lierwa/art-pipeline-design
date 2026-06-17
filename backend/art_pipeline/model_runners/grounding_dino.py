@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 from typing import Any
 
@@ -16,10 +17,11 @@ except ImportError as exc:  # pragma: no cover - exercised through API config te
 
 class GroundingDinoProvider:
     name = "grounding_dino"
+    default_model_id = "IDEA-Research/grounding-dino-tiny"
 
     def __init__(
         self,
-        model_id: str = "IDEA-Research/grounding-dino-tiny",
+        model_id: str = default_model_id,
         box_threshold: float = 0.35,
         text_threshold: float = 0.25,
     ) -> None:
@@ -48,10 +50,14 @@ class GroundingDinoProvider:
             outputs = self.model(**inputs)
 
         target_sizes = torch.tensor([image.size[::-1]], device=self.device)
+        threshold_kwargs = _grounding_dino_threshold_kwargs(
+            self.processor.post_process_grounded_object_detection,
+            self.box_threshold,
+        )
         processed = self.processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=self.box_threshold,
+            **threshold_kwargs,
             text_threshold=self.text_threshold,
             target_sizes=target_sizes,
         )[0]
@@ -83,6 +89,13 @@ def _grounding_dino_prompt(vocabulary: list[str]) -> str:
     if not labels:
         raise ValueError("Grounding DINO vocabulary must not be empty.")
     return ". ".join(labels) + "."
+
+
+def _grounding_dino_threshold_kwargs(post_process, threshold: float) -> dict[str, float]:
+    parameters = inspect.signature(post_process).parameters
+    if "box_threshold" in parameters:
+        return {"box_threshold": threshold}
+    return {"threshold": threshold}
 
 
 def _clamped_bbox(

@@ -6,6 +6,8 @@ type AssetTreePanelProps = {
   elements: WorkspaceElement[];
   selectedElementId: string | null;
   selectedElementIds: SelectedElementIds;
+  workspaceRunId: string | null;
+  assetCacheKey: number;
   showRejected: boolean;
   onSelectElement: (elementId: string) => void;
   onToggleMergeSelection: (elementId: string) => void;
@@ -22,6 +24,8 @@ export function AssetTreePanel({
   elements,
   selectedElementId,
   selectedElementIds,
+  workspaceRunId,
+  assetCacheKey,
   showRejected,
   onSelectElement,
   onToggleMergeSelection,
@@ -62,7 +66,7 @@ export function AssetTreePanel({
     const canAct = isActiveCandidate(element);
     const canMerge = canAct && element.visible;
     const labelId = `asset-tree-label-${element.id}`;
-    const thumbUrl = thumbnailUrl(element.thumbnail);
+    const thumbUrl = thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId);
 
     return (
       <div
@@ -150,10 +154,10 @@ export function AssetTreePanel({
     <aside className="panel asset-tree-panel">
       <div className="panel-header">
         <h2>
-          Assets
+          Assets ({displayElements.length})
           <span className="visually-hidden"> Elements</span>
         </h2>
-        <span>{displayElements.length}</span>
+        <span className="panel-header-kicker">Review queue</span>
       </div>
       <div className="asset-tree-summary" aria-label="Asset review summary">
         <span><strong>{summary.reviewed}</strong> Reviewed</span>
@@ -177,7 +181,16 @@ export function AssetTreePanel({
             {tree.map((node) => renderNode(node, 0))}
           </div>
         ) : (
-          <p className="panel-copy">No assets yet. Upload a scene to begin.</p>
+          <div className="asset-empty-state">
+            <span className="asset-empty-icon" aria-hidden="true" />
+            <strong>Model proposals pending</strong>
+            <p>Run detection to fill this queue with reviewable candidates, confidence scores, and source tags.</p>
+            <div className="asset-empty-skeleton" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+          </div>
         )}
       </div>
     </aside>

@@ -1,4 +1,4 @@
-import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useRef } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, WheelEvent, useEffect, useRef } from "react";
 
 import {
   Box,
@@ -26,16 +26,28 @@ type CanvasStageProps = {
   splitRegions: DraftRegion[];
   missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
-  canSplit: boolean;
+  workspaceRunId: string | null;
   canDrawMissingMask: boolean;
-  onToggleOverlay: (key: keyof OverlayState) => void;
-  onSelectTool: (tool: CanvasTool) => void;
+  hasUnsavedBoxEdit: boolean;
+  zoomPercent: number;
+  isPanMode: boolean;
+  panOffset: { x: number; y: number };
+  manualElementName: string;
+  canCreateChildFromDraft: boolean;
   onSelectElement: (elementId: string) => void;
+  onToggleMergeSelection: (elementId: string) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
+  onZoomByWheel: (direction: 1 | -1) => void;
+  onPanChange: (deltaX: number, deltaY: number) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
   onMissingMaskRegionChange: (region: DraftRegion | null) => void;
   onCompleteMissingMaskRegion: (region: DraftRegion) => void;
+  onManualElementNameChange: (value: string) => void;
+  onCreateElement: (name: string) => void;
+  onCreateChildElement: (name: string) => void;
+  onConfirmBoxEdit: () => void;
+  onCancelBoxEdit: () => void;
   onClearDrafts: () => void;
   onApplySplit: () => void;
 };
@@ -83,20 +95,33 @@ export function CanvasStage({
   splitRegions,
   missingMaskRegion,
   assetCacheKey,
-  canSplit,
+  workspaceRunId,
   canDrawMissingMask,
-  onToggleOverlay,
-  onSelectTool,
+  hasUnsavedBoxEdit,
+  zoomPercent,
+  isPanMode,
+  panOffset,
+  manualElementName,
+  canCreateChildFromDraft,
   onSelectElement,
+  onToggleMergeSelection,
   onBoxDraftChange,
+  onZoomByWheel,
+  onPanChange,
   onDraftRegionChange,
   onAddSplitRegion,
   onMissingMaskRegionChange,
   onCompleteMissingMaskRegion,
+  onManualElementNameChange,
+  onCreateElement,
+  onCreateChildElement,
+  onConfirmBoxEdit,
+  onCancelBoxEdit,
   onClearDrafts,
   onApplySplit,
 }: CanvasStageProps) {
   const pointerDraftRef = useRef<PointerDraft | null>(null);
+  const panDragRef = useRef<{ clientX: number; clientY: number } | null>(null);
 
   function beginDraw(event: DrawingEvent) {
     if (!source || tool === "select") {
@@ -189,118 +214,100 @@ export function CanvasStage({
       splitRegions={splitRegions}
       missingMaskRegion={missingMaskRegion}
       assetCacheKey={assetCacheKey}
+      workspaceRunId={workspaceRunId}
       tool={tool}
+      isPanMode={isPanMode}
+      manualElementName={manualElementName}
+      canCreateChildFromDraft={canCreateChildFromDraft}
       onSelectElement={onSelectElement}
+      onToggleMergeSelection={onToggleMergeSelection}
       onBoxDraftChange={onBoxDraftChange}
+      onManualElementNameChange={onManualElementNameChange}
+      onCreateElement={onCreateElement}
+      onCreateChildElement={onCreateChildElement}
+      onConfirmBoxEdit={onConfirmBoxEdit}
+      onCancelBoxEdit={onCancelBoxEdit}
+      onClearDrafts={onClearDrafts}
+      onApplySplit={onApplySplit}
       onPointerDown={beginDraw}
       onPointerMove={updateDraw}
       onPointerUp={endDraw}
+      hasUnsavedBoxEdit={hasUnsavedBoxEdit}
     />
   ) : null;
 
+  function beginPan(event: PointerEvent<HTMLDivElement>) {
+    if (!isPanMode || !source) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    panDragRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  }
+
+  function updatePan(event: PointerEvent<HTMLDivElement>) {
+    if (!isPanMode || !panDragRef.current) {
+      return;
+    }
+    event.preventDefault();
+    const deltaX = event.clientX - panDragRef.current.clientX;
+    const deltaY = event.clientY - panDragRef.current.clientY;
+    panDragRef.current = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+    onPanChange(deltaX, deltaY);
+  }
+
+  function endPan() {
+    panDragRef.current = null;
+  }
+
+  function handleWheel(event: WheelEvent<HTMLDivElement>) {
+    if (!source) {
+      return;
+    }
+
+    event.preventDefault();
+    onZoomByWheel(event.deltaY < 0 ? 1 : -1);
+  }
+
   return (
-    <section className="canvas-panel" data-testid="canvas-area">
+    <section
+      className="canvas-panel"
+      data-testid="canvas-area"
+      data-pan-mode={isPanMode ? "true" : "false"}
+      onWheel={handleWheel}
+    >
       <div className="canvas-header">
         <h2>Canvas</h2>
         <span>{sourceDetails}</span>
       </div>
-      <div className="canvas-toolbar">
-        <label className="panel-checkbox">
-          <input
-            aria-label="Show boxes"
-            type="checkbox"
-            checked={overlays.showBoxes}
-            onChange={() => onToggleOverlay("showBoxes")}
-          />
-          <span>Show boxes</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            aria-label="Show names"
-            type="checkbox"
-            checked={overlays.showNames}
-            onChange={() => onToggleOverlay("showNames")}
-          />
-          <span>Show names</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            aria-label="Show thumbnails and selection"
-            type="checkbox"
-            checked={overlays.showThumbs}
-            onChange={() => onToggleOverlay("showThumbs")}
-          />
-          <span>Show thumbnails/selection</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            aria-label="Show masks"
-            type="checkbox"
-            checked={overlays.showMasks}
-            onChange={() => onToggleOverlay("showMasks")}
-          />
-          <span>Show masks</span>
-        </label>
-        <div className="canvas-tool-group">
-          <button
-            type="button"
-            className={tool === "select" ? "is-active" : ""}
-            onClick={() => onSelectTool("select")}
+      <div
+        className="canvas-stage"
+        onPointerDown={beginPan}
+        onPointerMove={updatePan}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+      >
+        {artboard ? (
+          <div
+            className="canvas-pan-viewport"
+            style={{
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomPercent / 80})`,
+            }}
           >
-            Select
-          </button>
-          <button
-            type="button"
-            className={tool === "draw" ? "is-active" : ""}
-            disabled={!source}
-            onClick={() => onSelectTool("draw")}
-          >
-            Draw element
-          </button>
-          <button
-            type="button"
-            className={tool === "split" ? "is-active" : ""}
-            disabled={!source || !canSplit}
-            onClick={() => onSelectTool("split")}
-          >
-            Split selected
-          </button>
-          <button
-            type="button"
-            className={tool === "missing-mask" ? "is-active" : ""}
-            disabled={!source || !canDrawMissingMask}
-            onClick={() => onSelectTool("missing-mask")}
-          >
-            Missing mask
-          </button>
-        </div>
-      </div>
-      <div className="canvas-stage">
-        {artboard ?? (
+            {artboard}
+          </div>
+        ) : (
           <div className="canvas-empty">
             <p>Upload a PNG to populate the workbench canvas.</p>
           </div>
         )}
       </div>
-      {(draftRegion || splitRegions.length > 0 || missingMaskRegion) && (
-        <div className="canvas-draft-panel">
-          {draftRegion ? <span>Draft region {draftRegion.bbox.w} x {draftRegion.bbox.h}</span> : null}
-          {splitRegions.length > 0 ? <span>Split regions: {splitRegions.length}</span> : null}
-          {missingMaskRegion ? (
-            <span>Missing mask draft {missingMaskRegion.bbox.w} x {missingMaskRegion.bbox.h}</span>
-          ) : null}
-          <div className="canvas-draft-actions">
-            <button type="button" onClick={onClearDrafts}>
-              Clear drafts
-            </button>
-            {splitRegions.length > 0 ? (
-              <button type="button" onClick={onApplySplit}>
-                Apply split
-              </button>
-            ) : null}
-          </div>
-        </div>
-      )}
     </section>
   );
 }
@@ -318,9 +325,22 @@ type CanvasArtboardProps = {
   splitRegions: DraftRegion[];
   missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
+  workspaceRunId: string | null;
   tool: CanvasTool;
+  isPanMode: boolean;
+  manualElementName: string;
+  canCreateChildFromDraft: boolean;
+  hasUnsavedBoxEdit: boolean;
   onSelectElement: (elementId: string) => void;
+  onToggleMergeSelection: (elementId: string) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
+  onManualElementNameChange: (value: string) => void;
+  onCreateElement: (name: string) => void;
+  onCreateChildElement: (name: string) => void;
+  onConfirmBoxEdit: () => void;
+  onCancelBoxEdit: () => void;
+  onClearDrafts: () => void;
+  onApplySplit: () => void;
   onPointerDown: (event: DrawingEvent) => void;
   onPointerMove: (event: DrawingEvent) => void;
   onPointerUp: (event: DrawingEvent) => void;
@@ -339,20 +359,42 @@ function CanvasArtboard({
   splitRegions,
   missingMaskRegion,
   assetCacheKey,
+  workspaceRunId,
   tool,
+  isPanMode,
+  manualElementName,
+  canCreateChildFromDraft,
+  hasUnsavedBoxEdit,
   onSelectElement,
+  onToggleMergeSelection,
   onBoxDraftChange,
+  onManualElementNameChange,
+  onCreateElement,
+  onCreateChildElement,
+  onConfirmBoxEdit,
+  onCancelBoxEdit,
+  onClearDrafts,
+  onApplySplit,
   onPointerDown,
   onPointerMove,
   onPointerUp,
 }: CanvasArtboardProps) {
   const artboardRef = useRef<HTMLDivElement | null>(null);
   const boxEditDragRef = useRef<BoxEditDrag | null>(null);
+  const draftNameInputRef = useRef<HTMLInputElement | null>(null);
 
   function handleDrawingPointerDown(event: DrawingEvent) {
+    if (isPanMode) {
+      return;
+    }
     if (tool === "select") {
       const hitElement = findTopmostHitElement(event);
-      if (hitElement) {
+      if (!hitElement) {
+        return;
+      }
+      if (event.shiftKey || event.ctrlKey || event.metaKey) {
+        onToggleMergeSelection(hitElement.id);
+      } else {
         onSelectElement(hitElement.id);
       }
       return;
@@ -549,7 +591,8 @@ function CanvasArtboard({
       className="canvas-artboard"
       style={{
         aspectRatio: `${source.width} / ${source.height}`,
-      }}
+        "--source-aspect": source.width / source.height,
+      } as CSSProperties}
       onPointerMove={updateBoxEdit}
       onPointerUp={endBoxEdit}
       onPointerCancel={endBoxEdit}
@@ -567,7 +610,7 @@ function CanvasArtboard({
               alt=""
               data-testid={`overlay-mask-${element.id}`}
               className="overlay-mask-image"
-              src={workspaceAssetUrl(element.mask, assetCacheKey) ?? undefined}
+              src={workspaceAssetUrl(element.mask, assetCacheKey, workspaceRunId) ?? undefined}
               style={boxToPercentStyle(element.canvas, source)}
             />
           ) : null,
@@ -609,7 +652,7 @@ function CanvasArtboard({
                 <img
                   alt=""
                   className="overlay-thumb"
-                  src={thumbnailUrl(element.thumbnail) ?? undefined}
+                  src={thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId) ?? undefined}
                 />
               ) : null}
             </div>
@@ -649,6 +692,40 @@ function CanvasArtboard({
           </div>
         ) : null}
       </div>
+      {draftRegion ? (
+        <div
+          className="draft-inline-editor"
+          style={draftEditorStyle(draftRegion.bbox, source)}
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <label className="draft-inline-name">
+            <span>New element name</span>
+            <input
+              ref={draftNameInputRef}
+              aria-label="New element name"
+              type="text"
+              defaultValue={manualElementName}
+              onChange={(event) => onManualElementNameChange(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            aria-label="Create element"
+            onClick={() => onCreateElement(draftNameInputRef.current?.value ?? manualElementName)}
+          >
+            Create
+          </button>
+          <button
+            type="button"
+            aria-label="Create child"
+            disabled={!canCreateChildFromDraft}
+            onClick={() => onCreateChildElement(draftNameInputRef.current?.value ?? manualElementName)}
+          >
+            Child
+          </button>
+        </div>
+      ) : null}
       <div className="canvas-interaction-layer">
         {overlayElements.map((element) => {
           if (editingElementId !== element.id) {
@@ -692,10 +769,45 @@ function CanvasArtboard({
                   />
                 ))}
               </div>
+              {hasUnsavedBoxEdit ? (
+                <div
+                  aria-label={`Confirm ${element.name} box edit`}
+                  className="box-edit-confirmation"
+                  role="group"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  <span>Box changed</span>
+                  <button type="button" onClick={onConfirmBoxEdit}>
+                    Apply box edit
+                  </button>
+                  <button type="button" onClick={onCancelBoxEdit}>
+                    Cancel box edit
+                  </button>
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
+      {splitRegions.length > 0 ? (
+        <div
+          aria-label="Split draft controls"
+          className="split-inline-controls"
+          role="group"
+          style={draftEditorStyle(splitRegions[splitRegions.length - 1].bbox, source)}
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <span>{splitRegions.length} region{splitRegions.length === 1 ? "" : "s"}</span>
+          <button type="button" onClick={onApplySplit}>
+            Apply split regions
+          </button>
+          <button type="button" onClick={onClearDrafts}>
+            Cancel split
+          </button>
+        </div>
+      ) : null}
       <div
         className="canvas-drawing-surface"
         data-testid="canvas-drawing-surface"
@@ -786,6 +898,13 @@ function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperties {
     top: `${(box.y / source.height) * 100}%`,
     width: `${(box.w / source.width) * 100}%`,
     height: `${(box.h / source.height) * 100}%`,
+  };
+}
+
+function draftEditorStyle(box: Box, source: SourceMetadata): CSSProperties {
+  return {
+    left: `${(box.x / source.width) * 100}%`,
+    top: `${(box.y / source.height) * 100}%`,
   };
 }
 

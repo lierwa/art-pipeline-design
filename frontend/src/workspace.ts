@@ -69,6 +69,25 @@ export type WorkspaceState = {
   elements: WorkspaceElement[];
 };
 
+export type WorkspaceRunSummary = {
+  id: string;
+  title: string;
+  sourceFilename: string;
+  createdAt: string;
+  updatedAt: string;
+  status: string;
+  elementCount: number;
+};
+
+export type WorkspaceRunsResponse = {
+  runs: WorkspaceRunSummary[];
+};
+
+export type CreateWorkspaceRunResponse = {
+  run: WorkspaceRunSummary;
+  state: WorkspaceState;
+};
+
 export type OverlayState = {
   showBoxes: boolean;
   showNames: boolean;
@@ -194,45 +213,66 @@ export const EMPTY_STATE: WorkspaceState = {
 export const DEFAULT_OVERLAYS: OverlayState = {
   showBoxes: true,
   showNames: true,
-  showThumbs: true,
+  showThumbs: false,
   showMasks: false,
   showRejected: false,
 };
 
-export function thumbnailUrl(path: string | null): string | null {
-  return workspaceAssetUrl(path);
+export function thumbnailUrl(
+  path: string | null,
+  cacheKey?: number,
+  runId?: string | null,
+): string | null {
+  return workspaceAssetUrl(path, cacheKey, runId);
 }
 
-export function workspaceAssetUrl(path: string | null, cacheKey?: number): string | null {
+export function workspaceAssetUrl(
+  path: string | null,
+  cacheKey?: number,
+  runId?: string | null,
+): string | null {
   if (!path) {
     return null;
   }
   const url = `/api/workspace/assets/${path}`;
-  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+  return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
-export function sourceCropUrl(element: WorkspaceElement, cacheKey?: number): string {
+export function sourceCropUrl(
+  element: WorkspaceElement,
+  cacheKey?: number,
+  runId?: string | null,
+): string {
   const url = `/api/workspace/assets/elements/${element.id}/source_crop.png`;
-  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+  return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
-export function assetIncompleteUrl(element: WorkspaceElement, cacheKey?: number): string {
+export function assetIncompleteUrl(
+  element: WorkspaceElement,
+  cacheKey?: number,
+  runId?: string | null,
+): string {
   const url = `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
-  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+  return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
-export function missingMaskUrl(element: WorkspaceElement, cacheKey?: number): string {
+export function missingMaskUrl(
+  element: WorkspaceElement,
+  cacheKey?: number,
+  runId?: string | null,
+): string {
   const url = `/api/workspace/assets/elements/${element.id}/missing_mask.png`;
-  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+  return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
 export function repairAssetUrl(
   element: WorkspaceElement,
   filename: string,
   cacheKey?: number,
+  runId?: string | null,
 ): string {
   const url = `/api/workspace/assets/elements/${element.id}/repair/${filename}`;
-  return cacheKey === undefined ? url : `${url}?cache=${cacheKey}`;
+  return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
 export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState {
@@ -266,6 +306,34 @@ export function updateElement(
   return elements.map((element) => (element.id === elementId ? updater(element) : element));
 }
 
-export function buildSourceUrl(cacheKey: number): string {
-  return `/api/workspace/source?cache=${cacheKey}`;
+export function workspaceApiUrl(path: string, runId?: string | null): string {
+  return appendWorkspaceQuery(path, { runId });
+}
+
+export function buildSourceUrl(cacheKey: number, runId?: string | null): string {
+  return appendWorkspaceQuery("/api/workspace/source", { cacheKey, runId });
+}
+
+function appendWorkspaceQuery(
+  url: string,
+  {
+    cacheKey,
+    runId,
+  }: {
+    cacheKey?: number;
+    runId?: string | null;
+  },
+): string {
+  const params = new URLSearchParams();
+  if (cacheKey !== undefined) {
+    params.set("cache", String(cacheKey));
+  }
+  if (runId) {
+    params.set("runId", runId);
+  }
+  const query = params.toString();
+  if (!query) {
+    return url;
+  }
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
 }

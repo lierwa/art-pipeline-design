@@ -1,4 +1,5 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 
 import { CanvasToolbar } from "./components/CanvasToolbar";
 import { CanvasStage } from "./components/CanvasStage";
@@ -14,6 +15,7 @@ import {
   Box,
   buildSourceUrl,
   CanvasTool,
+  CreateWorkspaceRunResponse,
   DEFAULT_OVERLAYS,
   DraftRegion,
   ElementEditorDraft,
@@ -30,7 +32,10 @@ import {
   SourceMetadata,
   sourceCropUrl,
   updateElement,
+  workspaceApiUrl,
   WorkspaceElement,
+  WorkspaceRunsResponse,
+  WorkspaceRunSummary,
   WorkspaceState,
   workspaceAssetUrl,
 } from "./workspace";
@@ -110,10 +115,26 @@ type ValidateRepairResponse = {
 
 type Fetcher = typeof fetch;
 
-export async function runWorkspaceDetection(fetcher: Fetcher = fetch): Promise<WorkspaceState> {
+const MAX_HISTORY_DEPTH = 50;
+
+type WorkspaceHistorySnapshot = {
+  state: WorkspaceState;
+  selectedElementId: string | null;
+  selectedElementIds: SelectedElementIds;
+};
+
+type BoxEditHistorySnapshot = {
+  elementId: string;
+  bbox: Box;
+};
+
+export async function runWorkspaceDetection(
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<WorkspaceState> {
   return requestJson<WorkspaceState>(
     fetcher,
-    "/api/workspace/detect",
+    workspaceApiUrl("/api/workspace/detect", runId),
     { method: "POST" },
     "Detection failed.",
   );
@@ -122,11 +143,12 @@ export async function runWorkspaceDetection(fetcher: Fetcher = fetch): Promise<W
 export async function patchWorkspaceElement(
   elementId: string,
   request: PatchWorkspaceElementRequest,
+  runId: string | null = null,
   fetcher: Fetcher = fetch,
 ): Promise<WorkspaceElementMutationResponse> {
   return requestJson<WorkspaceElementMutationResponse>(
     fetcher,
-    `/api/workspace/elements/${elementId}`,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}`, runId),
     {
       method: "PATCH",
       headers: {
@@ -141,11 +163,12 @@ export async function patchWorkspaceElement(
 export async function createWorkspaceChildElement(
   elementId: string,
   request: ChildWorkspaceElementRequest,
+  runId: string | null = null,
   fetcher: Fetcher = fetch,
 ): Promise<WorkspaceElementMutationResponse> {
   return requestJson<WorkspaceElementMutationResponse>(
     fetcher,
-    `/api/workspace/elements/${elementId}/children`,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}/children`, runId),
     {
       method: "POST",
       headers: {
@@ -159,11 +182,12 @@ export async function createWorkspaceChildElement(
 
 export async function mergeWorkspaceElements(
   request: MergeWorkspaceElementsRequest,
+  runId: string | null = null,
   fetcher: Fetcher = fetch,
 ): Promise<WorkspaceElementMutationResponse> {
   return requestJson<WorkspaceElementMutationResponse>(
     fetcher,
-    "/api/workspace/elements/merge",
+    workspaceApiUrl("/api/workspace/elements/merge", runId),
     {
       method: "POST",
       headers: {
@@ -192,6 +216,8 @@ async function requestJson<T>(
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceState>(EMPTY_STATE);
   const [sourceUrl, setSourceUrl] = useState<string | null>(null);
+  const [workspaceRuns, setWorkspaceRuns] = useState<WorkspaceRunSummary[]>([]);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [status, setStatus] = useState("Ready");
   const [error, setError] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
@@ -204,6 +230,9 @@ export function App() {
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
   const [assetCacheKey, setAssetCacheKey] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("select");
+  const [canvasZoom, setCanvasZoom] = useState(80);
+  const [isPanMode, setIsPanMode] = useState(false);
+  const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
   const [missingMaskRegion, setMissingMaskRegion] = useState<DraftRegion | null>(null);
   const [manualElementName, setManualElementName] = useState("Manual Element");
@@ -217,6 +246,10 @@ export function App() {
   const [isRepairing, setIsRepairing] = useState(false);
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [undoStack, setUndoStack] = useState<WorkspaceHistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<WorkspaceHistorySnapshot[]>([]);
+  const [boxEditUndoStack, setBoxEditUndoStack] = useState<BoxEditHistorySnapshot[]>([]);
+  const [boxEditRedoStack, setBoxEditRedoStack] = useState<BoxEditHistorySnapshot[]>([]);
   const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
 
   useEffect(() => {
@@ -231,9 +264,9 @@ export function App() {
       if (current?.startsWith("blob:")) {
         URL.revokeObjectURL(current);
       }
-      return buildSourceUrl(Date.now());
+      return buildSourceUrl(Date.now(), activeRunId);
     });
-  }, [workspace.source]);
+  }, [activeRunId, workspace.source]);
 
   useEffect(() => {
     return () => {
@@ -327,6 +360,8 @@ export function App() {
   }, [canMergeSelectedElements, selectedMergeableElements]);
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
+  const selectedDraftName = selectedReviewElement ? (elementDraft?.name ?? selectedReviewElement.name) : "";
+  const canSaveSelectedName = Boolean(selectedElement && !hasUnsavedGeometryChanges);
   const selectedRepairMetadata = selectedElement
     ? repairMetadataByElementId[selectedElement.id] ?? null
     : null;
@@ -356,6 +391,12 @@ export function App() {
       .map((element) => element.id);
   }, [workspace.elements]);
   const hasBatchExtractTargets = batchExtractElementIds.length > 0;
+  const shouldShowWorkspacePreviews =
+    Boolean(selectedElement && (selectedElement.mask || hasExtractedAssetPreview(selectedElement)))
+    || Boolean(selectedRepairMetadata)
+    || Boolean(selectedRepairQaReport)
+    || Boolean(selectedHasMissingMask)
+    || exportSummary !== null;
 
   useEffect(() => {
     if (!selectedElement) {
@@ -375,6 +416,8 @@ export function App() {
     setRepairQaReport((current) =>
       current?.elementId === selectedElement.id ? current : null,
     );
+    setBoxEditUndoStack([]);
+    setBoxEditRedoStack([]);
   }, [selectedElement]);
 
   useEffect(() => {
@@ -391,6 +434,107 @@ export function App() {
       setSelectedElementId(null);
     }
   }, [selectedElementId, visibleElements]);
+
+  useEffect(() => {
+    function handleGlobalKeyDown(event: globalThis.KeyboardEvent) {
+      const key = event.key.toLowerCase();
+      const hasSystemModifier = event.ctrlKey || event.metaKey;
+
+      if (isEditableShortcutTarget(event.target)) {
+        return;
+      }
+
+      if (hasSystemModifier && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          void handleRedo();
+        } else {
+          void handleUndo();
+        }
+        return;
+      }
+
+      if (hasSystemModifier && key === "y") {
+        event.preventDefault();
+        void handleRedo();
+        return;
+      }
+
+      if (hasSystemModifier && key === "s") {
+        event.preventDefault();
+        void handleSaveElement();
+        return;
+      }
+
+      if (key === "escape") {
+        event.preventDefault();
+        if (editingElementId) {
+          handleCancelBoxEdit();
+          return;
+        }
+        clearDrafts();
+        handleSelectTool("select");
+        return;
+      }
+
+      if (key === "enter") {
+        if (editingElementId && hasUnsavedGeometryChanges) {
+          event.preventDefault();
+          void handleSaveElement();
+          return;
+        }
+        if (splitRegions.length > 0) {
+          event.preventDefault();
+          void handleApplySplit();
+        }
+        return;
+      }
+
+      if (key === "q") {
+        event.preventDefault();
+        handleSelectTool("select");
+        return;
+      }
+
+      if (key === "w" && selectedElement) {
+        event.preventDefault();
+        handleStartBoxEdit();
+        return;
+      }
+
+      if (key === "e" && workspace.source) {
+        event.preventDefault();
+        handleSelectTool("draw");
+        return;
+      }
+
+      if (key === "r" && workspace.source) {
+        event.preventDefault();
+        handleTogglePanMode();
+        return;
+      }
+
+      if (key === "+" || key === "=") {
+        event.preventDefault();
+        handleZoomIn();
+        return;
+      }
+
+      if (key === "-") {
+        event.preventDefault();
+        handleZoomOut();
+        return;
+      }
+
+      if (key === "0") {
+        event.preventDefault();
+        handleFitCanvas();
+      }
+    }
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  });
 
   useEffect(() => {
     if (!selectedElement || !shouldLoadRepairMetadata(selectedElement)) {
@@ -423,7 +567,9 @@ export function App() {
   }, [selectedElement?.id, selectedElement?.mode, selectedElement?.status]);
 
   async function fetchRepairMetadata(elementId: string): Promise<RepairMetadata> {
-    const response = await fetch(`/api/workspace/elements/${elementId}/repair/metadata`);
+    const response = await fetch(
+      workspaceApiUrl(`/api/workspace/elements/${elementId}/repair/metadata`, activeRunId),
+    );
     if (!response.ok) {
       throw new Error("Could not load repair metadata.");
     }
@@ -463,13 +609,32 @@ export function App() {
   async function loadWorkspace() {
     setError(null);
     try {
+      const response = await fetch("/api/workspace/runs");
+      if (!response.ok) {
+        throw new Error("Could not load processing records.");
+      }
+
+      const payload = (await response.json()) as WorkspaceRunsResponse;
+      setWorkspaceRuns(payload.runs);
+      resetCurrentWorkspace("Ready");
+    } catch {
+      await loadLegacyWorkspace();
+    }
+  }
+
+  async function loadLegacyWorkspace() {
+    setError(null);
+    try {
       const response = await fetch("/api/workspace/state");
       if (!response.ok) {
         throw new Error("Could not load workspace state.");
       }
 
       const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+      setActiveRunId(null);
+      setWorkspaceRuns([]);
       setWorkspace(nextState);
+      clearWorkspaceHistory();
       const firstElementId = nextState.elements.find(isActionableElement)?.id ?? null;
       setSelectedElementId(firstElementId);
       setSelectedElementIds([]);
@@ -479,6 +644,101 @@ export function App() {
       setStatus("Workspace load failed.");
       setError(
         loadError instanceof Error ? loadError.message : "Could not load workspace state.",
+      );
+    }
+  }
+
+  function resetCurrentWorkspace(nextStatus: string) {
+    setActiveRunId(null);
+    setWorkspace(EMPTY_STATE);
+    setSourceUrl((current) => {
+      if (current?.startsWith("blob:")) {
+        URL.revokeObjectURL(current);
+      }
+      return null;
+    });
+    setSelectedElementId(null);
+    setSelectedElementIds([]);
+    setEditingElementId(null);
+    setExportSummary(null);
+    setTool("select");
+    setIsPanMode(false);
+    setCanvasZoom(80);
+    setCanvasPan({ x: 0, y: 0 });
+    setDraftRegion(null);
+    setSplitRegions([]);
+    setMissingMaskRegion(null);
+    clearAllLocalRepairState();
+    clearWorkspaceHistory();
+    setStatus(nextStatus);
+  }
+
+  async function refreshWorkspaceRuns() {
+    try {
+      const response = await fetch("/api/workspace/runs");
+      if (!response.ok) {
+        return;
+      }
+      const payload = (await response.json()) as WorkspaceRunsResponse;
+      setWorkspaceRuns(payload.runs);
+    } catch {
+      // Run records are progressive enhancement over the legacy single-workspace API.
+    }
+  }
+
+  async function handleSelectRun(runId: string) {
+    setStatus("Loading processing record...");
+    setError(null);
+    try {
+      const response = await fetch(workspaceApiUrl("/api/workspace/state", runId));
+      if (!response.ok) {
+        throw new Error("Could not load processing record.");
+      }
+
+      const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+      setActiveRunId(runId);
+      clearAllLocalRepairState();
+      setSelectedElementIds([]);
+      setTool("select");
+      setIsPanMode(false);
+      setCanvasZoom(80);
+      setCanvasPan({ x: 0, y: 0 });
+      setDraftRegion(null);
+      setSplitRegions([]);
+      setMissingMaskRegion(null);
+      clearWorkspaceHistory();
+      replaceWorkspace(nextState, nextState.source ? "Processing record loaded." : "Ready", null);
+    } catch (loadError) {
+      setStatus("Processing record load failed.");
+      setError(
+        loadError instanceof Error ? loadError.message : "Could not load processing record.",
+      );
+    }
+  }
+
+  async function handleDeleteRun(runId: string) {
+    setStatus("Deleting processing record...");
+    setError(null);
+    try {
+      const response = await fetch(`/api/workspace/runs/${encodeURIComponent(runId)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not delete processing record.");
+      }
+
+      const payload = (await response.json()) as WorkspaceRunsResponse;
+      setWorkspaceRuns(payload.runs);
+      if (activeRunId === runId) {
+        resetCurrentWorkspace("Processing record deleted.");
+        return;
+      }
+      setStatus("Processing record deleted.");
+    } catch (deleteError) {
+      setStatus("Processing record delete failed.");
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Could not delete processing record.",
       );
     }
   }
@@ -514,6 +774,33 @@ export function App() {
     setStatus(nextStatus);
   }
 
+  function createHistorySnapshot(): WorkspaceHistorySnapshot {
+    return {
+      state: workspace,
+      selectedElementId,
+      selectedElementIds,
+    };
+  }
+
+  function pushUndoSnapshot(snapshot: WorkspaceHistorySnapshot = createHistorySnapshot()) {
+    setUndoStack((current) => [...current, snapshot].slice(-MAX_HISTORY_DEPTH));
+    setRedoStack([]);
+  }
+
+  function clearWorkspaceHistory() {
+    setUndoStack([]);
+    setRedoStack([]);
+  }
+
+  function applyWorkspaceMutation(
+    nextState: WorkspaceState,
+    nextStatus: string,
+    nextSelectionId?: string | null,
+  ) {
+    pushUndoSnapshot();
+    replaceWorkspace(nextState, nextStatus, nextSelectionId);
+  }
+
   function clearAllLocalRepairState() {
     setRepairMetadataByElementId({});
     setSavedMissingMaskElementIds([]);
@@ -530,12 +817,14 @@ export function App() {
   ): Promise<boolean> {
     const previousState = workspace;
     const previousSelection = selectedElementId;
+    const previousMergeSelection = selectedElementIds;
+    pushUndoSnapshot();
     replaceWorkspace(nextState, nextStatus, nextSelectionId);
     setIsSavingState(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/workspace/state", {
+      const response = await fetch(workspaceApiUrl("/api/workspace/state", activeRunId), {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -554,10 +843,13 @@ export function App() {
         nextStatus,
         nextSelectionId !== undefined ? nextSelectionId : previousSelection,
       );
+      void refreshWorkspaceRuns();
       return true;
     } catch (saveError) {
+      setUndoStack((current) => current.slice(0, -1));
       setWorkspace(previousState);
       setSelectedElementId(previousSelection);
+      setSelectedElementIds(previousMergeSelection);
       setStatus("State save failed.");
       setError(
         saveError instanceof Error ? saveError.message : "Could not save workspace state.",
@@ -566,6 +858,79 @@ export function App() {
     } finally {
       setIsSavingState(false);
     }
+  }
+
+  async function persistHistorySnapshot(
+    snapshot: WorkspaceHistorySnapshot,
+    nextStatus: string,
+  ): Promise<boolean> {
+    replaceWorkspace(snapshot.state, nextStatus, snapshot.selectedElementId);
+    setSelectedElementIds(snapshot.selectedElementIds);
+    setIsSavingState(true);
+    setError(null);
+
+    try {
+      const response = await fetch(workspaceApiUrl("/api/workspace/state", activeRunId), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(snapshot.state),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
+        throw new Error(payload?.detail ?? "Could not save workspace state.");
+      }
+
+      const persistedState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+      replaceWorkspace(persistedState, nextStatus, snapshot.selectedElementId);
+      setSelectedElementIds(snapshot.selectedElementIds);
+      void refreshWorkspaceRuns();
+      return true;
+    } catch (saveError) {
+      setStatus("History restore failed.");
+      setError(
+        saveError instanceof Error ? saveError.message : "Could not restore workspace history.",
+      );
+      return false;
+    } finally {
+      setIsSavingState(false);
+    }
+  }
+
+  async function handleUndo() {
+    if (editingElementId && boxEditUndoStack.length > 0) {
+      handleUndoBoxDraft();
+      return;
+    }
+
+    const snapshot = undoStack[undoStack.length - 1];
+    if (!snapshot) {
+      return;
+    }
+
+    const currentSnapshot = createHistorySnapshot();
+    setUndoStack((current) => current.slice(0, -1));
+    setRedoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
+    await persistHistorySnapshot(snapshot, "Undone.");
+  }
+
+  async function handleRedo() {
+    if (editingElementId && boxEditRedoStack.length > 0) {
+      handleRedoBoxDraft();
+      return;
+    }
+
+    const snapshot = redoStack[redoStack.length - 1];
+    if (!snapshot) {
+      return;
+    }
+
+    const currentSnapshot = createHistorySnapshot();
+    setRedoStack((current) => current.slice(0, -1));
+    setUndoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
+    await persistHistorySnapshot(snapshot, "Redone.");
   }
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -586,7 +951,7 @@ export function App() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("/api/workspace/source", {
+      const response = await fetch("/api/workspace/runs", {
         method: "POST",
         body: formData,
       });
@@ -597,10 +962,20 @@ export function App() {
       }
 
       URL.revokeObjectURL(optimisticUrl);
-      const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+      const payload = (await response.json()) as CreateWorkspaceRunResponse;
+      const nextState = normalizeWorkspaceState(payload.state);
+      setWorkspaceRuns((current) => [
+        payload.run,
+        ...current.filter((run) => run.id !== payload.run.id),
+      ]);
+      setActiveRunId(payload.run.id);
       replaceWorkspace(nextState, "Source image uploaded.", null);
-      setSourceUrl(buildSourceUrl(Date.now()));
+      clearWorkspaceHistory();
+      setSourceUrl(buildSourceUrl(Date.now(), payload.run.id));
       setTool("select");
+      setIsPanMode(false);
+      setCanvasZoom(80);
+      setCanvasPan({ x: 0, y: 0 });
       setDraftRegion(null);
       setMissingMaskRegion(null);
       setSplitRegions([]);
@@ -631,14 +1006,15 @@ export function App() {
     setError(null);
 
     try {
-      const nextState = normalizeWorkspaceState(await runWorkspaceDetection());
+      const nextState = normalizeWorkspaceState(await runWorkspaceDetection(activeRunId));
       clearAllLocalRepairState();
       setSelectedElementIds([]);
-      replaceWorkspace(
+      applyWorkspaceMutation(
         nextState,
         `Detected ${nextState.elements.length} model candidate${nextState.elements.length === 1 ? "" : "s"}.`,
         nextState.elements[0]?.id ?? null,
       );
+      void refreshWorkspaceRuns();
     } catch (annotateError) {
       setStatus("Detection failed.");
       setError(
@@ -687,7 +1063,7 @@ export function App() {
     setError(null);
 
     try {
-      const response = await fetch("/api/workspace/extract", {
+      const response = await fetch(workspaceApiUrl("/api/workspace/extract", activeRunId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -705,11 +1081,12 @@ export function App() {
 
       const payload = (await response.json()) as ExtractWorkspaceResponse;
       clearLocalRepairMetadata(payload.extractions.map((extraction) => extraction.elementId));
-      replaceWorkspace(
+      applyWorkspaceMutation(
         payload.state,
         options.successStatus(payload.extractions.length),
         options.selectionId,
       );
+      void refreshWorkspaceRuns();
     } catch (extractError) {
       setStatus("Extraction failed.");
       setError(
@@ -729,9 +1106,12 @@ export function App() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/mask/clear`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        workspaceApiUrl(`/api/workspace/elements/${selectedElement.id}/mask/clear`, activeRunId),
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -740,7 +1120,8 @@ export function App() {
 
       const payload = (await response.json()) as ClearMaskResponse;
       clearLocalRepairMetadata([selectedElement.id]);
-      replaceWorkspace(payload.state, "Mask cleared.", selectedElement.id);
+      applyWorkspaceMutation(payload.state, "Mask cleared.", selectedElement.id);
+      void refreshWorkspaceRuns();
     } catch (clearError) {
       setStatus("Mask clear failed.");
       setError(clearError instanceof Error ? clearError.message : "Could not clear mask.");
@@ -756,19 +1137,22 @@ export function App() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/mask/replace`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          shape: {
-            type: "rectangle",
-            coordinateSpace: "source",
-            bbox: selectedElement.bbox,
+      const response = await fetch(
+        workspaceApiUrl(`/api/workspace/elements/${selectedElement.id}/mask/replace`, activeRunId),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        }),
-      });
+          body: JSON.stringify({
+            shape: {
+              type: "rectangle",
+              coordinateSpace: "source",
+              bbox: selectedElement.bbox,
+            },
+          }),
+        },
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -777,7 +1161,8 @@ export function App() {
 
       const payload = (await response.json()) as ReplaceMaskResponse;
       clearLocalRepairMetadata([selectedElement.id]);
-      replaceWorkspace(payload.state, "Mask replaced.", selectedElement.id);
+      applyWorkspaceMutation(payload.state, "Mask replaced.", selectedElement.id);
+      void refreshWorkspaceRuns();
     } catch (replaceError) {
       setStatus("Mask replace failed.");
       setError(replaceError instanceof Error ? replaceError.message : "Could not replace mask.");
@@ -848,7 +1233,7 @@ export function App() {
 
     try {
       const response = await fetch(
-        `/api/workspace/elements/${element.id}/repair/missing-mask`,
+        workspaceApiUrl(`/api/workspace/elements/${element.id}/repair/missing-mask`, activeRunId),
         {
           method: "POST",
           headers: {
@@ -875,11 +1260,12 @@ export function App() {
       setSavedMissingMaskElementIds((current) =>
         current.includes(element.id) ? current : [...current, element.id],
       );
-      replaceWorkspace(payload.state, "Missing mask saved.", element.id);
+      applyWorkspaceMutation(payload.state, "Missing mask saved.", element.id);
       if (payload.repair) {
         applyRepairMetadata(payload.repair);
       }
       setMissingMaskDraft(savedDraft);
+      void refreshWorkspaceRuns();
     } catch (repairError) {
       setStatus("Missing mask save failed.");
       setError(
@@ -906,9 +1292,12 @@ export function App() {
     setRepairQaReport(null);
 
     try {
-      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/repair/task`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        workspaceApiUrl(`/api/workspace/elements/${selectedElement.id}/repair/task`, activeRunId),
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -919,10 +1308,11 @@ export function App() {
       setSavedMissingMaskElementIds((current) =>
         current.includes(selectedElement.id) ? current : [...current, selectedElement.id],
       );
-      replaceWorkspace(payload.state, "Codex repair task created.", selectedElement.id);
+      applyWorkspaceMutation(payload.state, "Codex repair task created.", selectedElement.id);
       if (payload.repair) {
         applyRepairMetadata(payload.repair);
       }
+      void refreshWorkspaceRuns();
     } catch (repairError) {
       setStatus("Repair task creation failed.");
       setError(
@@ -943,9 +1333,12 @@ export function App() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/repair/validate`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        workspaceApiUrl(`/api/workspace/elements/${selectedElement.id}/repair/validate`, activeRunId),
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -953,11 +1346,12 @@ export function App() {
       }
 
       const payload = (await response.json()) as ValidateRepairResponse;
-      replaceWorkspace(payload.state, `Repair validation: ${payload.qa.status}.`, selectedElement.id);
+      applyWorkspaceMutation(payload.state, `Repair validation: ${payload.qa.status}.`, selectedElement.id);
       setRepairQaReport(payload.qa);
       if (payload.repair) {
         applyRepairMetadata(payload.repair);
       }
+      void refreshWorkspaceRuns();
     } catch (repairError) {
       setStatus("Repair validation failed.");
       setError(
@@ -979,7 +1373,7 @@ export function App() {
     setExportSummary(null);
 
     try {
-      const response = await fetch("/api/workspace/export", {
+      const response = await fetch(workspaceApiUrl("/api/workspace/export", activeRunId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -996,6 +1390,7 @@ export function App() {
       setExportSummary(payload);
       setAssetCacheKey((current) => current + 1);
       setStatus(formatExportStatus(payload));
+      void refreshWorkspaceRuns();
     } catch (exportError) {
       setExportSummary(null);
       setStatus("Export failed.");
@@ -1032,6 +1427,7 @@ export function App() {
 
   function handleSelectTool(nextTool: CanvasTool) {
     setTool(nextTool);
+    setIsPanMode(false);
     if (nextTool !== "select") {
       setEditingElementId(null);
     }
@@ -1055,12 +1451,50 @@ export function App() {
     }
   }
 
+  function handleZoomIn() {
+    setCanvasZoom((current) => Math.min(200, current + 10));
+  }
+
+  function handleZoomOut() {
+    setCanvasZoom((current) => Math.max(40, current - 10));
+  }
+
+  function handleCanvasWheelZoom(direction: 1 | -1) {
+    if (!workspace.source) {
+      return;
+    }
+    setCanvasZoom((current) => clampInteger(current + direction * 10, 40, 200));
+  }
+
+  function handleFitCanvas() {
+    setCanvasZoom(80);
+    setCanvasPan({ x: 0, y: 0 });
+  }
+
+  function handleTogglePanMode() {
+    if (!workspace.source) {
+      return;
+    }
+    setTool("select");
+    setEditingElementId(null);
+    setIsPanMode((current) => !current);
+  }
+
+  function handleCanvasPanChange(deltaX: number, deltaY: number) {
+    setCanvasPan((current) => ({
+      x: current.x + deltaX,
+      y: current.y + deltaY,
+    }));
+  }
+
   function handleStartBoxEdit() {
     if (!selectedElement) {
       return;
     }
     handleSelectTool("select");
     setEditingElementId(selectedElement.id);
+    setBoxEditUndoStack([]);
+    setBoxEditRedoStack([]);
     setStatus("Editing selected box.");
     setError(null);
   }
@@ -1071,6 +1505,14 @@ export function App() {
     }
 
     const nextBbox = clampBoxToSource(bbox, workspace.source);
+    const currentBbox = elementDraft ? parseBox(elementDraft.bbox) : selectedElement.bbox;
+    if (currentBbox && !boxesEqual(currentBbox, nextBbox)) {
+      setBoxEditUndoStack((current) => [
+        ...current,
+        { elementId: selectedElement.id, bbox: currentBbox },
+      ].slice(-MAX_HISTORY_DEPTH));
+      setBoxEditRedoStack([]);
+    }
     setElementDraft((current) => {
       const nextDraft = current ?? draftFromElement(selectedElement);
       return {
@@ -1079,6 +1521,71 @@ export function App() {
       };
     });
     setError(null);
+  }
+
+  function handleCancelBoxEdit() {
+    if (selectedElement) {
+      setElementDraft(draftFromElement(selectedElement));
+    }
+    setEditingElementId(null);
+    setBoxEditUndoStack([]);
+    setBoxEditRedoStack([]);
+    setError(null);
+    setStatus("Box edit cancelled.");
+  }
+
+  function currentBoxEditSnapshot(): BoxEditHistorySnapshot | null {
+    if (!selectedElement || editingElementId !== selectedElement.id) {
+      return null;
+    }
+
+    const bbox = elementDraft ? parseBox(elementDraft.bbox) : selectedElement.bbox;
+    if (!bbox) {
+      return null;
+    }
+
+    return {
+      elementId: selectedElement.id,
+      bbox,
+    };
+  }
+
+  function applyBoxEditSnapshot(snapshot: BoxEditHistorySnapshot) {
+    if (!selectedElement || snapshot.elementId !== selectedElement.id) {
+      return;
+    }
+
+    setElementDraft((current) => ({
+      ...(current ?? draftFromElement(selectedElement)),
+      bbox: boxToDraft(snapshot.bbox),
+    }));
+    setError(null);
+  }
+
+  function handleUndoBoxDraft() {
+    const snapshot = boxEditUndoStack[boxEditUndoStack.length - 1];
+    const currentSnapshot = currentBoxEditSnapshot();
+    if (!snapshot || !currentSnapshot) {
+      return;
+    }
+
+    setBoxEditUndoStack((current) => current.slice(0, -1));
+    setBoxEditRedoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
+    applyBoxEditSnapshot(snapshot);
+    setStatus("Box edit undone.");
+  }
+
+  function handleRedoBoxDraft() {
+    const snapshot = boxEditRedoStack[boxEditRedoStack.length - 1];
+    const currentSnapshot = currentBoxEditSnapshot();
+    if (!snapshot || !currentSnapshot) {
+      return;
+    }
+
+    setBoxEditRedoStack((current) => current.slice(0, -1));
+    setBoxEditUndoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
+    applyBoxEditSnapshot(snapshot);
+    setStatus("Box edit redone.");
   }
 
   function handleStartSplitParent() {
@@ -1176,6 +1683,9 @@ export function App() {
         setError(null);
         setStatus("Element details unchanged.");
         setElementDraft(draftFromElement(selectedElement));
+        setEditingElementId(null);
+        setBoxEditUndoStack([]);
+        setBoxEditRedoStack([]);
         return;
       }
 
@@ -1183,8 +1693,12 @@ export function App() {
       setError(null);
 
       try {
-        const payload = await patchWorkspaceElement(selectedElement.id, patchRequest);
-        replaceWorkspace(payload.state, "Element details updated.", payload.element.id);
+        const payload = await patchWorkspaceElement(selectedElement.id, patchRequest, activeRunId);
+        applyWorkspaceMutation(payload.state, "Element details updated. Thumbnail refreshed.", payload.element.id);
+        setEditingElementId(null);
+        setBoxEditUndoStack([]);
+        setBoxEditRedoStack([]);
+        void refreshWorkspaceRuns();
         if (geometryChanged) {
           clearLocalRepairMetadata([selectedElement.id]);
         }
@@ -1192,6 +1706,8 @@ export function App() {
         setStatus("State save failed.");
         setError(saveError instanceof Error ? saveError.message : "Could not save element.");
         setElementDraft(draftFromElement(selectedElement));
+        setBoxEditUndoStack([]);
+        setBoxEditRedoStack([]);
       } finally {
         setIsSavingState(false);
       }
@@ -1203,27 +1719,33 @@ export function App() {
       elements: updateElement(workspace.elements, selectedElement.id, () => nextElement),
     };
     const saved = await persistWorkspace(nextState, "Element details updated.");
+    if (saved) {
+      setEditingElementId(null);
+      setBoxEditUndoStack([]);
+      setBoxEditRedoStack([]);
+    }
     if (saved && geometryChanged) {
       clearLocalRepairMetadata([selectedElement.id]);
     }
   }
 
-  async function handleCreateElement() {
+  async function handleCreateElement(nameOverride?: string) {
     if (!workspace.source || !draftRegion) {
       return;
     }
 
+    const elementName = nameOverride?.trim() || manualElementName.trim() || "Manual Element";
     setError(null);
     setStatus("Creating manual element...");
 
     try {
-      const response = await fetch("/api/workspace/elements", {
+      const response = await fetch(workspaceApiUrl("/api/workspace/elements", activeRunId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: manualElementName.trim() || "Manual Element",
+          name: elementName,
           bbox: draftRegion.bbox,
         }),
       });
@@ -1234,7 +1756,8 @@ export function App() {
       }
 
       const payload = (await response.json()) as CreateElementResponse;
-      replaceWorkspace(payload.state, "Manual element created.", payload.element.id);
+      applyWorkspaceMutation(payload.state, "Manual element created.", payload.element.id);
+      void refreshWorkspaceRuns();
       setManualElementName("Manual Element");
       setDraftRegion(null);
       setTool("select");
@@ -1262,8 +1785,9 @@ export function App() {
       const payload = await createWorkspaceChildElement(parentElement.id, {
         label,
         bbox,
-      });
-      replaceWorkspace(payload.state, "Child element created.", payload.element.id);
+      }, activeRunId);
+      applyWorkspaceMutation(payload.state, "Child element created.", payload.element.id);
+      void refreshWorkspaceRuns();
       setManualElementName("Manual Element");
       setDraftRegion(null);
       setTool("select");
@@ -1275,7 +1799,7 @@ export function App() {
     }
   }
 
-  async function handleCreateChildElement() {
+  async function handleCreateChildElement(nameOverride?: string) {
     if (!draftRegion || !selectedElement) {
       return;
     }
@@ -1283,8 +1807,40 @@ export function App() {
     await createChildElementFromBox(
       selectedElement,
       draftRegion.bbox,
-      manualElementName.trim() || "Child Element",
+      nameOverride?.trim() || manualElementName.trim() || "Child Element",
     );
+  }
+
+  async function handleSaveSelectedName(value: string) {
+    if (!selectedElement || hasUnsavedGeometryChanges) {
+      return;
+    }
+
+    const nextLabel = value.trim() || selectedElement.name;
+    const currentLabel = selectedElement.label ?? selectedElement.name;
+    if (nextLabel === currentLabel) {
+      setError(null);
+      setStatus("Element details unchanged.");
+      return;
+    }
+
+    setIsSavingState(true);
+    setError(null);
+
+    try {
+      const payload = await patchWorkspaceElement(
+        selectedElement.id,
+        { label: nextLabel },
+        activeRunId,
+      );
+      applyWorkspaceMutation(payload.state, "Element details updated.", payload.element.id);
+      void refreshWorkspaceRuns();
+    } catch (saveError) {
+      setStatus("State save failed.");
+      setError(saveError instanceof Error ? saveError.message : "Could not save element.");
+    } finally {
+      setIsSavingState(false);
+    }
   }
 
   async function handleAddChildFromSelection() {
@@ -1324,8 +1880,9 @@ export function App() {
       const payload = await mergeWorkspaceElements({
         elementIds: mergeElementIds,
         ...(label ? { label } : {}),
-      });
-      replaceWorkspace(payload.state, "Merged selected elements.", payload.element.id);
+      }, activeRunId);
+      applyWorkspaceMutation(payload.state, "Merged selected elements.", payload.element.id);
+      void refreshWorkspaceRuns();
       setMergeLabel("Merged Asset");
       setSelectedElementIds([]);
     } catch (mergeError) {
@@ -1343,17 +1900,20 @@ export function App() {
     setStatus("Splitting element...");
 
     try {
-      const response = await fetch(`/api/workspace/elements/${selectedElement.id}/split`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const response = await fetch(
+        workspaceApiUrl(`/api/workspace/elements/${selectedElement.id}/split`, activeRunId),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            regions: splitRegions.map((region) => ({
+              bbox: region.bbox,
+            })),
+          }),
         },
-        body: JSON.stringify({
-          regions: splitRegions.map((region) => ({
-            bbox: region.bbox,
-          })),
-        }),
-      });
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as { detail?: string } | null;
@@ -1361,7 +1921,8 @@ export function App() {
       }
 
       const payload = (await response.json()) as SplitElementResponse;
-      replaceWorkspace(payload.state, `Split created ${payload.children.length} child elements.`);
+      applyWorkspaceMutation(payload.state, `Split created ${payload.children.length} child elements.`);
+      void refreshWorkspaceRuns();
       setSplitRegions([]);
       setTool("select");
     } catch (splitError) {
@@ -1379,7 +1940,7 @@ export function App() {
 
     setError(null);
     try {
-      const response = await fetch("/api/workspace/split-requests", {
+      const response = await fetch(workspaceApiUrl("/api/workspace/split-requests", activeRunId), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1418,20 +1979,38 @@ export function App() {
         isExporting={isExporting}
         canSave={selectedElement !== null && elementDraft !== null}
         canExport={workspace.source !== null}
+        runs={workspaceRuns}
+        activeRunId={activeRunId}
         onUpload={handleUpload}
         onRunDetection={() => void handleRunDetection()}
         onSave={() => void handleSaveElement()}
         onExport={() => void handleExportAssetPack()}
+        onSelectRun={(runId) => void handleSelectRun(runId)}
+        onDeleteRun={(runId) => void handleDeleteRun(runId)}
       />
 
-      <main className="workbench-grid">
-        <PipelineRail
-          source={workspace.source}
-          elements={workspace.elements}
-          exportSummary={exportSummary}
-        />
+      <main className="workbench-grid-frame">
+        <PanelGroup
+          className="workbench-grid"
+          orientation="horizontal"
+        >
+          <Panel className="workbench-panel workbench-panel-rail" defaultSize="16%" minSize="12%" maxSize="24%">
+            <PipelineRail
+              source={workspace.source}
+              elements={workspace.elements}
+              exportSummary={exportSummary}
+            />
+          </Panel>
 
-        <section className="canvas-workspace" aria-label="Canvas workspace">
+          <PanelResizeHandle
+            aria-label="Resize pipeline rail"
+            className="workbench-panel-resize-handle"
+          >
+            <span aria-hidden="true" />
+          </PanelResizeHandle>
+
+          <Panel className="workbench-panel workbench-panel-canvas" defaultSize="57%" minSize="42%">
+            <section className="canvas-workspace" aria-label="Canvas workspace">
           <CanvasToolbar
             tool={tool}
             overlays={overlays}
@@ -1439,10 +2018,20 @@ export function App() {
             hasSelection={selectedElement !== null}
             canSplit={selectedElement !== null}
             canMerge={canMergeSelectedElements}
+            canUndo={boxEditUndoStack.length > 0 || undoStack.length > 0}
+            canRedo={boxEditRedoStack.length > 0 || redoStack.length > 0}
+            zoomPercent={canvasZoom}
+            isPanMode={isPanMode}
             onSelectTool={handleSelectTool}
             onToggleOverlay={handleOverlayToggle}
             onEditBox={handleStartBoxEdit}
             onMerge={() => void handleMergeSelectedElements()}
+            onUndo={() => void handleUndo()}
+            onRedo={() => void handleRedo()}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onFitCanvas={handleFitCanvas}
+            onTogglePanMode={handleTogglePanMode}
           />
           <CanvasStage
             sourceUrl={sourceUrl}
@@ -1459,16 +2048,28 @@ export function App() {
             splitRegions={splitRegions}
             missingMaskRegion={missingMaskRegion}
             assetCacheKey={assetCacheKey}
-            canSplit={selectedElement !== null}
+            workspaceRunId={activeRunId}
             canDrawMissingMask={canDrawMissingMask}
-            onToggleOverlay={handleOverlayToggle}
-            onSelectTool={handleSelectTool}
+            hasUnsavedBoxEdit={editingElementId === selectedElement?.id && hasUnsavedGeometryChanges}
+            zoomPercent={canvasZoom}
+            isPanMode={isPanMode}
+            panOffset={canvasPan}
+            manualElementName={manualElementName}
+            canCreateChildFromDraft={selectedElement !== null}
             onSelectElement={handleSelectElement}
+            onToggleMergeSelection={handleMergeSelectionToggle}
             onBoxDraftChange={handleBoxDraftChange}
+            onZoomByWheel={handleCanvasWheelZoom}
+            onPanChange={handleCanvasPanChange}
             onDraftRegionChange={setDraftRegion}
             onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
             onMissingMaskRegionChange={setMissingMaskRegion}
             onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
+            onManualElementNameChange={setManualElementName}
+            onCreateElement={(name) => void handleCreateElement(name)}
+            onCreateChildElement={(name) => void handleCreateChildElement(name)}
+            onConfirmBoxEdit={() => void handleSaveElement()}
+            onCancelBoxEdit={handleCancelBoxEdit}
             onClearDrafts={clearDrafts}
             onApplySplit={() => void handleApplySplit()}
           />
@@ -1496,48 +2097,51 @@ export function App() {
               Repair
             </button>
           </div>
-          {draftRegion ? (
-            <div className="manual-create-panel">
-              <label className="field-group">
-                <span>New element name</span>
-                <input
-                  aria-label="New element name"
-                  type="text"
-                  value={manualElementName}
-                  onChange={(event) => setManualElementName(event.target.value)}
+          {error ? <p className="error-text">{error}</p> : null}
+          {shouldShowWorkspacePreviews ? (
+            <div className="workspace-preview-panels">
+              {selectedElement ? (
+                <ExtractionPreview
+                  selectedElement={selectedElement}
+                  assetCacheKey={assetCacheKey}
+                  workspaceRunId={activeRunId}
                 />
-              </label>
-              <button type="button" onClick={() => void handleCreateElement()}>
-                Create element
-              </button>
-              <button
-                type="button"
-                disabled={!selectedElement}
-                onClick={() => void handleCreateChildElement()}
-              >
-                Create child
-              </button>
+              ) : null}
+              <RepairComparison
+                selectedElement={selectedElement}
+                qaReport={selectedRepairQaReport}
+                repairMetadata={selectedRepairMetadata}
+                assetCacheKey={assetCacheKey}
+                workspaceRunId={activeRunId}
+                hasMissingMaskPreview={selectedHasMissingMask}
+              />
+              {exportSummary ? (
+                <ExportPanel
+                  summary={exportSummary}
+                  assetCacheKey={assetCacheKey}
+                  workspaceRunId={activeRunId}
+                />
+              ) : null}
             </div>
           ) : null}
-          {error ? <p className="error-text">{error}</p> : null}
-          <div className="workspace-preview-panels">
-            <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
-            <RepairComparison
-              selectedElement={selectedElement}
-              qaReport={selectedRepairQaReport}
-              repairMetadata={selectedRepairMetadata}
-              assetCacheKey={assetCacheKey}
-              hasMissingMaskPreview={selectedHasMissingMask}
-            />
-            <ExportPanel summary={exportSummary} assetCacheKey={assetCacheKey} />
-          </div>
-        </section>
+            </section>
+          </Panel>
 
-        <section className="right-review-panel" aria-label="Review panel">
+          <PanelResizeHandle
+            aria-label="Resize review panel"
+            className="workbench-panel-resize-handle"
+          >
+            <span aria-hidden="true" />
+          </PanelResizeHandle>
+
+          <Panel className="workbench-panel workbench-panel-review" defaultSize="27%" minSize="20%" maxSize="40%">
+            <section className="right-review-panel" aria-label="Review panel">
           <AssetTreePanel
             elements={visibleElements}
             selectedElementId={selectedElementId}
             selectedElementIds={selectedElementIds}
+            workspaceRunId={activeRunId}
+            assetCacheKey={assetCacheKey}
             showRejected={overlays.showRejected}
             onSelectElement={handleSelectElement}
             onToggleMergeSelection={handleMergeSelectionToggle}
@@ -1549,15 +2153,18 @@ export function App() {
             hasSource={workspace.source !== null}
             isAnnotating={isAnnotating}
             selectedElement={selectedReviewElement}
+            selectedDraftName={selectedDraftName}
             selectedMergeElements={selectedMergeableElements}
             mergeCandidateCount={mergeableElements.length}
             mergeLabel={mergeLabel}
             canMergeSelectedElements={canMergeSelectedElements}
+            canSaveSelectedName={canSaveSelectedName}
             hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
             onRunDetection={() => void handleRunDetection()}
             onEditBox={handleStartBoxEdit}
             onAddChild={() => void handleAddChildFromSelection()}
             onSplitParent={handleStartSplitParent}
+            onSaveName={(value) => void handleSaveSelectedName(value)}
             onAccept={(elementId) => void handleAccept(elementId)}
             onReject={(elementId) => void handleReject(elementId)}
             onMergeLabelChange={setMergeLabel}
@@ -1567,6 +2174,7 @@ export function App() {
           <InspectorPanel
             selectedElement={selectedElement}
             draft={elementDraft}
+            workspaceRunId={activeRunId}
             splitRequestDescription={splitRequestDescription}
             missingMaskDraft={missingMaskDraft}
             repairQaReport={selectedRepairQaReport}
@@ -1590,7 +2198,9 @@ export function App() {
             isRepairing={isRepairing}
             assetCacheKey={assetCacheKey}
           />
-        </section>
+            </section>
+          </Panel>
+        </PanelGroup>
       </main>
 
       <ModelStatusStrip
@@ -1600,6 +2210,19 @@ export function App() {
         exportSummary={exportSummary}
       />
     </div>
+  );
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+    || target.isContentEditable
   );
 }
 
@@ -1652,9 +2275,11 @@ function shouldLoadRepairMetadata(element: WorkspaceElement): boolean {
 function ExtractionPreview({
   selectedElement,
   assetCacheKey,
+  workspaceRunId,
 }: {
   selectedElement: WorkspaceElement | null;
   assetCacheKey: number;
+  workspaceRunId: string | null;
 }) {
   if (!selectedElement) {
     return (
@@ -1680,14 +2305,14 @@ function ExtractionPreview({
           <figure>
             <img
               alt={`${selectedElement.name} source crop`}
-              src={sourceCropUrl(selectedElement, assetCacheKey)}
+              src={sourceCropUrl(selectedElement, assetCacheKey, workspaceRunId)}
             />
             <figcaption>Source crop</figcaption>
           </figure>
           <figure>
             <img
               alt={`${selectedElement.name} mask overlay`}
-              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
+              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey, workspaceRunId) ?? undefined}
             />
             <figcaption>Mask overlay</figcaption>
           </figure>
@@ -1695,7 +2320,7 @@ function ExtractionPreview({
             <div className="checkerboard-preview">
               <img
                 alt={`${selectedElement.name} transparent asset`}
-                src={assetIncompleteUrl(selectedElement, assetCacheKey)}
+                src={assetIncompleteUrl(selectedElement, assetCacheKey, workspaceRunId)}
               />
             </div>
             <figcaption>Transparent asset</figcaption>
@@ -1706,7 +2331,7 @@ function ExtractionPreview({
           <figure>
             <img
               alt={`${selectedElement.name} mask overlay`}
-              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
+              src={workspaceAssetUrl(selectedElement.mask, assetCacheKey, workspaceRunId) ?? undefined}
             />
             <figcaption>Mask overlay</figcaption>
           </figure>
@@ -1724,12 +2349,14 @@ function RepairComparison({
   qaReport,
   repairMetadata,
   assetCacheKey,
+  workspaceRunId,
   hasMissingMaskPreview,
 }: {
   selectedElement: WorkspaceElement | null;
   qaReport: RepairQaReport | null;
   repairMetadata: RepairMetadata | null;
   assetCacheKey: number;
+  workspaceRunId: string | null;
   hasMissingMaskPreview: boolean;
 }) {
   if (!selectedElement || !isRepairVisible(selectedElement, qaReport, repairMetadata)) {
@@ -1737,7 +2364,7 @@ function RepairComparison({
   }
 
   const changedOverlayUrl = repairMetadata?.files.changedPixelsOverlay && qaReport?.changedPixelsOverlayPath
-    ? workspaceAssetUrl(qaReport.changedPixelsOverlayPath, assetCacheKey)
+    ? workspaceAssetUrl(qaReport.changedPixelsOverlayPath, assetCacheKey, workspaceRunId)
     : null;
   const hasCompletedAsset = repairMetadata?.files.completedAsset ?? false;
 
@@ -1762,7 +2389,7 @@ function RepairComparison({
           <div className="checkerboard-preview">
             <img
               alt={`${selectedElement.name} before asset`}
-              src={assetIncompleteUrl(selectedElement, assetCacheKey)}
+              src={assetIncompleteUrl(selectedElement, assetCacheKey, workspaceRunId)}
             />
           </div>
           <figcaption>Before asset</figcaption>
@@ -1772,7 +2399,7 @@ function RepairComparison({
             <div className="checkerboard-preview">
               <img
                 alt={`${selectedElement.name} after asset`}
-                src={repairAssetUrl(selectedElement, "completed_asset.png", assetCacheKey)}
+                src={repairAssetUrl(selectedElement, "completed_asset.png", assetCacheKey, workspaceRunId)}
               />
             </div>
             <figcaption>After asset</figcaption>
@@ -1782,7 +2409,7 @@ function RepairComparison({
           <figure>
             <img
               alt={`${selectedElement.name} missing mask overlay`}
-              src={missingMaskUrl(selectedElement, assetCacheKey)}
+              src={missingMaskUrl(selectedElement, assetCacheKey, workspaceRunId)}
             />
             <figcaption>Missing mask overlay</figcaption>
           </figure>
@@ -1818,9 +2445,11 @@ function isRepairVisible(
 function ExportPanel({
   summary,
   assetCacheKey,
+  workspaceRunId,
 }: {
   summary: ExportSummary | null;
   assetCacheKey: number;
+  workspaceRunId: string | null;
 }) {
   return (
     <div className="export-panel">
@@ -1882,7 +2511,7 @@ function ExportPanel({
             <figure className="export-contact-sheet">
               <img
                 alt="Export contact sheet preview"
-                src={workspaceAssetUrl(summary.paths.contactSheet, assetCacheKey) ?? undefined}
+                src={workspaceAssetUrl(summary.paths.contactSheet, assetCacheKey, workspaceRunId) ?? undefined}
               />
               <figcaption>Contact sheet preview</figcaption>
             </figure>

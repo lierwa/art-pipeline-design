@@ -1,0 +1,163 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  createDownloadModelPlan,
+  createDevPlan,
+  createInstallPlan,
+  npmCommandForRuntime,
+  parseDevArgs,
+  parseInstallArgs,
+} from "./lib/command-plans.mjs";
+
+test("createInstallPlan installs backend dev package and frontend dependencies", () => {
+  const plan = createInstallPlan({
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.deepEqual(plan, [
+    {
+      label: "backend",
+      command: "python3",
+      args: ["-m", "pip", "install", "-e", "backend[dev]"],
+    },
+    {
+      label: "frontend",
+      command: "npm",
+      args: ["--prefix", "frontend", "install"],
+    },
+  ]);
+});
+
+test("createInstallPlan can include optional model dependencies", () => {
+  const plan = createInstallPlan({
+    includeModel: true,
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].args.at(-1), "backend[dev,model]");
+});
+
+test("createDevPlan starts backend and frontend from repository root", () => {
+  const plan = createDevPlan({
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.deepEqual(plan, [
+    {
+      label: "backend",
+      command: "python3",
+      args: [
+        "-m",
+        "uvicorn",
+        "art_pipeline.api:app",
+        "--reload",
+        "--app-dir",
+        "backend",
+      ],
+      env: {
+        ART_PIPELINE_DETECTION_PROVIDER: "grounding_dino",
+      },
+    },
+    {
+      label: "frontend",
+      command: "npm",
+      args: ["--prefix", "frontend", "run", "dev", "--", "--host", "127.0.0.1"],
+    },
+  ]);
+});
+
+test("createDevPlan preserves python launcher prefix arguments", () => {
+  const plan = createDevPlan({
+    npmCommand: { command: "npm.cmd", args: [] },
+    pythonCommand: { command: "py", args: ["-3"] },
+  });
+
+  assert.deepEqual(plan[0].args.slice(0, 3), ["-3", "-m", "uvicorn"]);
+  assert.equal(plan[1].command, "npm.cmd");
+});
+
+test("createDevPlan preserves an explicitly configured detection provider", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_DETECTION_PROVIDER: "demo" },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].env.ART_PIPELINE_DETECTION_PROVIDER, "demo");
+});
+
+test("createDevPlan can explicitly start the demo provider", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_DETECTION_PROVIDER: "grounding_dino" },
+    useDemoProvider: true,
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].env.ART_PIPELINE_DETECTION_PROVIDER, "demo");
+});
+
+test("createDownloadModelPlan downloads the formal GroundingDINO model", () => {
+  assert.deepEqual(
+    createDownloadModelPlan({
+      pythonCommand: { command: "python3", args: [] },
+    }),
+    [
+      {
+        label: "grounding-dino-model",
+        command: "python3",
+        args: ["-m", "art_pipeline.model_runners.download_grounding_dino"],
+      },
+    ],
+  );
+});
+
+test("npmCommandForRuntime uses npm_execpath when npm launched the script", () => {
+  assert.deepEqual(
+    npmCommandForRuntime({
+      env: { npm_execpath: "/opt/npm/bin/npm-cli.js" },
+      nodePath: "/usr/local/bin/node",
+      platform: "linux",
+    }),
+    {
+      command: "/usr/local/bin/node",
+      args: ["/opt/npm/bin/npm-cli.js"],
+    },
+  );
+});
+
+test("npmCommandForRuntime falls back to platform npm command", () => {
+  assert.deepEqual(npmCommandForRuntime({ env: {}, platform: "win32" }), {
+    command: "npm.cmd",
+    args: [],
+  });
+  assert.deepEqual(npmCommandForRuntime({ env: {}, platform: "linux" }), {
+    command: "npm",
+    args: [],
+  });
+  assert.deepEqual(npmCommandForRuntime({ env: {}, platform: "darwin" }), {
+    command: "npm",
+    args: [],
+  });
+});
+
+test("parseInstallArgs supports model dependencies and skips", () => {
+  assert.deepEqual(parseInstallArgs(["--model", "--skip-frontend"]), {
+    includeModel: true,
+    skipBackend: false,
+    skipFrontend: true,
+  });
+});
+
+test("parseDevArgs supports explicit demo mode", () => {
+  assert.deepEqual(parseDevArgs(["--demo"]), {
+    useDemoProvider: true,
+  });
+  assert.deepEqual(parseDevArgs([]), {
+    useDemoProvider: false,
+  });
+});

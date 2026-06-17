@@ -56,6 +56,28 @@ def test_detect_lazily_configures_grounding_dino_provider_from_env(
     assert body["elements"][0]["label"] == "cabinet"
 
 
+def test_detect_can_use_demo_provider_from_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ART_PIPELINE_DETECTION_PROVIDER", "demo")
+
+    app = create_app(workspace_root=tmp_path / "workspace")
+    client = TestClient(app)
+    upload = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post("/api/workspace/detect")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {element["label"] for element in body["elements"]} >= {"bathtub", "cat"}
+    assert all(element["sourceProvider"] == "demo" for element in body["elements"])
+
+
 def test_detect_reports_config_error_when_grounding_dino_dependencies_are_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +151,45 @@ def test_grounding_dino_provider_clamps_boxes_and_skips_degenerate_results(
     ]
 
 
+def test_grounding_dino_provider_supports_transformers_threshold_keyword(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_grounding_dino_dependencies(
+        monkeypatch,
+        post_process_keyword="threshold",
+    )
+    module = importlib.import_module("art_pipeline.model_runners.grounding_dino")
+
+    provider = module.GroundingDinoProvider(box_threshold=0.41)
+    results = provider.detect(Image.new("RGB", (100, 80)), ["cabinet"], "ignored")
+
+    assert results[0]["label"] == "cabinet"
+    assert module.AutoProcessor.captured_threshold == 0.41
+
+
+def test_download_grounding_dino_model_uses_env_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_grounding_dino_dependencies(monkeypatch)
+    monkeypatch.delitem(
+        sys.modules,
+        "art_pipeline.model_runners.download_grounding_dino",
+        raising=False,
+    )
+    monkeypatch.setenv("ART_PIPELINE_GROUNDING_DINO_MODEL", "custom/downloader-model")
+
+    module = importlib.import_module("art_pipeline.model_runners.download_grounding_dino")
+    model_id = module.download_model()
+    grounding_dino = importlib.import_module("art_pipeline.model_runners.grounding_dino")
+
+    assert model_id == "custom/downloader-model"
+    assert grounding_dino.AutoProcessor.requested_model_id == "custom/downloader-model"
+    assert (
+        grounding_dino.AutoModelForZeroShotObjectDetection.requested_model_id
+        == "custom/downloader-model"
+    )
+
+
 class _FakeInputs(dict):
     input_ids = [[1, 2, 3]]
 
@@ -156,6 +217,7 @@ class _FakeNoGrad:
 def _install_fake_grounding_dino_dependencies(
     monkeypatch: pytest.MonkeyPatch,
     detections: list[tuple[float, str, list[float]]] | None = None,
+    post_process_keyword: str = "box_threshold",
 ) -> None:
     monkeypatch.delitem(
         sys.modules,
@@ -176,6 +238,7 @@ def _install_fake_grounding_dino_dependencies(
     class FakeProcessor:
         captured_text = ""
         captured_image_mode = ""
+        captured_threshold = None
 
         def __call__(self, images, text, return_tensors):
             FakeProcessor.captured_text = text
@@ -184,14 +247,9 @@ def _install_fake_grounding_dino_dependencies(
             FakeAutoProcessor.captured_image_mode = images.mode
             return _FakeInputs(pixel_values=fake_torch.zeros((1, 3, 8, 8)))
 
-        def post_process_grounded_object_detection(
-            self,
-            outputs,
-            input_ids,
-            box_threshold,
-            text_threshold,
-            target_sizes,
-        ):
+        def _post_process(self, threshold):
+            FakeProcessor.captured_threshold = threshold
+            FakeAutoProcessor.captured_threshold = threshold
             return [
                 {
                     "scores": [score for score, _label, _box in fake_detections],
@@ -199,6 +257,30 @@ def _install_fake_grounding_dino_dependencies(
                     "boxes": [_FakeBox(box) for _score, _label, box in fake_detections],
                 }
             ]
+
+        if post_process_keyword == "threshold":
+
+            def post_process_grounded_object_detection(
+                self,
+                outputs,
+                input_ids,
+                threshold,
+                text_threshold,
+                target_sizes,
+            ):
+                return self._post_process(threshold)
+
+        else:
+
+            def post_process_grounded_object_detection(
+                self,
+                outputs,
+                input_ids,
+                box_threshold,
+                text_threshold,
+                target_sizes,
+            ):
+                return self._post_process(box_threshold)
 
     class FakeModel:
         def to(self, device):
@@ -211,14 +293,20 @@ def _install_fake_grounding_dino_dependencies(
     class FakeAutoProcessor:
         captured_text = ""
         captured_image_mode = ""
+        captured_threshold = None
+        requested_model_id = ""
 
         @staticmethod
         def from_pretrained(model_id):
+            FakeAutoProcessor.requested_model_id = model_id
             return FakeProcessor()
 
     class FakeAutoModel:
+        requested_model_id = ""
+
         @staticmethod
         def from_pretrained(model_id):
+            FakeAutoModel.requested_model_id = model_id
             return FakeModel()
 
     fake_transformers = types.SimpleNamespace(

@@ -19,14 +19,25 @@ export function ModelStatusStrip({
   const acceptedCount = visibleElements.filter(isAccepted).length;
   const reviewedCount = Math.max(visibleElements.length - needsReviewCount, 0);
   const warningCount = exportSummary?.warnings.length ?? visibleElements.filter((element) => element.status === "qa_failed").length;
+  const detectionCount = visibleElements.length;
 
   return (
     <footer className="model-status-strip">
       <StatusMetric label="Model Provider" value={provider} />
-      <StatusMetric label="Detections" value={String(visibleElements.length)} />
-      <StatusMetric label="Reviewed" value={String(reviewedCount)} />
-      <StatusMetric label="Accepted" value={String(acceptedCount)} tone="success" />
-      <StatusMetric label="Needs Review" value={String(needsReviewCount)} tone="warning" />
+      <StatusMetric label="Detections" value={String(detectionCount)} detail="Total" />
+      <StatusMetric label="Reviewed" value={String(reviewedCount)} detail={`${percent(reviewedCount, detectionCount)}%`} />
+      <StatusMetric
+        label="Accepted"
+        value={String(acceptedCount)}
+        detail={`${percent(acceptedCount, reviewedCount)}% of reviewed`}
+        tone="success"
+      />
+      <StatusMetric
+        label="Needs Review"
+        value={String(needsReviewCount)}
+        detail={`${percent(needsReviewCount, detectionCount)}% of total`}
+        tone="warning"
+      />
       <StatusMetric label="Warnings" value={String(warningCount)} tone={warningCount > 0 ? "danger" : undefined} />
       <div className="status-message" aria-live="polite">
         {isSaving ? "Saving..." : status}
@@ -38,18 +49,30 @@ export function ModelStatusStrip({
 function StatusMetric({
   label,
   value,
+  detail,
   tone,
 }: {
   label: string;
   value: string;
+  detail?: string;
   tone?: "success" | "warning" | "danger";
 }) {
   return (
     <div className={`status-metric${tone ? ` tone-${tone}` : ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span className="status-metric-label">{label}</span>
+      <div className="status-metric-value">
+        <strong>{value}</strong>
+        {detail ? <small>{detail}</small> : null}
+      </div>
     </div>
   );
+}
+
+function percent(value: number, total: number): number {
+  if (total <= 0) {
+    return 0;
+  }
+  return Math.round((value / total) * 100);
 }
 
 function resolveProvider(elements: WorkspaceElement[]): string {

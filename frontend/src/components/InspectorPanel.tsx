@@ -14,6 +14,7 @@ import {
 type InspectorPanelProps = {
   selectedElement: WorkspaceElement | null;
   draft: ElementEditorDraft | null;
+  workspaceRunId: string | null;
   splitRequestDescription: string;
   missingMaskDraft: MissingMaskDraft | null;
   repairQaReport: RepairQaReport | null;
@@ -41,6 +42,7 @@ type InspectorPanelProps = {
 export function InspectorPanel({
   selectedElement,
   draft,
+  workspaceRunId,
   splitRequestDescription,
   missingMaskDraft,
   repairQaReport,
@@ -319,16 +321,16 @@ export function InspectorPanel({
                 <div className="inspector-preview-strip">
                   <img
                     alt={`${selectedElement.name} inspector source crop`}
-                    src={sourceCropUrl(selectedElement, assetCacheKey)}
+                    src={sourceCropUrl(selectedElement, assetCacheKey, workspaceRunId)}
                   />
                   <img
                     alt={`${selectedElement.name} inspector mask overlay`}
-                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
+                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey, workspaceRunId) ?? undefined}
                   />
                   <div className="checkerboard-preview">
                     <img
                       alt={`${selectedElement.name} inspector transparent asset`}
-                      src={assetIncompleteUrl(selectedElement, assetCacheKey)}
+                      src={assetIncompleteUrl(selectedElement, assetCacheKey, workspaceRunId)}
                     />
                   </div>
                 </div>
@@ -336,7 +338,7 @@ export function InspectorPanel({
                 <div className="inspector-preview-strip">
                   <img
                     alt={`${selectedElement.name} inspector mask overlay`}
-                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey) ?? undefined}
+                    src={workspaceAssetUrl(selectedElement.mask, assetCacheKey, workspaceRunId) ?? undefined}
                   />
                   <p className="panel-copy">Mask saved. Re-extract to refresh asset previews.</p>
                 </div>
@@ -446,7 +448,7 @@ export function InspectorPanel({
                     <figure>
                       <img
                         alt={`${selectedElement.name} inspector missing mask overlay`}
-                        src={missingMaskUrl(selectedElement, assetCacheKey)}
+                        src={missingMaskUrl(selectedElement, assetCacheKey, workspaceRunId)}
                       />
                       <figcaption>Missing mask overlay</figcaption>
                     </figure>
@@ -455,7 +457,7 @@ export function InspectorPanel({
                     {hasRepairPackage ? (
                       <img
                         alt={`${selectedElement.name} preserve mask preview`}
-                        src={repairAssetUrl(selectedElement, "preserve_mask.png", assetCacheKey)}
+                        src={repairAssetUrl(selectedElement, "preserve_mask.png", assetCacheKey, workspaceRunId)}
                       />
                     ) : (
                       <div className="repair-preview-placeholder">Pending</div>

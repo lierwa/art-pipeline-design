@@ -1,18 +1,23 @@
+import { useEffect, useState } from "react";
+
 import { WorkspaceElement } from "../workspace";
 
 type SelectionActionPanelProps = {
   hasSource: boolean;
   isAnnotating: boolean;
   selectedElement: WorkspaceElement | null;
+  selectedDraftName: string;
   selectedMergeElements: WorkspaceElement[];
   mergeCandidateCount: number;
   mergeLabel: string;
   canMergeSelectedElements: boolean;
+  canSaveSelectedName: boolean;
   hasUnsavedGeometryChanges: boolean;
   onRunDetection: () => void;
   onEditBox: () => void;
   onAddChild: () => void;
   onSplitParent: () => void;
+  onSaveName: (value: string) => void;
   onAccept: (elementId: string) => void;
   onReject: (elementId: string) => void;
   onMergeLabelChange: (value: string) => void;
@@ -21,17 +26,18 @@ type SelectionActionPanelProps = {
 
 export function SelectionActionPanel({
   hasSource,
-  isAnnotating,
   selectedElement,
+  selectedDraftName,
   selectedMergeElements,
   mergeCandidateCount,
   mergeLabel,
   canMergeSelectedElements,
+  canSaveSelectedName,
   hasUnsavedGeometryChanges,
-  onRunDetection,
   onEditBox,
   onAddChild,
   onSplitParent,
+  onSaveName,
   onAccept,
   onReject,
   onMergeLabelChange,
@@ -57,19 +63,21 @@ export function SelectionActionPanel({
         ) : selectedElement ? (
           <SingleSelectionActions
             selectedElement={selectedElement}
+            selectedDraftName={selectedDraftName}
             mergeCandidateCount={mergeCandidateCount}
+            canSaveSelectedName={canSaveSelectedName}
+            hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
             onEditBox={onEditBox}
             onAddChild={onAddChild}
             onSplitParent={onSplitParent}
+            onSaveName={onSaveName}
             onAccept={onAccept}
             onReject={onReject}
           />
         ) : (
           <NoSelectionActions
             hasSource={hasSource}
-            isAnnotating={isAnnotating}
             mergeCandidateCount={mergeCandidateCount}
-            onRunDetection={onRunDetection}
           />
         )}
       </div>
@@ -79,29 +87,18 @@ export function SelectionActionPanel({
 
 function NoSelectionActions({
   hasSource,
-  isAnnotating,
   mergeCandidateCount,
-  onRunDetection,
 }: {
   hasSource: boolean;
-  isAnnotating: boolean;
   mergeCandidateCount: number;
-  onRunDetection: () => void;
 }) {
   return (
     <div className="selection-action-stack">
       <div className="selection-action-summary">
         <span className="preview-label">No asset selected</span>
-        <strong>Run detection or select an asset to review.</strong>
+        <strong>{hasSource ? "Run detection from the top bar to populate this review queue." : "Upload a PNG to begin."}</strong>
+        <span className="panel-copy">Accepted assets, child splits, merge selections, and review actions appear here after detection.</span>
       </div>
-      <button
-        type="button"
-        className="primary-action"
-        disabled={!hasSource || isAnnotating}
-        onClick={onRunDetection}
-      >
-        Run Detection
-      </button>
       {mergeCandidateCount >= 2 ? <MergeStandby /> : null}
     </div>
   );
@@ -109,24 +106,37 @@ function NoSelectionActions({
 
 function SingleSelectionActions({
   selectedElement,
+  selectedDraftName,
   mergeCandidateCount,
+  canSaveSelectedName,
+  hasUnsavedGeometryChanges,
   onEditBox,
   onAddChild,
   onSplitParent,
+  onSaveName,
   onAccept,
   onReject,
 }: {
   selectedElement: WorkspaceElement;
+  selectedDraftName: string;
   mergeCandidateCount: number;
+  canSaveSelectedName: boolean;
+  hasUnsavedGeometryChanges: boolean;
   onEditBox: () => void;
   onAddChild: () => void;
   onSplitParent: () => void;
+  onSaveName: (value: string) => void;
   onAccept: (elementId: string) => void;
   onReject: (elementId: string) => void;
 }) {
   const isActive = isActiveCandidate(selectedElement);
   const canAccept = isActive && !isAcceptedStatus(selectedElement.status);
   const canReject = isActive && canRejectStatus(selectedElement.status);
+  const [nameDraft, setNameDraft] = useState(selectedDraftName || selectedElement.name);
+
+  useEffect(() => {
+    setNameDraft(selectedDraftName || selectedElement.name);
+  }, [selectedDraftName, selectedElement.id, selectedElement.name]);
 
   if (!isActive) {
     return (
@@ -147,17 +157,31 @@ function SingleSelectionActions({
         <span className="preview-label">Actions for "{selectedElement.name}"</span>
         <strong>Ready for review</strong>
       </div>
+      <div className="selection-name-editor">
+        <label className="field-group">
+          <span>Selected asset name</span>
+          <input
+            aria-label="Selected asset name"
+            type="text"
+            value={nameDraft}
+            onChange={(event) => setNameDraft(event.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!canSaveSelectedName || hasUnsavedGeometryChanges}
+          onClick={() => onSaveName(nameDraft)}
+        >
+          Save name
+        </button>
+      </div>
       <div className="selection-action-grid">
         <button type="button" onClick={onEditBox}>Edit box</button>
         <button type="button" onClick={onAddChild}>Add child</button>
-        <button
-          type="button"
-          disabled
-          aria-describedby="run-detect-inside-note"
-        >
+        <button type="button" disabled>
           Run detect inside
         </button>
-        <button type="button" onClick={onSplitParent}>Split parent</button>
+        <button type="button" onClick={onSplitParent}>Split asset</button>
         {canAccept ? (
           <button type="button" onClick={() => onAccept(selectedElement.id)}>
             Accept
@@ -169,9 +193,6 @@ function SingleSelectionActions({
           </button>
         ) : null}
       </div>
-      <p id="run-detect-inside-note" className="panel-copy">
-        Run detect inside is not wired to a backend endpoint yet.
-      </p>
       {mergeCandidateCount >= 2 ? <MergeStandby /> : null}
     </div>
   );

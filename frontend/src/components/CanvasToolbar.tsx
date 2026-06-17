@@ -1,3 +1,24 @@
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { ReactNode } from "react";
+import {
+  BoxSelect,
+  Combine,
+  Hand,
+  Images,
+  Maximize2,
+  MousePointer2,
+  PenLine,
+  Redo2,
+  ScanLine,
+  SplitSquareHorizontal,
+  Tags,
+  Trash2,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+
+import { IconButton } from "./IconButton";
 import { CanvasTool, OverlayState } from "../workspace";
 
 type CanvasToolbarProps = {
@@ -7,10 +28,20 @@ type CanvasToolbarProps = {
   hasSelection: boolean;
   canSplit: boolean;
   canMerge: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  zoomPercent: number;
+  isPanMode: boolean;
   onSelectTool: (tool: CanvasTool) => void;
   onToggleOverlay: (key: keyof OverlayState) => void;
   onEditBox: () => void;
   onMerge: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onFitCanvas: () => void;
+  onTogglePanMode: () => void;
 };
 
 export function CanvasToolbar({
@@ -20,96 +51,190 @@ export function CanvasToolbar({
   hasSelection,
   canSplit,
   canMerge,
+  canUndo,
+  canRedo,
+  zoomPercent,
+  isPanMode,
   onSelectTool,
   onToggleOverlay,
   onEditBox,
   onMerge,
+  onUndo,
+  onRedo,
+  onZoomIn,
+  onZoomOut,
+  onFitCanvas,
+  onTogglePanMode,
 }: CanvasToolbarProps) {
   return (
-    <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
-      <div className="canvas-tool-group" aria-label="Editing tools">
-        <button
-          type="button"
-          className={tool === "select" ? "is-active" : ""}
-          onClick={() => onSelectTool("select")}
-        >
-          Select
-        </button>
-        <button
-          type="button"
-          disabled={!hasSelection}
-          onClick={onEditBox}
-        >
-          Edit box
-        </button>
-        <button
-          type="button"
-          className={tool === "draw" ? "is-active" : ""}
-          disabled={!hasSource}
-          onClick={() => onSelectTool("draw")}
-        >
-          Draw
-        </button>
-        <button
-          type="button"
-          className={tool === "split" ? "is-active" : ""}
-          disabled={!hasSource || !canSplit}
-          onClick={() => onSelectTool("split")}
-        >
-          Split
-        </button>
-        <button
-          type="button"
-          disabled={!canMerge}
-          onClick={onMerge}
-        >
-          Merge
-        </button>
-        <button type="button" disabled>
-          Delete
-        </button>
-      </div>
+    <Tooltip.Provider delayDuration={250}>
+      <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
+        <div className="canvas-tool-group" aria-label="Editing tools">
+          <IconButton
+            label="Select (Q)"
+            aria-label="Select"
+            icon={<MousePointer2 size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="Q"
+            aria-pressed={tool === "select"}
+            isActive={tool === "select"}
+            onClick={() => onSelectTool("select")}
+          />
+          <IconButton
+            label="Edit box (W)"
+            aria-label="Edit box"
+            icon={<BoxSelect size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="W"
+            disabled={!hasSelection}
+            onClick={onEditBox}
+          />
+          <IconButton
+            label="Draw element (E)"
+            aria-label="Draw element"
+            icon={<PenLine size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="E"
+            aria-pressed={tool === "draw"}
+            isActive={tool === "draw"}
+            disabled={!hasSource}
+            onClick={() => onSelectTool("draw")}
+          />
+          <IconButton
+            label="Pan canvas (R)"
+            aria-label="Pan canvas"
+            icon={<Hand size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="R"
+            aria-pressed={isPanMode}
+            isActive={isPanMode}
+            disabled={!hasSource}
+            onClick={onTogglePanMode}
+          />
+          <IconButton
+            label="Split selected"
+            icon={<SplitSquareHorizontal size={16} strokeWidth={2.2} />}
+            aria-pressed={tool === "split"}
+            isActive={tool === "split"}
+            disabled={!hasSource || !canSplit}
+            onClick={() => onSelectTool("split")}
+          />
+          <IconButton
+            label="Merge"
+            icon={<Combine size={16} strokeWidth={2.2} />}
+            disabled={!canMerge}
+            onClick={onMerge}
+          />
+          <IconButton
+            label="Delete"
+            icon={<Trash2 size={16} strokeWidth={2.2} />}
+            disabled
+          />
+        </div>
 
-      <div className="canvas-overlay-switches">
-        <label className="panel-checkbox">
-          <input
-            type="checkbox"
+        <div className="canvas-overlay-switches" aria-label="Overlay toggles">
+          <OverlayToggle
+            label="Show boxes"
+            className="overlay-toggle-boxes"
             checked={overlays.showBoxes}
+            icon={<ScanLine size={16} strokeWidth={2.2} />}
             onChange={() => onToggleOverlay("showBoxes")}
           />
-          <span>Boxes</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            type="checkbox"
+          <OverlayToggle
+            label="Show names"
+            className="overlay-toggle-names"
             checked={overlays.showNames}
+            icon={<Tags size={16} strokeWidth={2.2} />}
             onChange={() => onToggleOverlay("showNames")}
           />
-          <span>Names</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            type="checkbox"
+          <OverlayToggle
+            label="Show thumbnails"
+            className="overlay-toggle-thumbs"
             checked={overlays.showThumbs}
+            icon={<Images size={16} strokeWidth={2.2} />}
             onChange={() => onToggleOverlay("showThumbs")}
           />
-          <span>Thumbs</span>
-        </label>
-        <label className="panel-checkbox">
-          <input
-            type="checkbox"
+          <OverlayToggle
+            label="Show masks"
+            className="overlay-toggle-masks"
             checked={overlays.showMasks}
+            icon={<BoxSelect size={16} strokeWidth={2.2} />}
             onChange={() => onToggleOverlay("showMasks")}
           />
-          <span>Masks</span>
-        </label>
-      </div>
+        </div>
 
-      <div className="zoom-controls" aria-label="Zoom controls">
-        <button type="button" disabled aria-label="Zoom out">-</button>
-        <span>100%</span>
-        <button type="button" disabled aria-label="Zoom in">+</button>
+        <div className="canvas-history-controls" aria-label="History controls">
+          <IconButton
+            label="Undo"
+            icon={<Undo2 size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="Control+Z Meta+Z"
+            disabled={!canUndo}
+            onClick={onUndo}
+          />
+          <IconButton
+            label="Redo"
+            icon={<Redo2 size={16} strokeWidth={2.2} />}
+            aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y Meta+Y"
+            disabled={!canRedo}
+            onClick={onRedo}
+          />
+        </div>
+
+        <div className="zoom-controls" aria-label="Zoom controls">
+          <IconButton
+            label="Zoom out"
+            icon={<ZoomOut size={16} strokeWidth={2.2} />}
+            disabled={!hasSource || zoomPercent <= 40}
+            onClick={onZoomOut}
+          />
+          <span>{zoomPercent}%</span>
+          <IconButton
+            label="Zoom in"
+            icon={<ZoomIn size={16} strokeWidth={2.2} />}
+            disabled={!hasSource || zoomPercent >= 200}
+            onClick={onZoomIn}
+          />
+          <IconButton
+            label="Fit to screen"
+            icon={<Maximize2 size={16} strokeWidth={2.2} />}
+            disabled={!hasSource}
+            onClick={onFitCanvas}
+          />
+        </div>
       </div>
-    </div>
+    </Tooltip.Provider>
+  );
+}
+
+function OverlayToggle({
+  label,
+  className,
+  checked,
+  icon,
+  onChange,
+}: {
+  label: string;
+  className: string;
+  checked: boolean;
+  icon: ReactNode;
+  onChange: () => void;
+}) {
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <label className={`panel-checkbox overlay-toggle ${className}`}>
+          <input
+            aria-label={label}
+            type="checkbox"
+            checked={checked}
+            onChange={onChange}
+          />
+          <span className="shared-icon-button-icon" aria-hidden="true">{icon}</span>
+          <span className="visually-hidden">{label}</span>
+        </label>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content className="tooltip-content" side="bottom" sideOffset={8}>
+          {label}
+          <Tooltip.Arrow className="tooltip-arrow" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
   );
 }
