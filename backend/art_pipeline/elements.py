@@ -1,20 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 
 ElementStatus = Literal[
-    "proposal",
+    "model_detected",
+    "edited",
+    "child",
+    "merged",
     "accepted",
-    "split_parent",
-    "extract_ready",
-    "extracted",
-    "repair_pending",
-    "repair_complete",
-    "qa_failed",
+    "rejected",
     "exported",
 ]
 
@@ -49,9 +48,17 @@ class SourceMetadata(BaseModel):
     height: int
 
 
+class CandidateHistoryEntry(BaseModel):
+    kind: str
+    at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    before: dict[str, Any]
+    after: dict[str, Any]
+
+
 class ElementRecord(BaseModel):
     id: str
     name: str
+    label: str | None = None
     status: ElementStatus = "proposal"
     mode: ElementMode = "visible_only"
     bbox: BoundingBox
@@ -61,9 +68,14 @@ class ElementRecord(BaseModel):
     mask: str | None = None
     parentId: str | None = None
     source: str = "manual"
+    sourceProvider: str | None = None
+    sourcePrompt: str | None = None
     notes: str = ""
     visible: bool = True
     confidence: float | None = None
+    history: list[CandidateHistoryEntry] = Field(default_factory=list)
+    mergedInto: str | None = None
+    exportParent: bool = False
 
     @model_validator(mode="after")
     def populate_canvas(self) -> "ElementRecord":
