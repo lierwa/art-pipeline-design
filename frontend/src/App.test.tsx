@@ -424,7 +424,7 @@ describe("App", () => {
       expect(within(canvasToolbar).getByRole("button", { name: /^draw/i })).toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^split/i })).toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^merge/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^delete/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^delete/i })).toBeDisabled();
       expect(within(canvasToolbar).getByText("100%")).toBeInTheDocument();
     } finally {
       restoreFetch();

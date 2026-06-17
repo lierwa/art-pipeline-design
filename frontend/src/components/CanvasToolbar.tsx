@@ -63,7 +63,7 @@ export function CanvasToolbar({
         >
           Merge
         </button>
-        <button type="button" disabled={!hasSelection}>
+        <button type="button" disabled>
           Delete
         </button>
       </div>
