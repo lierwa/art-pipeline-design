@@ -842,6 +842,50 @@ describe("App", () => {
     }
   });
 
+  it("blocks merge while selected geometry edits are unsaved", async () => {
+    const user = userEvent.setup();
+    let mergePosts = 0;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+
+      if (input === "/api/workspace/elements/merge" && init?.method === "POST") {
+        mergePosts += 1;
+        return jsonResponse({
+          element: mergedState.elements[2],
+          state: mergedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "34");
+      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
+      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+
+      const mergeButton = screen.getByRole("button", { name: /merge selected/i });
+      expect(mergeButton).toBeDisabled();
+
+      await user.click(mergeButton);
+
+      expect(mergePosts).toBe(0);
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        "/api/workspace/elements/merge",
+        expect.objectContaining({ method: "POST" }),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("excludes rejected hidden candidates from merge controls", async () => {
     const stateWithRejectedCandidate = {
       source: loadedState.source,

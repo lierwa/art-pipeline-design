@@ -1169,6 +1169,10 @@ export function App() {
   }
 
   async function handleMergeSelectedElements() {
+    if (hasUnsavedGeometryChanges) {
+      return;
+    }
+
     const mergeElementIds = selectedElementIds.filter((elementId) =>
       workspace.elements.some((element) => element.id === elementId && isMergeableElement(element)),
     );
@@ -1411,7 +1415,8 @@ export function App() {
               <button
                 type="button"
                 disabled={
-                  selectedElementIds.filter((elementId) =>
+                  hasUnsavedGeometryChanges
+                  || selectedElementIds.filter((elementId) =>
                     mergeableElements.some((element) => element.id === elementId),
                   ).length < 2
                 }
