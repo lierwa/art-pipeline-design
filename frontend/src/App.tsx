@@ -1061,7 +1061,14 @@ export function App() {
     }
 
     const geometryChanged = isGeometryDraftDirty(selectedElement, elementDraft);
-    if (canPatchElementDraft(selectedElement, elementDraft)) {
+    const canPatchDraft = canPatchElementDraft(selectedElement, elementDraft);
+    if (hasPatchableContentChanges(selectedElement, elementDraft) && !canPatchDraft) {
+      setError("Save geometry or label changes separately from legacy fields.");
+      setStatus("State save failed.");
+      return;
+    }
+
+    if (canPatchDraft) {
       const patchRequest = buildElementPatchFromDraft(selectedElement, elementDraft);
       if (!patchRequest) {
         setError("Element geometry values must be whole numbers.");
@@ -1890,6 +1897,20 @@ function canPatchElementDraft(
     && boxesEqual(element.canvas, canvas)
     && draft.notes === element.notes
   );
+}
+
+function hasPatchableContentChanges(
+  element: WorkspaceElement,
+  draft: ElementEditorDraft,
+): boolean {
+  const bbox = parseBox(draft.bbox);
+  if (!bbox) {
+    return false;
+  }
+
+  const nextLabel = draft.name.trim() || element.name;
+  const currentLabel = element.label ?? element.name;
+  return !boxesEqual(element.bbox, bbox) || nextLabel !== currentLabel;
 }
 
 function buildElementPatchFromDraft(

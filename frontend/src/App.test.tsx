@@ -760,6 +760,106 @@ describe("App", () => {
     }
   });
 
+  it("saves bbox-only candidate edits with PATCH", async () => {
+    const user = userEvent.setup();
+    const patchedElement = {
+      ...detectedElement,
+      status: "edited",
+      bbox: { x: 12, y: 16, w: 34, h: 32 },
+    };
+    let statePuts = 0;
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        statePuts += 1;
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/elements/element_010" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: detectedState.source,
+            elements: [patchedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "34");
+      await user.click(screen.getByRole("button", { name: /save element/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({
+          bbox: { x: 12, y: 16, w: 34, h: 32 },
+        });
+      });
+      expect(statePuts).toBe(0);
+      expect(screen.getAllByText(/element details updated\./i)).toHaveLength(2);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("blocks mixed candidate patch and legacy edits instead of falling back to PUT", async () => {
+    const user = userEvent.setup();
+    let statePuts = 0;
+    let patchRequests = 0;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        statePuts += 1;
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/elements/element_010" && init?.method === "PATCH") {
+        patchRequests += 1;
+        return jsonResponse({
+          element: detectedElement,
+          state: detectedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      await user.clear(bboxWidthField);
+      await user.type(bboxWidthField, "34");
+      await user.type(screen.getByLabelText(/element notes/i), "Needs legacy review");
+      await user.click(screen.getByRole("button", { name: /save element/i }));
+
+      await waitFor(() => {
+        expect(statePuts).toBe(0);
+        expect(patchRequests).toBe(0);
+      });
+      expect(screen.getAllByText(/state save failed\./i)).toHaveLength(2);
+      expect(screen.getByText(/save geometry or label changes separately from legacy fields\./i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("keeps the last persisted element when inspector save is rejected by validation", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
