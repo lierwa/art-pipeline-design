@@ -17,12 +17,16 @@ type CanvasStageProps = {
   overlays: OverlayState;
   overlayElements: WorkspaceElement[];
   selectedElementId: string | null;
+  sourceDetails: string;
   tool: CanvasTool;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
   missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
+  canSplit: boolean;
   canDrawMissingMask: boolean;
+  onToggleOverlay: (key: keyof OverlayState) => void;
+  onSelectTool: (tool: CanvasTool) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
   onMissingMaskRegionChange: (region: DraftRegion | null) => void;
@@ -44,12 +48,16 @@ export function CanvasStage({
   overlays,
   overlayElements,
   selectedElementId,
+  sourceDetails,
   tool,
   draftRegion,
   splitRegions,
   missingMaskRegion,
   assetCacheKey,
+  canSplit,
   canDrawMissingMask,
+  onToggleOverlay,
+  onSelectTool,
   onDraftRegionChange,
   onAddSplitRegion,
   onMissingMaskRegionChange,
@@ -154,7 +162,82 @@ export function CanvasStage({
   ) : null;
 
   return (
-    <>
+    <section className="canvas-panel" data-testid="canvas-area">
+      <div className="canvas-header">
+        <h2>Canvas</h2>
+        <span>{sourceDetails}</span>
+      </div>
+      <div className="canvas-toolbar">
+        <label className="panel-checkbox">
+          <input
+            aria-label="Show boxes"
+            type="checkbox"
+            checked={overlays.showBoxes}
+            onChange={() => onToggleOverlay("showBoxes")}
+          />
+          <span>Show boxes</span>
+        </label>
+        <label className="panel-checkbox">
+          <input
+            aria-label="Show names"
+            type="checkbox"
+            checked={overlays.showNames}
+            onChange={() => onToggleOverlay("showNames")}
+          />
+          <span>Show names</span>
+        </label>
+        <label className="panel-checkbox">
+          <input
+            aria-label="Show thumbnails and selection"
+            type="checkbox"
+            checked={overlays.showThumbs}
+            onChange={() => onToggleOverlay("showThumbs")}
+          />
+          <span>Show thumbnails/selection</span>
+        </label>
+        <label className="panel-checkbox">
+          <input
+            aria-label="Show masks"
+            type="checkbox"
+            checked={overlays.showMasks}
+            onChange={() => onToggleOverlay("showMasks")}
+          />
+          <span>Show masks</span>
+        </label>
+        <div className="canvas-tool-group">
+          <button
+            type="button"
+            className={tool === "select" ? "is-active" : ""}
+            onClick={() => onSelectTool("select")}
+          >
+            Select
+          </button>
+          <button
+            type="button"
+            className={tool === "draw" ? "is-active" : ""}
+            disabled={!source}
+            onClick={() => onSelectTool("draw")}
+          >
+            Draw element
+          </button>
+          <button
+            type="button"
+            className={tool === "split" ? "is-active" : ""}
+            disabled={!source || !canSplit}
+            onClick={() => onSelectTool("split")}
+          >
+            Split selected
+          </button>
+          <button
+            type="button"
+            className={tool === "missing-mask" ? "is-active" : ""}
+            disabled={!source || !canDrawMissingMask}
+            onClick={() => onSelectTool("missing-mask")}
+          >
+            Missing mask
+          </button>
+        </div>
+      </div>
       <div className="canvas-stage">
         {artboard ?? (
           <div className="canvas-empty">
@@ -181,7 +264,7 @@ export function CanvasStage({
           </div>
         </div>
       )}
-    </>
+    </section>
   );
 }
 

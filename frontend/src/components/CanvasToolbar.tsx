@@ -42,7 +42,6 @@ export function CanvasToolbar({
         </button>
         <button
           type="button"
-          aria-label="Draw element"
           className={tool === "draw" ? "is-active" : ""}
           disabled={!hasSource}
           onClick={() => onSelectTool("draw")}
@@ -51,7 +50,6 @@ export function CanvasToolbar({
         </button>
         <button
           type="button"
-          aria-label="Split selected"
           className={tool === "split" ? "is-active" : ""}
           disabled={!hasSource || !canSplit}
           onClick={() => onSelectTool("split")}
@@ -73,7 +71,6 @@ export function CanvasToolbar({
       <div className="canvas-overlay-switches">
         <label className="panel-checkbox">
           <input
-            aria-label="Show boxes"
             type="checkbox"
             checked={overlays.showBoxes}
             onChange={() => onToggleOverlay("showBoxes")}
@@ -82,7 +79,6 @@ export function CanvasToolbar({
         </label>
         <label className="panel-checkbox">
           <input
-            aria-label="Show names"
             type="checkbox"
             checked={overlays.showNames}
             onChange={() => onToggleOverlay("showNames")}
@@ -91,7 +87,6 @@ export function CanvasToolbar({
         </label>
         <label className="panel-checkbox">
           <input
-            aria-label="Show thumbnails and selection"
             type="checkbox"
             checked={overlays.showThumbs}
             onChange={() => onToggleOverlay("showThumbs")}
@@ -100,7 +95,6 @@ export function CanvasToolbar({
         </label>
         <label className="panel-checkbox">
           <input
-            aria-label="Show masks"
             type="checkbox"
             checked={overlays.showMasks}
             onChange={() => onToggleOverlay("showMasks")}

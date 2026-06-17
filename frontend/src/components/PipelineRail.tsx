@@ -55,7 +55,7 @@ function buildStages(
   return [
     {
       name: "Upload",
-      detail: source ? `${source.filename} - ${source.width} x ${source.height}` : "Awaiting source",
+      detail: source ? source.filename : "Awaiting source",
       state: source ? "done" : "active",
     },
     {

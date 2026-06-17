@@ -1325,27 +1325,29 @@ export function App() {
             onToggleOverlay={handleOverlayToggle}
             onMerge={() => void handleMergeSelectedElements()}
           />
-          <section className="canvas-panel" data-testid="canvas-area">
-            <CanvasStage
-              sourceUrl={sourceUrl}
-              source={workspace.source}
-              overlays={overlays}
-              overlayElements={overlayElements}
-              selectedElementId={selectedElementId}
-              tool={tool}
-              draftRegion={draftRegion}
-              splitRegions={splitRegions}
-              missingMaskRegion={missingMaskRegion}
-              assetCacheKey={assetCacheKey}
-              canDrawMissingMask={canDrawMissingMask}
-              onDraftRegionChange={setDraftRegion}
-              onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
-              onMissingMaskRegionChange={setMissingMaskRegion}
-              onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
-              onClearDrafts={clearDrafts}
-              onApplySplit={() => void handleApplySplit()}
-            />
-          </section>
+          <CanvasStage
+            sourceUrl={sourceUrl}
+            source={workspace.source}
+            overlays={overlays}
+            overlayElements={overlayElements}
+            selectedElementId={selectedElementId}
+            sourceDetails={sourceDetails}
+            tool={tool}
+            draftRegion={draftRegion}
+            splitRegions={splitRegions}
+            missingMaskRegion={missingMaskRegion}
+            assetCacheKey={assetCacheKey}
+            canSplit={selectedElement !== null}
+            canDrawMissingMask={canDrawMissingMask}
+            onToggleOverlay={handleOverlayToggle}
+            onSelectTool={handleSelectTool}
+            onDraftRegionChange={setDraftRegion}
+            onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
+            onMissingMaskRegionChange={setMissingMaskRegion}
+            onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
+            onClearDrafts={clearDrafts}
+            onApplySplit={() => void handleApplySplit()}
+          />
           <div className="canvas-operation-row">
             <button
               type="button"

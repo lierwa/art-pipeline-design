@@ -364,6 +364,7 @@ describe("App", () => {
       const topAppBar = await screen.findByRole("banner");
       expect(within(topAppBar).getByText("Art Asset Pipeline")).toBeInTheDocument();
       expect(within(topAppBar).getByText("original.png")).toBeInTheDocument();
+      expect(within(topAppBar).getByRole("combobox", { name: /source file/i })).toHaveValue("original.png");
 
       const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
       expect(within(pipelineRail).getByText("Upload")).toBeInTheDocument();

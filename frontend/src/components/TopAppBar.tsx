@@ -41,11 +41,23 @@ export function TopAppBar({
         </div>
       </div>
 
-      <div className="source-control" aria-label="Source file">
+      <label className="source-control">
         <span>Source</span>
-        <strong>{source ? source.filename : "No source loaded"}</strong>
+        <select
+          aria-label="Source file"
+          disabled
+          value={source ? source.filename : ""}
+          onChange={() => undefined}
+        >
+          <option value="">
+            {source ? "Select source" : "No source loaded"}
+          </option>
+          {source ? (
+            <option value={source.filename}>{source.filename}</option>
+          ) : null}
+        </select>
         <small>{source ? `${source.width} x ${source.height}` : sourceDetails}</small>
-      </div>
+      </label>
 
       <div className="top-app-actions">
         <label className="upload-button" htmlFor="source-upload">
