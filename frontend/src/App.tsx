@@ -1,8 +1,12 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { CanvasToolbar } from "./components/CanvasToolbar";
 import { CanvasStage } from "./components/CanvasStage";
 import { ElementPanel } from "./components/ElementPanel";
 import { InspectorPanel } from "./components/InspectorPanel";
+import { ModelStatusStrip } from "./components/ModelStatusStrip";
+import { PipelineRail } from "./components/PipelineRail";
+import { TopAppBar } from "./components/TopAppBar";
 import "./styles.css";
 import {
   assetIncompleteUrl,
@@ -280,6 +284,13 @@ export function App() {
       ? isGeometryDraftDirty(selectedElement, elementDraft)
       : false;
   }, [elementDraft, selectedElement]);
+
+  const selectedMergeableElementCount = useMemo(() => {
+    return selectedElementIds.filter((elementId) =>
+      mergeableElements.some((element) => element.id === elementId),
+    ).length;
+  }, [mergeableElements, selectedElementIds]);
+  const canMergeSelectedElements = !hasUnsavedGeometryChanges && selectedMergeableElementCount >= 2;
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
   const selectedRepairMetadata = selectedElement
@@ -1280,98 +1291,85 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="top-toolbar">
-        <div className="toolbar-title">
-          <h1>Art Pipeline Workbench</h1>
-          <p>{status}</p>
-        </div>
-        <div className="toolbar-actions">
-          <label className="upload-button" htmlFor="source-upload">
-            Upload PNG
-          </label>
-          <input
-            id="source-upload"
-            aria-label="Upload PNG"
-            accept="image/png"
-            className="visually-hidden"
-            type="file"
-            onChange={handleUpload}
-          />
-          <button
-            type="button"
-            onClick={handleRunDetection}
-            disabled={!workspace.source || isAnnotating}
-          >
-            Run Detection
-          </button>
-          <button
-            type="button"
-            disabled={!canRunSelectedExtraction || isExtracting}
-            onClick={() => void handleExtractSelected()}
-          >
-            Extract
-          </button>
-          <button
-            type="button"
-            disabled={
-              !workspace.source
-              || !hasBatchExtractTargets
-              || isExtracting
-              || hasUnsavedGeometryChanges
-            }
-            onClick={() => void handleExtractAllAccepted()}
-          >
-            Extract All
-          </button>
-          <button type="button" disabled>
-            Repair
-          </button>
-          <button
-            type="button"
-            disabled={!workspace.source || isExporting}
-            onClick={() => void handleExportAssetPack()}
-          >
-            Export Asset Pack
-          </button>
-        </div>
-      </header>
+      <TopAppBar
+        source={workspace.source}
+        sourceDetails={sourceDetails}
+        status={status}
+        isAnnotating={isAnnotating}
+        isSaving={isSavingState}
+        isExporting={isExporting}
+        canSave={selectedElement !== null && elementDraft !== null}
+        canExport={workspace.source !== null}
+        onUpload={handleUpload}
+        onRunDetection={() => void handleRunDetection()}
+        onSave={() => void handleSaveElement()}
+        onExport={() => void handleExportAssetPack()}
+      />
 
       <main className="workbench-grid">
-        <ElementPanel
-          elements={visibleElements}
-          selectedElementId={selectedElementId}
-          showRejected={overlays.showRejected}
-          onSelectElement={handleSelectElement}
-          onToggleShowRejected={() => handleOverlayToggle("showRejected")}
-          onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
-          onAccept={(elementId) => void handleAccept(elementId)}
-          onReject={(elementId) => void handleReject(elementId)}
+        <PipelineRail
+          source={workspace.source}
+          elements={workspace.elements}
+          exportSummary={exportSummary}
         />
 
-        <div>
-          <CanvasStage
-            sourceUrl={sourceUrl}
-            source={workspace.source}
-            overlays={overlays}
-            overlayElements={overlayElements}
-            selectedElementId={selectedElementId}
-            sourceDetails={sourceDetails}
+        <section className="canvas-workspace" aria-label="Canvas workspace">
+          <CanvasToolbar
             tool={tool}
-            draftRegion={draftRegion}
-            splitRegions={splitRegions}
-            missingMaskRegion={missingMaskRegion}
-            assetCacheKey={assetCacheKey}
+            overlays={overlays}
+            hasSource={workspace.source !== null}
+            hasSelection={selectedElement !== null}
             canSplit={selectedElement !== null}
-            canDrawMissingMask={canDrawMissingMask}
-            onToggleOverlay={handleOverlayToggle}
+            canMerge={canMergeSelectedElements}
             onSelectTool={handleSelectTool}
-            onDraftRegionChange={setDraftRegion}
-            onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
-            onMissingMaskRegionChange={setMissingMaskRegion}
-            onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
-            onClearDrafts={clearDrafts}
-            onApplySplit={() => void handleApplySplit()}
+            onToggleOverlay={handleOverlayToggle}
+            onMerge={() => void handleMergeSelectedElements()}
           />
+          <section className="canvas-panel" data-testid="canvas-area">
+            <CanvasStage
+              sourceUrl={sourceUrl}
+              source={workspace.source}
+              overlays={overlays}
+              overlayElements={overlayElements}
+              selectedElementId={selectedElementId}
+              tool={tool}
+              draftRegion={draftRegion}
+              splitRegions={splitRegions}
+              missingMaskRegion={missingMaskRegion}
+              assetCacheKey={assetCacheKey}
+              canDrawMissingMask={canDrawMissingMask}
+              onDraftRegionChange={setDraftRegion}
+              onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
+              onMissingMaskRegionChange={setMissingMaskRegion}
+              onCompleteMissingMaskRegion={(region) => void handleCompleteMissingMaskRegion(region)}
+              onClearDrafts={clearDrafts}
+              onApplySplit={() => void handleApplySplit()}
+            />
+          </section>
+          <div className="canvas-operation-row">
+            <button
+              type="button"
+              disabled={!canRunSelectedExtraction || isExtracting}
+              onClick={() => void handleExtractSelected()}
+            >
+              Extract
+            </button>
+            <button
+              type="button"
+              disabled={
+                !workspace.source
+                || !hasBatchExtractTargets
+                || isExtracting
+                || hasUnsavedGeometryChanges
+              }
+              onClick={() => void handleExtractAllAccepted()}
+            >
+              Extract All
+            </button>
+            <button type="button" disabled>
+              Repair
+            </button>
+          </div>
           {draftRegion ? (
             <div className="manual-create-panel">
               <label className="field-group">
@@ -1421,12 +1419,7 @@ export function App() {
               </div>
               <button
                 type="button"
-                disabled={
-                  hasUnsavedGeometryChanges
-                  || selectedElementIds.filter((elementId) =>
-                    mergeableElements.some((element) => element.id === elementId),
-                  ).length < 2
-                }
+                disabled={!canMergeSelectedElements}
                 onClick={() => void handleMergeSelectedElements()}
               >
                 Merge selected
@@ -1434,64 +1427,66 @@ export function App() {
             </div>
           ) : null}
           {error ? <p className="error-text">{error}</p> : null}
-        </div>
+          <div className="workspace-preview-panels">
+            <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
+            <RepairComparison
+              selectedElement={selectedElement}
+              qaReport={selectedRepairQaReport}
+              repairMetadata={selectedRepairMetadata}
+              assetCacheKey={assetCacheKey}
+              hasMissingMaskPreview={selectedHasMissingMask}
+            />
+            <ExportPanel summary={exportSummary} assetCacheKey={assetCacheKey} />
+          </div>
+        </section>
 
-        <InspectorPanel
-          selectedElement={selectedElement}
-          draft={elementDraft}
-          splitRequestDescription={splitRequestDescription}
-          missingMaskDraft={missingMaskDraft}
-          repairQaReport={selectedRepairQaReport}
-          hasMissingMaskPreview={selectedHasMissingMask}
-          hasRepairPackage={selectedHasRepairPackage}
-          onDraftChange={setElementDraft}
-          onSplitRequestDescriptionChange={setSplitRequestDescription}
-          onMissingMaskDraftChange={setMissingMaskDraft}
-          onSaveElement={() => void handleSaveElement()}
-          onCreateSplitRequest={() => void handleCreateSplitRequest()}
-          onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
-          onClearMask={() => void handleClearMask()}
-          onReExtract={() => void handleExtractSelected()}
-          onDrawMissingMask={handleStartMissingMaskDrawing}
-          onSaveMissingMaskFromDraft={() => void handleSaveMissingMaskFromDraft()}
-          onCreateRepairTask={() => void handleCreateRepairTask()}
-          onValidateRepairOutput={() => void handleValidateRepairOutput()}
-          canExtractSelected={canRunSelectedExtraction}
-          hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
-          isExtracting={isExtracting}
-          isRepairing={isRepairing}
-          assetCacheKey={assetCacheKey}
-        />
+        <section className="right-review-panel" aria-label="Review panel">
+          <ElementPanel
+            elements={visibleElements}
+            selectedElementId={selectedElementId}
+            showRejected={overlays.showRejected}
+            onSelectElement={handleSelectElement}
+            onToggleShowRejected={() => handleOverlayToggle("showRejected")}
+            onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
+            onAccept={(elementId) => void handleAccept(elementId)}
+            onReject={(elementId) => void handleReject(elementId)}
+          />
+
+          <InspectorPanel
+            selectedElement={selectedElement}
+            draft={elementDraft}
+            splitRequestDescription={splitRequestDescription}
+            missingMaskDraft={missingMaskDraft}
+            repairQaReport={selectedRepairQaReport}
+            hasMissingMaskPreview={selectedHasMissingMask}
+            hasRepairPackage={selectedHasRepairPackage}
+            onDraftChange={setElementDraft}
+            onSplitRequestDescriptionChange={setSplitRequestDescription}
+            onMissingMaskDraftChange={setMissingMaskDraft}
+            onSaveElement={() => void handleSaveElement()}
+            onCreateSplitRequest={() => void handleCreateSplitRequest()}
+            onReplaceMaskByCurrentShape={() => void handleReplaceMaskByCurrentShape()}
+            onClearMask={() => void handleClearMask()}
+            onReExtract={() => void handleExtractSelected()}
+            onDrawMissingMask={handleStartMissingMaskDrawing}
+            onSaveMissingMaskFromDraft={() => void handleSaveMissingMaskFromDraft()}
+            onCreateRepairTask={() => void handleCreateRepairTask()}
+            onValidateRepairOutput={() => void handleValidateRepairOutput()}
+            canExtractSelected={canRunSelectedExtraction}
+            hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
+            isExtracting={isExtracting}
+            isRepairing={isRepairing}
+            assetCacheKey={assetCacheKey}
+          />
+        </section>
       </main>
 
-      <section className="bottom-panel">
-        <div className="panel-header">
-          <h2>Preview Panel</h2>
-        </div>
-        <div className="bottom-panel-body">
-          <div className="preview-card">
-            <span className="preview-label">Source</span>
-            <strong>{workspace.source ? workspace.source.filename : "Waiting for upload"}</strong>
-          </div>
-          <div className="preview-card">
-            <span className="preview-label">Elements</span>
-            <strong>{workspace.elements.length}</strong>
-          </div>
-          <div className="preview-card">
-            <span className="preview-label">State</span>
-            <strong>{isSavingState ? "Saving..." : status}</strong>
-          </div>
-          <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
-          <RepairComparison
-            selectedElement={selectedElement}
-            qaReport={selectedRepairQaReport}
-            repairMetadata={selectedRepairMetadata}
-            assetCacheKey={assetCacheKey}
-            hasMissingMaskPreview={selectedHasMissingMask}
-          />
-          <ExportPanel summary={exportSummary} assetCacheKey={assetCacheKey} />
-        </div>
-      </section>
+      <ModelStatusStrip
+        elements={workspace.elements}
+        status={status}
+        isSaving={isSavingState}
+        exportSummary={exportSummary}
+      />
     </div>
   );
 }

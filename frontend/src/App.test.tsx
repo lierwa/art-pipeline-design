@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { App } from "./App";
@@ -350,6 +350,86 @@ async function drawRectangle(surface: HTMLElement, start: { x: number; y: number
 }
 
 describe("App", () => {
+  it("renders pipeline rail with stage progress", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const topAppBar = await screen.findByRole("banner");
+      expect(within(topAppBar).getByText("Art Asset Pipeline")).toBeInTheDocument();
+      expect(within(topAppBar).getByText("original.png")).toBeInTheDocument();
+
+      const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
+      expect(within(pipelineRail).getByText("Upload")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Detect")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Review")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Segment")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Export")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/1 candidate/i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("runs detection from the top app bar", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedStateWithoutElements);
+      }
+
+      if (input === "/api/workspace/detect" && init?.method === "POST") {
+        return jsonResponse(detectedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const topAppBar = await screen.findByRole("banner");
+      await user.click(within(topAppBar).getByRole("button", { name: /run detection/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/detect",
+        expect.objectContaining({ method: "POST" }),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("renders canvas toolbar controls", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const canvasToolbar = await screen.findByRole("toolbar", { name: /canvas tools/i });
+      expect(within(canvasToolbar).getByRole("button", { name: /^select$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /edit box/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^draw/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^split/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^merge/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByRole("button", { name: /^delete/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).getByText("100%")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders the workbench shell", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
