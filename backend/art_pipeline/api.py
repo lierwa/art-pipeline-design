@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from art_pipeline.annotations import (
     ManualElementCreateRequest,
@@ -25,7 +25,13 @@ from art_pipeline.asset_outputs import (
     clear_stale_asset_outputs,
     write_mask_output,
 )
-from art_pipeline.candidates import filter_detection_results
+from art_pipeline.candidates import (
+    add_candidate_child,
+    edit_candidate,
+    filter_detection_results,
+    mark_candidate_merged,
+    merge_candidates,
+)
 from art_pipeline.detection import (
     DEFAULT_ASSET_VOCABULARY,
     DetectionProvider,
@@ -69,6 +75,22 @@ ASSET_MEDIA_TYPES = {
 
 # Some providers return "cabinet" for the "bathroom cabinet" prompt.
 DETECTION_FILTER_VOCABULARY = [*DEFAULT_ASSET_VOCABULARY, "cabinet"]
+
+
+class PatchElementRequest(BaseModel):
+    bbox: BoundingBox | None = None
+    label: str | None = None
+    visible: bool | None = None
+
+
+class ChildElementRequest(BaseModel):
+    label: str
+    bbox: BoundingBox
+
+
+class MergeElementsRequest(BaseModel):
+    elementIds: list[str]
+    label: str | None = None
 
 
 def create_app(
@@ -163,6 +185,154 @@ def create_app(
         _write_state(root, next_state)
         return {
             "element": created.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.patch("/api/workspace/elements/{element_id}")
+    def patch_element(element_id: str, request: PatchElementRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        element = _get_element(state, element_id)
+
+        try:
+            if not request.model_fields_set:
+                raise ValueError("Provide at least one element update.")
+            if "bbox" in request.model_fields_set and request.bbox is None:
+                raise ValueError("Bounding box must not be null.")
+            if "visible" in request.model_fields_set and request.visible is None:
+                raise ValueError("Visible must not be null.")
+
+            bbox = request.bbox if "bbox" in request.model_fields_set else None
+            label = (
+                _normalize_label(request.label)
+                if "label" in request.model_fields_set
+                else None
+            )
+            visible = (
+                request.visible
+                if "visible" in request.model_fields_set
+                else None
+            )
+            updated = edit_candidate(
+                element,
+                bbox=bbox,
+                label=label,
+                visible=visible,
+                history_kind="manual_edit",
+            )
+            next_state = WorkspaceState(
+                source=state.source,
+                elements=[
+                    updated if current.id == element_id else current
+                    for current in state.elements
+                ],
+            )
+            validate_workspace_state_geometry(next_state)
+            if bbox is not None and _source_path(root).exists():
+                source_image = _require_source_image(root)
+                updated = updated.model_copy(
+                    update={
+                        "thumbnail": write_thumbnail(
+                            source_image,
+                            root,
+                            updated.id,
+                            updated.bbox,
+                        )
+                    }
+                )
+                next_state = WorkspaceState(
+                    source=state.source,
+                    elements=[
+                        updated if current.id == element_id else current
+                        for current in state.elements
+                    ],
+                )
+            next_state = _invalidate_geometry_changes(root, state, next_state)
+            validate_workspace_state_geometry(next_state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        _write_state(root, next_state)
+        next_element = _get_element(next_state, element_id)
+        return {
+            "element": next_element.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/{element_id}/children")
+    def post_child_element(element_id: str, request: ChildElementRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        parent = _get_element(state, element_id)
+
+        try:
+            label = _normalize_label(request.label)
+            child = add_candidate_child(
+                root,
+                state.elements,
+                source_image,
+                parent,
+                label,
+                request.bbox,
+            )
+            next_state = WorkspaceState(
+                source=state.source,
+                elements=[*state.elements, child],
+            )
+            validate_workspace_state_geometry(next_state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        _write_state(root, next_state)
+        return {
+            "element": child.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/merge")
+    def post_merge_elements(request: MergeElementsRequest) -> dict:
+        root = app.state.workspace_root
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+
+        try:
+            if len(request.elementIds) < 2:
+                raise ValueError("Select at least two elements to merge.")
+            if len(set(request.elementIds)) != len(request.elementIds):
+                raise ValueError("Element ids to merge must be unique.")
+
+            selected = [_get_element(state, element_id) for element_id in request.elementIds]
+            label = (
+                _normalize_label(request.label)
+                if request.label is not None
+                else "Merged Asset"
+            )
+            merged = merge_candidates(
+                root,
+                state.elements,
+                source_image,
+                selected,
+                label,
+            )
+            merged_source_ids = {element.id for element in selected}
+            next_state = WorkspaceState(
+                source=state.source,
+                elements=[
+                    mark_candidate_merged(element, merged.id)
+                    if element.id in merged_source_ids
+                    else element
+                    for element in state.elements
+                ]
+                + [merged],
+            )
+            validate_workspace_state_geometry(next_state)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        _write_state(root, next_state)
+        return {
+            "element": merged.model_dump(mode="json"),
             "state": next_state.model_dump(mode="json"),
         }
 
@@ -846,6 +1016,15 @@ def _boxes_equal(left: BoundingBox | CanvasBox, right: BoundingBox | CanvasBox) 
         and left.w == right.w
         and left.h == right.h
     )
+
+
+def _normalize_label(label: str | None) -> str:
+    if label is None:
+        raise ValueError("Label must not be blank.")
+    normalized = label.strip()
+    if not normalized:
+        raise ValueError("Label must not be blank.")
+    return normalized
 
 
 def _is_geometry_extract_ready_status(element: ElementRecord) -> bool:

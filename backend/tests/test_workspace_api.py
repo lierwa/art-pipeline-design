@@ -560,6 +560,196 @@ def test_create_manual_element_persists_defaults_and_thumbnail(
     assert state_payload["elements"] == body["state"]["elements"]
 
 
+def test_patch_element_updates_box_and_status(client: TestClient) -> None:
+    state = {
+        "source": {"filename": "original.png", "path": "source/original.png", "width": 120, "height": 90},
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "cabinet",
+                "label": "cabinet",
+                "status": "model_detected",
+                "bbox": {"x": 10, "y": 20, "w": 30, "h": 40},
+                "sourceProvider": "test_provider",
+                "sourcePrompt": "cabinet",
+                "confidence": 0.88,
+            }
+        ],
+    }
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.patch(
+        "/api/workspace/elements/element_001",
+        json={"bbox": {"x": 12, "y": 22, "w": 35, "h": 45}, "label": "bathroom cabinet"},
+    )
+
+    assert response.status_code == 200
+    element = response.json()["state"]["elements"][0]
+    assert response.json()["element"] == element
+    assert element["status"] == "edited"
+    assert element["label"] == "bathroom cabinet"
+    assert element["bbox"] == {"x": 12, "y": 22, "w": 35, "h": 45}
+    assert element["history"][-1]["kind"] == "manual_edit"
+    assert element["history"][-1]["before"] == {
+        "bbox": {"x": 10, "y": 20, "w": 30, "h": 40},
+        "label": "cabinet",
+        "status": "model_detected",
+    }
+    assert element["history"][-1]["after"] == {
+        "bbox": {"x": 12, "y": 22, "w": 35, "h": 45},
+        "label": "bathroom cabinet",
+        "status": "edited",
+    }
+
+
+def test_patch_element_visibility_does_not_mark_edited(client: TestClient) -> None:
+    state = {
+        "source": {"filename": "original.png", "path": "source/original.png", "width": 120, "height": 90},
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "cabinet",
+                "label": "cabinet",
+                "status": "model_detected",
+                "bbox": {"x": 10, "y": 20, "w": 30, "h": 40},
+                "sourceProvider": "test_provider",
+                "sourcePrompt": "cabinet",
+                "confidence": 0.88,
+            }
+        ],
+    }
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.patch(
+        "/api/workspace/elements/element_001",
+        json={"visible": False},
+    )
+
+    assert response.status_code == 200
+    element = response.json()["element"]
+    assert element["status"] == "model_detected"
+    assert element["visible"] is False
+    assert element["history"] == []
+
+
+def test_post_child_element_preserves_parent(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+    state = {
+        "source": {"filename": "original.png", "path": "source/original.png", "width": 120, "height": 90},
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "shelf",
+                "label": "shelf",
+                "status": "model_detected",
+                "bbox": {"x": 10, "y": 12, "w": 90, "h": 60},
+                "sourceProvider": "test_provider",
+                "sourcePrompt": "shelf",
+                "confidence": 0.91,
+            }
+        ],
+    }
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post(
+        "/api/workspace/elements/element_001/children",
+        json={"label": "plant", "bbox": {"x": 24, "y": 20, "w": 18, "h": 24}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    child = body["element"]
+    by_id = {element["id"]: element for element in body["state"]["elements"]}
+    parent = by_id["element_001"]
+    assert parent["status"] == "model_detected"
+    assert parent["bbox"] == {"x": 10, "y": 12, "w": 90, "h": 60}
+
+    assert child["id"] in by_id
+    assert child["status"] == "child"
+    assert child["parentId"] == "element_001"
+    assert child["label"] == "plant"
+    assert child["name"] == "plant"
+    assert child["source"] == "manual_child"
+    assert child["sourceProvider"] == "manual"
+    assert child["sourcePrompt"] == "plant"
+    assert child["confidence"] is None
+    assert child["visible"] is True
+    thumb_path = tmp_path / "workspace" / child["thumbnail"]
+    assert thumb_path.exists()
+
+
+def test_merge_elements_creates_union_and_marks_sources(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    upload_response = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload_response.status_code == 200
+    state = {
+        "source": {"filename": "original.png", "path": "source/original.png", "width": 120, "height": 90},
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "left cabinet",
+                "label": "left cabinet",
+                "status": "model_detected",
+                "bbox": {"x": 10, "y": 20, "w": 30, "h": 40},
+                "sourceProvider": "test_provider",
+                "sourcePrompt": "cabinet",
+                "confidence": 0.88,
+            },
+            {
+                "id": "element_002",
+                "name": "right cabinet",
+                "label": "right cabinet",
+                "status": "model_detected",
+                "bbox": {"x": 35, "y": 15, "w": 20, "h": 30},
+                "sourceProvider": "test_provider",
+                "sourcePrompt": "cabinet",
+                "confidence": 0.82,
+            },
+        ],
+    }
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post(
+        "/api/workspace/elements/merge",
+        json={"elementIds": ["element_001", "element_002"], "label": "cabinet items"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    merged = body["element"]
+    by_id = {element["id"]: element for element in body["state"]["elements"]}
+
+    assert merged["bbox"] == {"x": 10, "y": 15, "w": 45, "h": 45}
+    assert merged["status"] == "merged"
+    assert merged["source"] == "manual_merge"
+    assert merged["sourceProvider"] == "manual"
+    assert merged["label"] == "cabinet items"
+    assert merged["name"] == "cabinet items"
+    assert merged["confidence"] is None
+    assert merged["history"][-1]["kind"] == "manual_merge"
+    assert merged["history"][-1]["before"]["sourceIds"] == ["element_001", "element_002"]
+    assert by_id["element_001"]["status"] == "merged"
+    assert by_id["element_001"]["visible"] is False
+    assert by_id["element_001"]["mergedInto"] == merged["id"]
+    assert by_id["element_002"]["status"] == "merged"
+    assert by_id["element_002"]["visible"] is False
+    assert by_id["element_002"]["mergedInto"] == merged["id"]
+    thumb_path = tmp_path / "workspace" / merged["thumbnail"]
+    assert thumb_path.exists()
+
+
 def test_split_marks_parent_and_creates_children_with_thumbnails(
     client: TestClient,
     tmp_path: Path,

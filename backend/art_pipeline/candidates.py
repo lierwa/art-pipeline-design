@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
-from art_pipeline.elements import BoundingBox, CandidateHistoryEntry, CanvasBox, ElementRecord
+from PIL import Image
+
+from art_pipeline.elements import (
+    BoundingBox,
+    CandidateHistoryEntry,
+    CanvasBox,
+    ElementRecord,
+    next_element_id,
+)
+from art_pipeline.masks import expand_canvas
+from art_pipeline.thumbnails import write_thumbnail
 
 
 CandidateStatus = Literal[
@@ -88,20 +99,41 @@ def edit_candidate_box(
     bbox: BoundingBox,
     reason: str = "manual_box_edit",
 ) -> ElementRecord:
+    return edit_candidate(candidate, bbox=bbox, history_kind=reason, force_history=True)
+
+
+def edit_candidate(
+    candidate: ElementRecord,
+    *,
+    bbox: BoundingBox | None = None,
+    label: str | None = None,
+    visible: bool | None = None,
+    history_kind: str = "manual_edit",
+    force_history: bool = False,
+) -> ElementRecord:
     before = candidate.model_dump(mode="json")
-    canvas = CanvasBox(**bbox.model_dump())
-    edited = candidate.model_copy(
-        update={
-            "bbox": bbox,
-            "canvas": canvas,
-            "status": "edited",
-        }
-    )
+    updates = {}
+    if bbox is not None:
+        updates["bbox"] = bbox
+        updates["canvas"] = CanvasBox(**bbox.model_dump())
+    if label is not None:
+        updates["name"] = label
+        updates["label"] = label
+    if visible is not None:
+        updates["visible"] = visible
+    content_changed = _candidate_content_changed(candidate, bbox, label)
+    if content_changed or force_history:
+        updates["status"] = "edited"
+
+    edited = candidate.model_copy(update=updates)
+    if not content_changed and not force_history:
+        return edited
+
     after = edited.model_dump(mode="json")
     history = [
         *candidate.history,
         CandidateHistoryEntry(
-            kind=reason,
+            kind=history_kind,
             before={
                 "bbox": before["bbox"],
                 "label": before.get("label"),
@@ -115,3 +147,155 @@ def edit_candidate_box(
         ),
     ]
     return edited.model_copy(update={"history": history})
+
+
+def add_candidate_child(
+    workspace_root: Path,
+    state_elements: list[ElementRecord],
+    source_image: Image.Image,
+    parent: ElementRecord,
+    label: str,
+    bbox: BoundingBox,
+) -> ElementRecord:
+    _validate_non_empty_bbox(bbox)
+    if not _contains_bbox(parent.bbox, bbox):
+        raise ValueError("Child bbox must stay within parent bbox.")
+
+    element_id = _next_candidate_id(state_elements)
+    thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)
+    return ElementRecord(
+        id=element_id,
+        name=label,
+        label=label,
+        status="child",
+        mode="visible_only",
+        bbox=bbox,
+        canvas=expand_canvas(bbox, source_image.width, source_image.height),
+        layer=_next_layer(state_elements),
+        thumbnail=thumbnail_path,
+        mask=None,
+        parentId=parent.id,
+        source="manual_child",
+        sourceProvider="manual",
+        sourcePrompt=label,
+        notes="",
+        visible=True,
+        confidence=None,
+    )
+
+
+def merge_candidates(
+    workspace_root: Path,
+    state_elements: list[ElementRecord],
+    source_image: Image.Image,
+    source_elements: list[ElementRecord],
+    label: str,
+) -> ElementRecord:
+    if len(source_elements) < 2:
+        raise ValueError("Select at least two elements to merge.")
+
+    bbox = union_bbox(source_elements)
+    element_id = _next_candidate_id(state_elements)
+    thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)
+    source_ids = [element.id for element in source_elements]
+    merged = ElementRecord(
+        id=element_id,
+        name=label,
+        label=label,
+        status="merged",
+        mode="visible_only",
+        bbox=bbox,
+        canvas=expand_canvas(bbox, source_image.width, source_image.height),
+        layer=_next_layer(state_elements),
+        thumbnail=thumbnail_path,
+        mask=None,
+        parentId=None,
+        source="manual_merge",
+        sourceProvider="manual",
+        sourcePrompt=label,
+        notes="",
+        visible=True,
+        confidence=None,
+    )
+    return merged.model_copy(
+        update={
+            "history": [
+                CandidateHistoryEntry(
+                    kind="manual_merge",
+                    before={"sourceIds": source_ids},
+                    after={
+                        "bbox": bbox.model_dump(mode="json"),
+                        "label": label,
+                        "status": "merged",
+                    },
+                )
+            ]
+        }
+    )
+
+
+def mark_candidate_merged(
+    candidate: ElementRecord,
+    merged_element_id: str,
+) -> ElementRecord:
+    return candidate.model_copy(
+        update={
+            "status": "merged",
+            "visible": False,
+            "mergedInto": merged_element_id,
+        }
+    )
+
+
+def union_bbox(elements: list[ElementRecord]) -> BoundingBox:
+    if not elements:
+        raise ValueError("Select at least one element.")
+
+    left = min(element.bbox.x for element in elements)
+    top = min(element.bbox.y for element in elements)
+    right = max(element.bbox.x + element.bbox.w for element in elements)
+    bottom = max(element.bbox.y + element.bbox.h for element in elements)
+    return BoundingBox(x=left, y=top, w=right - left, h=bottom - top)
+
+
+def _candidate_content_changed(
+    candidate: ElementRecord,
+    bbox: BoundingBox | None,
+    label: str | None,
+) -> bool:
+    return (bbox is not None and not _boxes_equal(candidate.bbox, bbox)) or (
+        label is not None and candidate.label != label
+    )
+
+
+def _boxes_equal(left: BoundingBox | CanvasBox, right: BoundingBox | CanvasBox) -> bool:
+    return (
+        left.x == right.x
+        and left.y == right.y
+        and left.w == right.w
+        and left.h == right.h
+    )
+
+
+def _contains_bbox(outer: BoundingBox, inner: BoundingBox) -> bool:
+    return (
+        outer.x <= inner.x
+        and outer.y <= inner.y
+        and outer.x + outer.w >= inner.x + inner.w
+        and outer.y + outer.h >= inner.y + inner.h
+    )
+
+
+def _validate_non_empty_bbox(bbox: BoundingBox) -> None:
+    if bbox.w <= 0 or bbox.h <= 0:
+        raise ValueError("Bounding box must cover at least one pixel.")
+
+
+def _next_candidate_id(elements: list[ElementRecord]) -> str:
+    return next_element_id(elements)
+
+
+def _next_layer(elements: list[ElementRecord]) -> int:
+    if not elements:
+        return 1
+    return max(element.layer for element in elements) + 1
