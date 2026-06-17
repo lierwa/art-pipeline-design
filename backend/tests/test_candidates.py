@@ -1,10 +1,22 @@
-from art_pipeline.candidates import edit_candidate_box
+from typing import get_args
+
+from art_pipeline.candidates import CandidateStatus, edit_candidate_box
 from art_pipeline.elements import (
     BoundingBox,
     CandidateHistoryEntry,
     CanvasBox,
     ElementRecord,
 )
+
+
+def test_candidate_status_remains_candidate_only() -> None:
+    statuses = set(get_args(CandidateStatus))
+
+    assert "model_detected" in statuses
+    assert "edited" in statuses
+    assert "exported" in statuses
+    assert "proposal" not in statuses
+    assert "repair_pending" not in statuses
 
 
 def test_element_record_defaults_to_model_detected_status() -> None:
@@ -15,6 +27,17 @@ def test_element_record_defaults_to_model_detected_status() -> None:
     )
 
     assert candidate.status == "model_detected"
+
+
+def test_element_record_accepts_legacy_status_during_migration() -> None:
+    candidate = ElementRecord(
+        id="element_001",
+        name="cabinet",
+        status="proposal",
+        bbox=BoundingBox(x=10, y=20, w=100, h=120),
+    )
+
+    assert candidate.status == "proposal"
 
 
 def test_edit_candidate_box_preserves_model_box_in_history() -> None:

@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
-ElementStatus = Literal[
+CandidateElementStatus = Literal[
     "model_detected",
     "edited",
     "child",
@@ -16,6 +16,18 @@ ElementStatus = Literal[
     "rejected",
     "exported",
 ]
+
+LegacyElementStatus = Literal[
+    "proposal",
+    "split_parent",
+    "extract_ready",
+    "extracted",
+    "repair_pending",
+    "repair_complete",
+    "qa_failed",
+]
+
+ElementStatus = CandidateElementStatus | LegacyElementStatus
 
 ElementMode = Literal[
     "visible_only",
