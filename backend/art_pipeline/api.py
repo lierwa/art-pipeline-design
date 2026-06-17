@@ -30,6 +30,7 @@ from art_pipeline.elements import (
 )
 from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
+from art_pipeline.detection import DEFAULT_ASSET_VOCABULARY, DetectionProvider
 from art_pipeline.asset_outputs import (
     clear_extraction_outputs,
     clear_stale_asset_outputs,
@@ -61,9 +62,13 @@ ASSET_MEDIA_TYPES = {
 }
 
 
-def create_app(workspace_root: Path | None = None) -> FastAPI:
+def create_app(
+    workspace_root: Path | None = None,
+    detection_provider: DetectionProvider | None = None,
+) -> FastAPI:
     app = FastAPI(title="Art Pipeline Workbench API")
     app.state.workspace_root = (workspace_root or Path("workspace")).resolve()
+    app.state.detection_provider = detection_provider
 
     @app.get("/api/workspace/source")
     def get_source() -> FileResponse:
@@ -502,6 +507,34 @@ def create_app(workspace_root: Path | None = None) -> FastAPI:
         _write_state(root, next_state)
         return next_state
 
+    @app.post("/api/workspace/detect")
+    def detect_workspace() -> WorkspaceState:
+        provider = app.state.detection_provider
+        if provider is None:
+            raise HTTPException(status_code=503, detail="Detection provider is not configured.")
+
+        root = app.state.workspace_root
+        state = _read_state(root)
+        if state.source is None:
+            raise HTTPException(status_code=400, detail="Upload a source image before detection.")
+
+        source_image = _require_source_image(root)
+        raw_results = provider.detect(
+            source_image,
+            DEFAULT_ASSET_VOCABULARY,
+            ". ".join(DEFAULT_ASSET_VOCABULARY),
+        )
+        generated = _detection_results_to_elements(
+            root,
+            state,
+            source_image,
+            provider.name,
+            raw_results,
+        )
+        next_state = WorkspaceState(source=state.source, elements=generated)
+        _write_state(root, next_state)
+        return next_state
+
     return app
 
 
@@ -562,6 +595,44 @@ def _clear_generated_workspace_outputs(workspace_root: Path) -> None:
                 shutil.rmtree(output_dir)
             else:
                 output_dir.unlink()
+
+
+def _detection_results_to_elements(
+    workspace_root: Path,
+    state: WorkspaceState,
+    source_image: Image.Image,
+    provider_name: str,
+    raw_results: list[dict],
+) -> list[ElementRecord]:
+    generated_elements: list[ElementRecord] = []
+    next_index = 1
+    for result in raw_results:
+        bbox = BoundingBox.model_validate(result["bbox"])
+        element_id = next_element_id(state.elements + generated_elements, start=next_index)
+        next_index = int(element_id.rsplit("_", 1)[1]) + 1
+        thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)
+        label = result["label"]
+        generated_elements.append(
+            ElementRecord(
+                id=element_id,
+                name=label,
+                label=label,
+                status="model_detected",
+                mode="visible_only",
+                bbox=bbox,
+                layer=len(generated_elements) + 1,
+                thumbnail=thumbnail_path,
+                mask=None,
+                parentId=None,
+                source="model_detection",
+                sourceProvider=provider_name,
+                sourcePrompt=result["sourcePrompt"],
+                notes="",
+                visible=True,
+                confidence=result["confidence"],
+            )
+        )
+    return generated_elements
 
 
 def _require_source_image(workspace_root: Path) -> Image.Image:
