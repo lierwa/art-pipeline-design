@@ -558,8 +558,110 @@ describe("App", () => {
         "aria-label",
         "Edit Region 1 box",
       );
+      expect(screen.getByRole("region", { name: /edit region 1 box/i })).toBeInTheDocument();
       expect(screen.getByTestId("resize-handle-element_001-se")).toBeInTheDocument();
     } finally {
+      restoreFetch();
+    }
+  });
+
+  it("enters box editing from the canvas toolbar edit button", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
+
+      expect(await screen.findByTestId("resize-handle-element_001-se")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("edits the selected box with drag handles and sends a patch request", async () => {
+    const user = userEvent.setup();
+    const originalPointerEvent = window.PointerEvent;
+    window.PointerEvent = window.MouseEvent as unknown as typeof PointerEvent;
+    const patchedElement = {
+      ...loadedState.elements[0],
+      status: "edited",
+      bbox: { x: 12, y: 16, w: 40, h: 42 },
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: loadedState.source,
+            elements: [patchedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
+      setCanvasRect(await screen.findByTestId("canvas-artboard"));
+
+      const handle = await screen.findByTestId("resize-handle-element_001-se");
+      fireEvent.pointerDown(handle, {
+        buttons: 1,
+        clientX: 210,
+        clientY: 240,
+        pointerId: 1,
+        pointerType: "mouse",
+      });
+      fireEvent.pointerMove(handle, {
+        buttons: 1,
+        clientX: 260,
+        clientY: 290,
+        pointerId: 1,
+        pointerType: "mouse",
+      });
+      fireEvent.pointerUp(handle, {
+        buttons: 0,
+        clientX: 260,
+        clientY: 290,
+        pointerId: 1,
+        pointerType: "mouse",
+      });
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({
+          bbox: expect.objectContaining({
+            x: 12,
+            y: 16,
+            w: expect.any(Number),
+            h: expect.any(Number),
+          }),
+        });
+      });
+      expect((patchRequest as { bbox: { w: number; h: number } }).bbox.w).toBeGreaterThan(30);
+      expect((patchRequest as { bbox: { w: number; h: number } }).bbox.h).toBeGreaterThan(32);
+    } finally {
+      window.PointerEvent = originalPointerEvent;
       restoreFetch();
     }
   });

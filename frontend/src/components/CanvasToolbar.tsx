@@ -9,6 +9,7 @@ type CanvasToolbarProps = {
   canMerge: boolean;
   onSelectTool: (tool: CanvasTool) => void;
   onToggleOverlay: (key: keyof OverlayState) => void;
+  onEditBox: () => void;
   onMerge: () => void;
 };
 
@@ -21,6 +22,7 @@ export function CanvasToolbar({
   canMerge,
   onSelectTool,
   onToggleOverlay,
+  onEditBox,
   onMerge,
 }: CanvasToolbarProps) {
   return (
@@ -36,7 +38,7 @@ export function CanvasToolbar({
         <button
           type="button"
           disabled={!hasSelection}
-          onClick={() => onSelectTool("select")}
+          onClick={onEditBox}
         >
           Edit box
         </button>

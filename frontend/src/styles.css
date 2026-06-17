@@ -417,6 +417,13 @@ button:disabled {
   pointer-events: none;
 }
 
+.canvas-interaction-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
 .overlay-item {
   position: absolute;
 }

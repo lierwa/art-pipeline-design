@@ -1441,6 +1441,7 @@ export function App() {
             canMerge={canMergeSelectedElements}
             onSelectTool={handleSelectTool}
             onToggleOverlay={handleOverlayToggle}
+            onEditBox={handleStartBoxEdit}
             onMerge={() => void handleMergeSelectedElements()}
           />
           <CanvasStage

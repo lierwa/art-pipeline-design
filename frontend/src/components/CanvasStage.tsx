@@ -1,4 +1,4 @@
-import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useRef } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useRef } from "react";
 
 import {
   Box,
@@ -361,46 +361,86 @@ function CanvasArtboard({
     onPointerDown(event);
   }
 
-  function beginBoxMove(event: PointerEvent<HTMLDivElement>, element: WorkspaceElement) {
+  useEffect(() => {
     const artboard = artboardRef.current;
     if (!artboard) {
-      return;
+      return undefined;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    function handleNativePointerDown(event: globalThis.PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
 
-    const point = eventPointToImageWithin(event, artboard, source);
-    boxEditDragRef.current = {
-      elementId: element.id,
-      mode: "move",
-      handle: null,
-      startX: point.x,
-      startY: point.y,
-      startBox: element.bbox,
+      const handleControl = target.closest<HTMLElement>("[data-resize-handle]");
+      if (handleControl) {
+        const element = overlayElements.find((candidate) => candidate.id === handleControl.dataset.elementId);
+        const handle = parseResizeHandle(handleControl.dataset.resizeHandle);
+        if (element && handle) {
+          event.preventDefault();
+          startBoxEditDrag(event.clientX, event.clientY, element, "resize", handle);
+        }
+        return;
+      }
+
+      const editRegion = target.closest<HTMLElement>("[data-canvas-edit-region]");
+      if (editRegion) {
+        const element = overlayElements.find((candidate) => candidate.id === editRegion.dataset.elementId);
+        if (element) {
+          event.preventDefault();
+          startBoxEditDrag(event.clientX, event.clientY, element, "move", null);
+        }
+      }
+    }
+
+    function handleNativePointerMove(event: globalThis.PointerEvent) {
+      if (!boxEditDragRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      updateBoxEditFromClient(event.clientX, event.clientY);
+    }
+
+    function handleNativePointerEnd(event: globalThis.PointerEvent) {
+      if (!boxEditDragRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      boxEditDragRef.current = null;
+    }
+
+    artboard.addEventListener("pointerdown", handleNativePointerDown);
+    artboard.addEventListener("pointermove", handleNativePointerMove);
+    artboard.addEventListener("pointerup", handleNativePointerEnd);
+    artboard.addEventListener("pointercancel", handleNativePointerEnd);
+
+    return () => {
+      artboard.removeEventListener("pointerdown", handleNativePointerDown);
+      artboard.removeEventListener("pointermove", handleNativePointerMove);
+      artboard.removeEventListener("pointerup", handleNativePointerEnd);
+      artboard.removeEventListener("pointercancel", handleNativePointerEnd);
     };
-    onSelectElement(element.id);
-  }
+  }, [onBoxDraftChange, onSelectElement, overlayElements, source]);
 
-  function beginBoxResize(
-    event: PointerEvent<HTMLButtonElement>,
+  function startBoxEditDrag(
+    clientX: number,
+    clientY: number,
     element: WorkspaceElement,
-    handle: ResizeHandle,
+    mode: "move" | "resize",
+    handle: ResizeHandle | null,
   ) {
     const artboard = artboardRef.current;
     if (!artboard) {
       return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-
-    const point = eventPointToImageWithin(event, artboard, source);
+    const point = eventPointToImageWithin({ clientX, clientY }, artboard, source);
     boxEditDragRef.current = {
       elementId: element.id,
-      mode: "resize",
+      mode,
       handle,
       startX: point.x,
       startY: point.y,
@@ -409,15 +449,32 @@ function CanvasArtboard({
     onSelectElement(element.id);
   }
 
-  function updateBoxEdit(event: PointerEvent<HTMLDivElement>) {
+  function beginBoxMove(event: PointerEvent<HTMLDivElement>, element: WorkspaceElement) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    startBoxEditDrag(event.clientX, event.clientY, element, "move", null);
+  }
+
+  function beginBoxResize(
+    event: PointerEvent<HTMLButtonElement>,
+    element: WorkspaceElement,
+    handle: ResizeHandle,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    startBoxEditDrag(event.clientX, event.clientY, element, "resize", handle);
+  }
+
+  function updateBoxEditFromClient(clientX: number, clientY: number) {
     const drag = boxEditDragRef.current;
     const artboard = artboardRef.current;
     if (!drag || !artboard) {
       return;
     }
 
-    event.preventDefault();
-    const point = eventPointToImageWithin(event, artboard, source);
+    const point = eventPointToImageWithin({ clientX, clientY }, artboard, source);
     const deltaX = point.x - drag.startX;
     const deltaY = point.y - drag.startY;
     const nextBox =
@@ -427,7 +484,16 @@ function CanvasArtboard({
     onBoxDraftChange(drag.elementId, nextBox);
   }
 
-  function endBoxEdit(event: PointerEvent<HTMLDivElement>) {
+  function updateBoxEdit(event: PointerEvent<HTMLElement>) {
+    if (!boxEditDragRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    updateBoxEditFromClient(event.clientX, event.clientY);
+  }
+
+  function endBoxEdit(event: PointerEvent<HTMLElement>) {
     if (!boxEditDragRef.current) {
       return;
     }
@@ -530,28 +596,6 @@ function CanvasArtboard({
                   src={thumbnailUrl(element.thumbnail) ?? undefined}
                 />
               ) : null}
-              {isEditing ? (
-                <div
-                  aria-label={`Edit ${element.name} box`}
-                  className="canvas-edit-region"
-                  data-testid={`canvas-edit-region-${element.id}`}
-                  role="region"
-                  tabIndex={0}
-                  onKeyDown={(event) => handleEditKeyDown(event, element)}
-                  onPointerDown={(event) => beginBoxMove(event, element)}
-                >
-                  {RESIZE_HANDLES.map((handle) => (
-                    <button
-                      key={handle}
-                      type="button"
-                      aria-label={`Resize ${element.name} box ${handle}`}
-                      className={`resize-handle resize-handle-${handle}`}
-                      data-testid={`resize-handle-${element.id}-${handle}`}
-                      onPointerDown={(event) => beginBoxResize(event, element, handle)}
-                    />
-                  ))}
-                </div>
-              ) : null}
             </div>
           );
         })}
@@ -589,6 +633,52 @@ function CanvasArtboard({
           </div>
         ) : null}
       </div>
+      <div className="canvas-interaction-layer">
+        {overlayElements.map((element) => {
+          if (editingElementId !== element.id) {
+            return null;
+          }
+
+          return (
+            <div
+              key={`${element.id}-edit`}
+              className="overlay-item overlay-item-edit-controls"
+              style={boxToPercentStyle(element.bbox, source)}
+            >
+              <div
+                aria-label={`Edit ${element.name} box`}
+                className="canvas-edit-region"
+                data-canvas-edit-region="true"
+                data-element-id={element.id}
+                data-testid={`canvas-edit-region-${element.id}`}
+                role="region"
+                tabIndex={0}
+                onKeyDown={(event) => handleEditKeyDown(event, element)}
+                onPointerDown={(event) => beginBoxMove(event, element)}
+                onPointerMove={updateBoxEdit}
+                onPointerUp={endBoxEdit}
+                onPointerCancel={endBoxEdit}
+              >
+                {RESIZE_HANDLES.map((handle) => (
+                  <button
+                    key={handle}
+                    type="button"
+                    aria-label={`Resize ${element.name} box ${handle}`}
+                    className={`resize-handle resize-handle-${handle}`}
+                    data-element-id={element.id}
+                    data-resize-handle={handle}
+                    data-testid={`resize-handle-${element.id}-${handle}`}
+                    onPointerDown={(event) => beginBoxResize(event, element, handle)}
+                    onPointerMove={updateBoxEdit}
+                    onPointerUp={endBoxEdit}
+                    onPointerCancel={endBoxEdit}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
       <div
         className="canvas-drawing-surface"
         data-testid="canvas-drawing-surface"
@@ -622,16 +712,16 @@ function eventPointToImage(event: DrawingEvent, source: SourceMetadata): { x: nu
   const height = rect.height || rect.bottom - rect.top || 1;
   const nativeEvent = event.nativeEvent as globalThis.PointerEvent | undefined;
   const rawClientX =
-    typeof nativeEvent?.clientX === "number"
-      ? nativeEvent.clientX
-      : typeof event.clientX === "number"
-        ? event.clientX
+    typeof event.clientX === "number"
+      ? event.clientX
+      : typeof nativeEvent?.clientX === "number"
+        ? nativeEvent.clientX
         : rect.left;
   const rawClientY =
-    typeof nativeEvent?.clientY === "number"
-      ? nativeEvent.clientY
-      : typeof event.clientY === "number"
-        ? event.clientY
+    typeof event.clientY === "number"
+      ? event.clientY
+      : typeof nativeEvent?.clientY === "number"
+        ? nativeEvent.clientY
         : rect.top;
   const clientX = Number.isFinite(rawClientX) ? rawClientX : rect.left;
   const clientY = Number.isFinite(rawClientY) ? rawClientY : rect.top;
@@ -652,16 +742,16 @@ function eventPointToImageWithin(
   const width = rect.width || rect.right - rect.left || source.width || 1;
   const height = rect.height || rect.bottom - rect.top || source.height || 1;
   const rawClientX =
-    typeof event.nativeEvent?.clientX === "number"
-      ? event.nativeEvent.clientX
-      : typeof event.clientX === "number"
-        ? event.clientX
+    typeof event.clientX === "number"
+      ? event.clientX
+      : typeof event.nativeEvent?.clientX === "number"
+        ? event.nativeEvent.clientX
         : rect.left;
   const rawClientY =
-    typeof event.nativeEvent?.clientY === "number"
-      ? event.nativeEvent.clientY
-      : typeof event.clientY === "number"
-        ? event.clientY
+    typeof event.clientY === "number"
+      ? event.clientY
+      : typeof event.nativeEvent?.clientY === "number"
+        ? event.nativeEvent.clientY
         : rect.top;
   const clientX = Number.isFinite(rawClientX) ? rawClientX : rect.left;
   const clientY = Number.isFinite(rawClientY) ? rawClientY : rect.top;
@@ -696,6 +786,10 @@ function keyboardDelta(key: string, step: number): { x: number; y: number } | nu
     return { x: 0, y: step };
   }
   return null;
+}
+
+function parseResizeHandle(value: string | undefined): ResizeHandle | null {
+  return RESIZE_HANDLES.includes(value as ResizeHandle) ? value as ResizeHandle : null;
 }
 
 function moveBox(box: Box, deltaX: number, deltaY: number, source: SourceMetadata): Box {
