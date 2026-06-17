@@ -217,6 +217,22 @@ const mergedState = {
   ],
 };
 
+const extractMergedState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...mergeSourceState.elements[0],
+      status: "accepted",
+      visible: false,
+      mergedInto: "element_003",
+    },
+    {
+      ...mergedState.elements[2],
+      status: "accepted",
+    },
+  ],
+};
+
 const extractedState = {
   source: loadedState.source,
   elements: [
@@ -506,6 +522,7 @@ describe("App", () => {
       );
       expect(await screen.findAllByText(/element rejected\./i)).toHaveLength(2);
       expect(screen.queryByAltText("cabinet thumbnail")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -768,6 +785,38 @@ describe("App", () => {
     }
   });
 
+  it("excludes rejected hidden candidates from merge controls", async () => {
+    const stateWithRejectedCandidate = {
+      source: loadedState.source,
+      elements: [
+        mergeSourceState.elements[0],
+        {
+          ...mergeSourceState.elements[1],
+          status: "rejected",
+          mode: "rejected",
+          visible: false,
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(stateWithRejectedCandidate);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.queryByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/merge label/i)).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("keeps browse selection separate from merge selection", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -788,6 +837,69 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: /merge selected/i })).toBeDisabled();
       expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("extracts all only for actionable accepted elements", async () => {
+    const user = userEvent.setup();
+    const extractedMergedOnlyState = {
+      source: extractMergedState.source,
+      elements: extractMergedState.elements.map((element) =>
+        element.id === "element_003"
+          ? {
+            ...element,
+            status: "extracted",
+            mask: "elements/element_003/mask.png",
+          }
+          : element,
+      ),
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(extractMergedState);
+      }
+
+      if (input === "/api/workspace/extract" && init?.method === "POST") {
+        expect(init.body).toBe(JSON.stringify({
+          elementIds: ["element_003"],
+          strategy: "bbox_alpha",
+        }));
+        return jsonResponse({
+          extractions: [
+            {
+              elementId: "element_003",
+              strategy: "bbox_alpha",
+              maskPath: "elements/element_003/mask.png",
+              assetPath: "elements/element_003/asset_incomplete.png",
+              sourceCropPath: "elements/element_003/source_crop.png",
+            },
+          ],
+          state: extractedMergedOnlyState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("Fixture group thumbnail");
+
+      await user.click(screen.getByRole("button", { name: /extract all/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/extract",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementIds: ["element_003"],
+            strategy: "bbox_alpha",
+          }),
+        }),
+      );
+      expect(await screen.findAllByText(/extracted 1 element\./i)).toHaveLength(2);
     } finally {
       restoreFetch();
     }

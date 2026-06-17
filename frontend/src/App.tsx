@@ -256,7 +256,7 @@ export function App() {
   }, [overlays.showRejected, workspace.elements]);
 
   const mergeableElements = useMemo(() => {
-    return workspace.elements.filter(isActionableElement);
+    return workspace.elements.filter(isMergeableElement);
   }, [workspace.elements]);
 
   const overlayElements = useMemo(() => {
@@ -303,13 +303,12 @@ export function App() {
     && !hasUnsavedGeometryChanges
     && !isRepairing;
 
-  const hasBatchExtractTargets = useMemo(() => {
-    return workspace.elements.some(
-      (element) =>
-        (element.status === "accepted" || element.status === "extract_ready") &&
-        element.mode !== "rejected",
-    );
+  const batchExtractElementIds = useMemo(() => {
+    return workspace.elements
+      .filter((element) => isActionableElement(element) && canBatchExtractElement(element))
+      .map((element) => element.id);
   }, [workspace.elements]);
+  const hasBatchExtractTargets = batchExtractElementIds.length > 0;
 
   useEffect(() => {
     if (!selectedElement) {
@@ -435,12 +434,14 @@ export function App() {
     });
     setAssetCacheKey((current) => current + 1);
     setSelectedElementId((current) => {
-      if (nextSelectionId !== undefined) {
-        return nextSelectionId;
+      const requestedSelectionId = nextSelectionId !== undefined ? nextSelectionId : current;
+      if (
+        requestedSelectionId
+        && normalizedActionableElements.some((element) => element.id === requestedSelectionId)
+      ) {
+        return requestedSelectionId;
       }
-      if (current && normalizedActionableElements.some((element) => element.id === current)) {
-        return current;
-      }
+
       return normalizedActionableElements[0]?.id ?? null;
     });
     setSelectedElementIds((current) => {
@@ -460,10 +461,14 @@ export function App() {
     missingMaskDraftsRef.current = {};
   }
 
-  async function persistWorkspace(nextState: WorkspaceState, nextStatus: string): Promise<boolean> {
+  async function persistWorkspace(
+    nextState: WorkspaceState,
+    nextStatus: string,
+    nextSelectionId?: string | null,
+  ): Promise<boolean> {
     const previousState = workspace;
     const previousSelection = selectedElementId;
-    replaceWorkspace(nextState, nextStatus);
+    replaceWorkspace(nextState, nextStatus, nextSelectionId);
     setIsSavingState(true);
     setError(null);
 
@@ -482,7 +487,11 @@ export function App() {
       }
 
       const persistedState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
-      replaceWorkspace(persistedState, nextStatus, previousSelection);
+      replaceWorkspace(
+        persistedState,
+        nextStatus,
+        nextSelectionId !== undefined ? nextSelectionId : previousSelection,
+      );
       return true;
     } catch (saveError) {
       setWorkspace(previousState);
@@ -601,6 +610,7 @@ export function App() {
     }
 
     await runExtraction({
+      elementIds: batchExtractElementIds,
       successStatus: (count) => `Extracted ${count} element${count === 1 ? "" : "s"}.`,
     });
   }
@@ -945,7 +955,7 @@ export function App() {
   }
 
   function handleMergeSelectionToggle(elementId: string) {
-    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+    if (!workspace.elements.some((element) => element.id === elementId && isMergeableElement(element))) {
       return;
     }
     setSelectedElementIds((current) =>
@@ -1015,10 +1025,7 @@ export function App() {
         visible: false,
       })),
     };
-    if (selectedElementId === elementId) {
-      setSelectedElementId(null);
-    }
-    await persistWorkspace(nextState, "Element rejected.");
+    await persistWorkspace(nextState, "Element rejected.", null);
   }
 
   async function handleVisibilityToggle(elementId: string) {
@@ -1152,7 +1159,7 @@ export function App() {
 
   async function handleMergeSelectedElements() {
     const mergeElementIds = selectedElementIds.filter((elementId) =>
-      workspace.elements.some((element) => element.id === elementId && isActionableElement(element)),
+      workspace.elements.some((element) => element.id === elementId && isMergeableElement(element)),
     );
     if (mergeElementIds.length < 2) {
       return;
@@ -1473,8 +1480,19 @@ function canExtractElement(element: WorkspaceElement): boolean {
   return ["accepted", "extract_ready", "extracted"].includes(element.status);
 }
 
+function canBatchExtractElement(element: WorkspaceElement): boolean {
+  if (element.mode === "rejected") {
+    return false;
+  }
+  return ["accepted", "extract_ready"].includes(element.status);
+}
+
 function isActionableElement(element: WorkspaceElement): boolean {
-  return element.mergedInto === null;
+  return element.mergedInto === null && element.mode !== "rejected";
+}
+
+function isMergeableElement(element: WorkspaceElement): boolean {
+  return isActionableElement(element) && element.visible;
 }
 
 function hasExtractedAssetPreview(element: WorkspaceElement): boolean {
