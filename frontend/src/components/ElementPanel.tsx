@@ -43,6 +43,7 @@ export function ElementPanel({
           <div className="element-list">
             {elements.map((element) => {
               const isSelected = element.id === selectedElementId;
+              const canAct = element.mergedInto === null && element.mode !== "rejected";
               const canReject =
                 ["proposal", "model_detected", "edited", "child"].includes(element.status)
                 && element.mode !== "rejected";
@@ -73,27 +74,29 @@ export function ElementPanel({
                       <span>{element.source}</span>
                     </div>
                   </button>
-                  <div className="element-actions">
-                    <label className="toggle-switch">
-                      <input
-                        aria-label={`Toggle visibility for ${element.name}`}
-                        type="checkbox"
-                        checked={element.visible}
-                        onChange={() => onToggleVisibility(element.id)}
-                      />
-                      <span>{element.visible ? "Visible" : "Hidden"}</span>
-                    </label>
-                    <div className="element-action-buttons">
-                      <button type="button" onClick={() => onAccept(element.id)}>
-                        Accept
-                      </button>
-                      {canReject ? (
-                        <button type="button" onClick={() => onReject(element.id)}>
-                          Reject
+                  {canAct ? (
+                    <div className="element-actions">
+                      <label className="toggle-switch">
+                        <input
+                          aria-label={`Toggle visibility for ${element.name}`}
+                          type="checkbox"
+                          checked={element.visible}
+                          onChange={() => onToggleVisibility(element.id)}
+                        />
+                        <span>{element.visible ? "Visible" : "Hidden"}</span>
+                      </label>
+                      <div className="element-action-buttons">
+                        <button type="button" onClick={() => onAccept(element.id)}>
+                          Accept
                         </button>
-                      ) : null}
+                        {canReject ? (
+                          <button type="button" onClick={() => onReject(element.id)}>
+                            Reject
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
-                  </div>
+                  ) : null}
                 </article>
               );
             })}

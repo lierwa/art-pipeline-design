@@ -245,7 +245,7 @@ export function App() {
 
   const visibleElements = useMemo(() => {
     return workspace.elements.filter((element) => {
-      if (!isActionableElement(element)) {
+      if (!isDisplayableElement(element)) {
         return false;
       }
       if (element.mode === "rejected" && !overlays.showRejected) {
@@ -260,8 +260,10 @@ export function App() {
   }, [workspace.elements]);
 
   const overlayElements = useMemo(() => {
-    return visibleElements.filter((element) => element.visible);
-  }, [visibleElements]);
+    return visibleElements.filter(
+      (element) => element.visible || (overlays.showRejected && element.mode === "rejected"),
+    );
+  }, [overlays.showRejected, visibleElements]);
 
   const selectedElement = useMemo(() => {
     return workspace.elements.find(
@@ -951,6 +953,9 @@ export function App() {
   }
 
   function handleSelectElement(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
     setSelectedElementId(elementId);
   }
 
@@ -1061,6 +1066,12 @@ export function App() {
       if (!patchRequest) {
         setError("Element geometry values must be whole numbers.");
         setStatus("State save failed.");
+        return;
+      }
+      if (Object.keys(patchRequest).length === 0) {
+        setError(null);
+        setStatus("Element details unchanged.");
+        setElementDraft(draftFromElement(selectedElement));
         return;
       }
 
@@ -1487,8 +1498,12 @@ function canBatchExtractElement(element: WorkspaceElement): boolean {
   return ["accepted", "extract_ready"].includes(element.status);
 }
 
+function isDisplayableElement(element: WorkspaceElement): boolean {
+  return element.mergedInto === null;
+}
+
 function isActionableElement(element: WorkspaceElement): boolean {
-  return element.mergedInto === null && element.mode !== "rejected";
+  return isDisplayableElement(element) && element.mode !== "rejected";
 }
 
 function isMergeableElement(element: WorkspaceElement): boolean {
@@ -1881,11 +1896,21 @@ function buildElementPatchFromDraft(
     return null;
   }
 
-  return {
-    bbox,
-    label: draft.name.trim() || element.name,
-    visible: draft.visible,
-  };
+  const request: PatchWorkspaceElementRequest = {};
+  const nextLabel = draft.name.trim() || element.name;
+  const currentLabel = element.label ?? element.name;
+
+  if (!boxesEqual(element.bbox, bbox)) {
+    request.bbox = bbox;
+  }
+  if (nextLabel !== currentLabel) {
+    request.label = nextLabel;
+  }
+  if (draft.visible !== element.visible) {
+    request.visible = draft.visible;
+  }
+
+  return request;
 }
 
 function boxesEqual(left: Box, right: Box): boolean {

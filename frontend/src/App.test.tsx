@@ -523,6 +523,17 @@ describe("App", () => {
       expect(await screen.findAllByText(/element rejected\./i)).toHaveLength(2);
       expect(screen.queryByAltText("cabinet thumbnail")).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
+
+      expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_010")).toHaveTextContent("cabinet");
+      expect(screen.getByText("rejected")).toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /select cabinet for merge/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /toggle visibility for cabinet/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^accept$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -698,6 +709,52 @@ describe("App", () => {
       );
       expect(screen.getAllByText(/element details updated\./i)).toHaveLength(2);
       expect(screen.getByAltText("Hero Shelf thumbnail")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("saves legacy visibility-only edits without sending an implicit label", async () => {
+    const user = userEvent.setup();
+    const acceptedHiddenElement = {
+      ...loadedState.elements[0],
+      visible: false,
+    };
+    const acceptedHiddenState = {
+      source: loadedState.source,
+      elements: [acceptedHiddenElement],
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: acceptedHiddenElement,
+          state: acceptedHiddenState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("checkbox", { name: /element visible/i }));
+      await user.click(screen.getByRole("button", { name: /save element/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/element_001",
+        expect.objectContaining({ method: "PATCH" }),
+      );
+      expect(patchRequest).toEqual({ visible: false });
+      expect(screen.getAllByText("accepted").length).toBeGreaterThan(0);
+      expect(screen.getByRole("button", { name: /^extract$/i })).not.toBeDisabled();
     } finally {
       restoreFetch();
     }
