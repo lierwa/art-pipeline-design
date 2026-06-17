@@ -340,9 +340,20 @@ button:disabled {
 .right-review-panel {
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(260px, 0.95fr) auto minmax(320px, 1.05fr);
+  grid-template-rows: minmax(0, 0.95fr) minmax(0, 0.45fr) minmax(0, 1.05fr);
   border-left: 1px solid #253040;
   overflow: hidden;
+}
+
+.right-review-panel .panel {
+  min-height: 0;
+  overflow: hidden;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.right-review-panel .panel > .panel-body {
+  min-height: 0;
+  overflow: auto;
 }
 
 .right-review-panel .panel + .panel {
@@ -577,6 +588,7 @@ button:disabled {
 }
 
 .asset-tree-panel {
+  min-height: 0;
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
@@ -773,7 +785,13 @@ button:disabled {
 }
 
 .selection-action-panel {
+  min-height: 0;
+  overflow: hidden;
   grid-template-rows: auto minmax(0, auto);
+}
+
+.selection-action-panel .panel-body {
+  overflow: auto;
 }
 
 .selection-action-stack,

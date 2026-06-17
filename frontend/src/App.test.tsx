@@ -265,6 +265,38 @@ const treeState = {
   ],
 };
 
+const rejectedTreeState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...detectedElement,
+      id: "element_020",
+      name: "Rejected Vase",
+      label: "Rejected Vase",
+      status: "rejected",
+      mode: "rejected",
+      visible: false,
+      thumbnail: "elements/element_020/thumb.png",
+    },
+  ],
+};
+
+const legacyStatusRejectedState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...detectedElement,
+      id: "element_021",
+      name: "Legacy Reject",
+      label: "Legacy Reject",
+      status: "rejected",
+      mode: "visible_only",
+      visible: true,
+      thumbnail: "elements/element_021/thumb.png",
+    },
+  ],
+};
+
 const extractMergedState = {
   source: loadedState.source,
   elements: [
@@ -417,6 +449,12 @@ describe("App", () => {
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto;/);
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*min-height:\s*auto;/);
     expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*overflow:\s*auto;/);
+
+    expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*0\.95fr\)\s+minmax\(0,\s*0\.45fr\)\s+minmax\(0,\s*1\.05fr\);/);
+    expect(stylesheet).toMatch(/\.right-review-panel\s+\.panel\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.asset-tree-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.selection-action-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/);
+    expect(stylesheet).toMatch(/\.selection-action-panel\s+\.panel-body\s*\{[\s\S]*overflow:\s*auto;/);
   });
 
   it("renders pipeline rail with stage progress", async () => {
@@ -581,6 +619,57 @@ describe("App", () => {
       render(<App />);
 
       const actionPanel = await screen.findByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("clears display-only actions when a selected rejected asset is hidden again", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(rejectedTreeState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
+      await user.click(await screen.findByRole("button", { name: /select rejected vase asset/i }));
+      expect(screen.getByText(/rejected or merged assets are shown for review only/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
+
+      expect(screen.queryByText("Rejected Vase")).not.toBeInTheDocument();
+      expect(screen.queryByText(/rejected or merged assets are shown for review only/i)).not.toBeInTheDocument();
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("keeps legacy status-rejected assets out of normal selection and actions", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(legacyStatusRejectedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.queryByText("Legacy Reject")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /select legacy reject asset/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).queryByRole("button", { name: /^edit box$/i })).not.toBeInTheDocument();
       expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
     } finally {
       restoreFetch();

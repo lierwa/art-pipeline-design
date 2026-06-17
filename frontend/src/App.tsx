@@ -253,7 +253,7 @@ export function App() {
       if (!isDisplayableElement(element)) {
         return false;
       }
-      if (element.mode === "rejected" && !overlays.showRejected) {
+      if (isRejectedElement(element) && !overlays.showRejected) {
         return false;
       }
       return true;
@@ -266,15 +266,15 @@ export function App() {
 
   const overlayElements = useMemo(() => {
     return visibleElements.filter(
-      (element) => element.visible || (overlays.showRejected && element.mode === "rejected"),
+      (element) => element.visible || (overlays.showRejected && isRejectedElement(element)),
     );
   }, [overlays.showRejected, visibleElements]);
 
   const selectedReviewElement = useMemo(() => {
-    return workspace.elements.find(
+    return visibleElements.find(
       (element) => element.id === selectedElementId && isDisplayableElement(element),
     ) ?? null;
-  }, [selectedElementId, workspace.elements]);
+  }, [selectedElementId, visibleElements]);
 
   const selectedElement = useMemo(() => {
     return selectedReviewElement && isActionableElement(selectedReviewElement)
@@ -350,6 +350,15 @@ export function App() {
       current?.elementId === selectedElement.id ? current : null,
     );
   }, [selectedElement]);
+
+  useEffect(() => {
+    if (
+      selectedElementId
+      && !visibleElements.some((element) => element.id === selectedElementId)
+    ) {
+      setSelectedElementId(null);
+    }
+  }, [selectedElementId, visibleElements]);
 
   useEffect(() => {
     if (!selectedElement || !shouldLoadRepairMetadata(selectedElement)) {
@@ -1536,14 +1545,14 @@ export function App() {
 }
 
 function canExtractElement(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected") {
+  if (isRejectedElement(element)) {
     return false;
   }
   return ["accepted", "extract_ready", "extracted"].includes(element.status);
 }
 
 function canBatchExtractElement(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected") {
+  if (isRejectedElement(element)) {
     return false;
   }
   return ["accepted", "extract_ready"].includes(element.status);
@@ -1554,11 +1563,15 @@ function isDisplayableElement(element: WorkspaceElement): boolean {
 }
 
 function isActionableElement(element: WorkspaceElement): boolean {
-  return isDisplayableElement(element) && element.mode !== "rejected";
+  return isDisplayableElement(element) && !isRejectedElement(element);
 }
 
 function isMergeableElement(element: WorkspaceElement): boolean {
   return isActionableElement(element) && element.visible;
+}
+
+function isRejectedElement(element: WorkspaceElement): boolean {
+  return element.mode === "rejected" || element.status === "rejected";
 }
 
 function hasExtractedAssetPreview(element: WorkspaceElement): boolean {
