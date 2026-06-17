@@ -123,6 +123,33 @@ def test_filter_detection_results_drops_generic_and_out_of_vocab_labels() -> Non
     assert [item["label"] for item in filtered] == ["cabinet"]
 
 
+def test_filter_detection_results_drops_low_confidence_labels() -> None:
+    raw = [
+        {
+            "label": "plant",
+            "confidence": 0.44,
+            "bbox": {"x": 10, "y": 10, "w": 20, "h": 20},
+            "sourcePrompt": "plant",
+        },
+        {
+            "label": "bottle",
+            "confidence": 0.45,
+            "bbox": {"x": 40, "y": 40, "w": 20, "h": 20},
+            "sourcePrompt": "bottle",
+        },
+    ]
+
+    filtered = filter_detection_results(
+        raw,
+        vocabulary=["plant", "bottle"],
+        min_confidence=0.45,
+    )
+
+    assert [(item["label"], item["confidence"]) for item in filtered] == [
+        ("bottle", 0.45),
+    ]
+
+
 def test_filter_detection_results_runs_nms_per_label() -> None:
     raw = [
         {
