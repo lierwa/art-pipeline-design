@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
+from pydantic import ValidationError
 
 from art_pipeline.annotations import (
     ManualElementCreateRequest,
@@ -18,6 +19,16 @@ from art_pipeline.annotations import (
     split_element,
     validate_workspace_state_geometry,
     write_split_request_contract,
+)
+from art_pipeline.asset_outputs import (
+    clear_extraction_outputs,
+    clear_stale_asset_outputs,
+    write_mask_output,
+)
+from art_pipeline.detection import (
+    DEFAULT_ASSET_VOCABULARY,
+    DetectionProvider,
+    DetectionResult,
 )
 from art_pipeline.elements import (
     BoundingBox,
@@ -30,12 +41,6 @@ from art_pipeline.elements import (
 )
 from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.proposals import ImportedProposalsError, generate_proposals
-from art_pipeline.detection import DEFAULT_ASSET_VOCABULARY, DetectionProvider
-from art_pipeline.asset_outputs import (
-    clear_extraction_outputs,
-    clear_stale_asset_outputs,
-    write_mask_output,
-)
 from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import (
@@ -519,17 +524,25 @@ def create_app(
             raise HTTPException(status_code=400, detail="Upload a source image before detection.")
 
         source_image = _require_source_image(root)
-        raw_results = provider.detect(
-            source_image,
-            DEFAULT_ASSET_VOCABULARY,
-            ". ".join(DEFAULT_ASSET_VOCABULARY),
-        )
+        try:
+            raw_results = provider.detect(
+                source_image,
+                DEFAULT_ASSET_VOCABULARY,
+                ". ".join(DEFAULT_ASSET_VOCABULARY),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Detection provider {provider.name!r} failed: {exc}",
+            ) from exc
+
+        results = _validate_detection_results(source_image, raw_results)
+        _clear_generated_workspace_outputs(root)
         generated = _detection_results_to_elements(
             root,
-            state,
             source_image,
             provider.name,
-            raw_results,
+            results,
         )
         next_state = WorkspaceState(source=state.source, elements=generated)
         _write_state(root, next_state)
@@ -599,24 +612,22 @@ def _clear_generated_workspace_outputs(workspace_root: Path) -> None:
 
 def _detection_results_to_elements(
     workspace_root: Path,
-    state: WorkspaceState,
     source_image: Image.Image,
     provider_name: str,
-    raw_results: list[dict],
+    results: list[DetectionResult],
 ) -> list[ElementRecord]:
     generated_elements: list[ElementRecord] = []
     next_index = 1
-    for result in raw_results:
-        bbox = BoundingBox.model_validate(result["bbox"])
-        element_id = next_element_id(state.elements + generated_elements, start=next_index)
+    for result in results:
+        bbox = result.bbox
+        element_id = next_element_id(generated_elements, start=next_index)
         next_index = int(element_id.rsplit("_", 1)[1]) + 1
         thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)
-        label = result["label"]
         generated_elements.append(
             ElementRecord(
                 id=element_id,
-                name=label,
-                label=label,
+                name=result.label,
+                label=result.label,
                 status="model_detected",
                 mode="visible_only",
                 bbox=bbox,
@@ -626,13 +637,54 @@ def _detection_results_to_elements(
                 parentId=None,
                 source="model_detection",
                 sourceProvider=provider_name,
-                sourcePrompt=result["sourcePrompt"],
+                sourcePrompt=result.sourcePrompt,
                 notes="",
                 visible=True,
-                confidence=result["confidence"],
+                confidence=result.confidence,
             )
         )
     return generated_elements
+
+
+def _validate_detection_results(
+    source_image: Image.Image,
+    raw_results: object,
+) -> list[DetectionResult]:
+    if not isinstance(raw_results, list):
+        raise HTTPException(
+            status_code=502,
+            detail="Invalid provider result: expected a list of detection results.",
+        )
+
+    results: list[DetectionResult] = []
+    for index, raw_result in enumerate(raw_results, start=1):
+        try:
+            result = DetectionResult.model_validate(raw_result)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Invalid provider result at index {index}: {exc}",
+            ) from exc
+
+        try:
+            _validate_detection_bbox_bounds(source_image, result.bbox)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Invalid provider result at index {index}: {exc}",
+            ) from exc
+        results.append(result)
+    return results
+
+
+def _validate_detection_bbox_bounds(
+    source_image: Image.Image,
+    bbox: BoundingBox,
+) -> None:
+    if bbox.x < 0 or bbox.y < 0:
+        raise ValueError("bbox coordinates must be non-negative.")
+    if bbox.x + bbox.w > source_image.width or bbox.y + bbox.h > source_image.height:
+        raise ValueError("bbox must fit within the source image bounds.")
 
 
 def _require_source_image(workspace_root: Path) -> Image.Image:

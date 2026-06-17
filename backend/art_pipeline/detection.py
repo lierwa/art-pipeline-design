@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from art_pipeline.elements import BoundingBox
 
@@ -32,9 +32,15 @@ class DetectionProviderNotConfigured(RuntimeError):
 
 class DetectionResult(BaseModel):
     label: str
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
     bbox: BoundingBox
     sourcePrompt: str
+
+    @model_validator(mode="after")
+    def validate_bbox_dimensions(self) -> "DetectionResult":
+        if self.bbox.w <= 0 or self.bbox.h <= 0:
+            raise ValueError("bbox width and height must be positive.")
+        return self
 
 
 class DetectionProvider(Protocol):
@@ -45,5 +51,5 @@ class DetectionProvider(Protocol):
         image: Image.Image,
         vocabulary: list[str],
         prompt: str,
-    ) -> list[dict]:
+    ) -> list[DetectionResult | dict[str, Any]]:
         raise NotImplementedError
