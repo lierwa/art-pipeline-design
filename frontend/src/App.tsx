@@ -27,6 +27,7 @@ import {
   RepairMetadata,
   RepairQaReport,
   SelectedElementIds,
+  SourceMetadata,
   sourceCropUrl,
   updateElement,
   WorkspaceElement,
@@ -195,6 +196,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [selectedElementIds, setSelectedElementIds] = useState<SelectedElementIds>([]);
+  const [editingElementId, setEditingElementId] = useState<string | null>(null);
   const [overlays, setOverlays] = useState<OverlayState>(DEFAULT_OVERLAYS);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -282,6 +284,23 @@ export function App() {
       : null;
   }, [selectedReviewElement]);
 
+  const canvasOverlayElements = useMemo(() => {
+    if (!selectedElement || !elementDraft) {
+      return overlayElements;
+    }
+
+    const draftBbox = parseBox(elementDraft.bbox);
+    if (!draftBbox) {
+      return overlayElements;
+    }
+
+    return overlayElements.map((element) =>
+      element.id === selectedElement.id
+        ? { ...element, bbox: draftBbox }
+        : element,
+    );
+  }, [elementDraft, overlayElements, selectedElement]);
+
   const canExtractSelected = useMemo(() => {
     return selectedElement !== null && canExtractElement(selectedElement);
   }, [selectedElement]);
@@ -299,6 +318,13 @@ export function App() {
   }, [mergeableElements, selectedElementIds]);
   const selectedMergeableElementCount = selectedMergeableElements.length;
   const canMergeSelectedElements = !hasUnsavedGeometryChanges && selectedMergeableElementCount >= 2;
+  const mergePreview = useMemo(() => {
+    if (!canMergeSelectedElements) {
+      return null;
+    }
+
+    return unionBoxes(selectedMergeableElements.map((element) => element.bbox));
+  }, [canMergeSelectedElements, selectedMergeableElements]);
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
   const selectedRepairMetadata = selectedElement
@@ -350,6 +376,12 @@ export function App() {
       current?.elementId === selectedElement.id ? current : null,
     );
   }, [selectedElement]);
+
+  useEffect(() => {
+    setEditingElementId((current) =>
+      current && current !== selectedElement?.id ? null : current,
+    );
+  }, [selectedElement?.id]);
 
   useEffect(() => {
     if (
@@ -1000,6 +1032,9 @@ export function App() {
 
   function handleSelectTool(nextTool: CanvasTool) {
     setTool(nextTool);
+    if (nextTool !== "select") {
+      setEditingElementId(null);
+    }
     if (nextTool === "draw") {
       setSplitRegions([]);
       setMissingMaskRegion(null);
@@ -1025,7 +1060,25 @@ export function App() {
       return;
     }
     handleSelectTool("select");
-    setStatus("Edit box selected. Use inspector fields until canvas handles are available.");
+    setEditingElementId(selectedElement.id);
+    setStatus("Editing selected box.");
+    setError(null);
+  }
+
+  function handleBoxDraftChange(elementId: string, bbox: Box) {
+    if (!selectedElement || selectedElement.id !== elementId || !workspace.source) {
+      return;
+    }
+
+    const nextBbox = clampBoxToSource(bbox, workspace.source);
+    setElementDraft((current) => {
+      const nextDraft = current ?? draftFromElement(selectedElement);
+      return {
+        ...nextDraft,
+        bbox: boxToDraft(nextBbox),
+      };
+    });
+    setError(null);
   }
 
   function handleStartSplitParent() {
@@ -1394,8 +1447,11 @@ export function App() {
             sourceUrl={sourceUrl}
             source={workspace.source}
             overlays={overlays}
-            overlayElements={overlayElements}
+            overlayElements={canvasOverlayElements}
             selectedElementId={selectedElementId}
+            selectedElementIds={selectedElementIds}
+            editingElementId={editingElementId}
+            mergePreview={mergePreview}
             sourceDetails={sourceDetails}
             tool={tool}
             draftRegion={draftRegion}
@@ -1406,6 +1462,8 @@ export function App() {
             canDrawMissingMask={canDrawMissingMask}
             onToggleOverlay={handleOverlayToggle}
             onSelectTool={handleSelectTool}
+            onSelectElement={handleSelectElement}
+            onBoxDraftChange={handleBoxDraftChange}
             onDraftRegionChange={setDraftRegion}
             onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
             onMissingMaskRegionChange={setMissingMaskRegion}
@@ -2027,6 +2085,38 @@ function buildDefaultChildBox(parentBox: Box): Box {
     y: parentBox.y + Math.max(0, Math.floor((parentBox.h - height) / 2)),
     w: width,
     h: height,
+  };
+}
+
+function clampBoxToSource(box: Box, source: SourceMetadata): Box {
+  const sourceWidth = Math.max(1, source.width);
+  const sourceHeight = Math.max(1, source.height);
+  const width = clampInteger(Math.round(box.w), 1, sourceWidth);
+  const height = clampInteger(Math.round(box.h), 1, sourceHeight);
+
+  return {
+    x: clampInteger(Math.round(box.x), 0, sourceWidth - width),
+    y: clampInteger(Math.round(box.y), 0, sourceHeight - height),
+    w: width,
+    h: height,
+  };
+}
+
+function unionBoxes(boxes: Box[]): Box | null {
+  if (boxes.length === 0) {
+    return null;
+  }
+
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.w));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.h));
+
+  return {
+    x: left,
+    y: top,
+    w: right - left,
+    h: bottom - top,
   };
 }
 

@@ -538,6 +538,110 @@ describe("App", () => {
     }
   });
 
+  it("exposes edit handles for the selected canvas box", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+
+      expect(await screen.findByTestId("canvas-edit-region-element_001")).toHaveAttribute(
+        "aria-label",
+        "Edit Region 1 box",
+      );
+      expect(screen.getByTestId("resize-handle-element_001-se")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("nudges the selected canvas box and saves the draft with PATCH", async () => {
+    const user = userEvent.setup();
+    const patchedElement = {
+      ...loadedState.elements[0],
+      status: "edited",
+      bbox: { x: 22, y: 16, w: 30, h: 32 },
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: patchedElement,
+          state: {
+            source: loadedState.source,
+            elements: [patchedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
+      editRegion.focus();
+      fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
+
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({
+          bbox: { x: 22, y: 16, w: 30, h: 32 },
+        });
+      });
+      expect(screen.getAllByText(/element details updated\./i)).toHaveLength(2);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("renders a merge preview outline for multiple selected assets", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.queryByTestId("merge-preview-outline")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
+      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+
+      expect(screen.getByTestId("merge-preview-outline")).toHaveClass("overlay-box-merge-preview");
+
+      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+
+      expect(screen.queryByTestId("merge-preview-outline")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders the workbench shell", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {

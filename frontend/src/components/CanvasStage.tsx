@@ -1,4 +1,4 @@
-import { CSSProperties, MouseEvent, PointerEvent, useRef } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useRef } from "react";
 
 import {
   Box,
@@ -17,6 +17,9 @@ type CanvasStageProps = {
   overlays: OverlayState;
   overlayElements: WorkspaceElement[];
   selectedElementId: string | null;
+  selectedElementIds: string[];
+  editingElementId: string | null;
+  mergePreview: Box | null;
   sourceDetails: string;
   tool: CanvasTool;
   draftRegion: DraftRegion | null;
@@ -27,6 +30,8 @@ type CanvasStageProps = {
   canDrawMissingMask: boolean;
   onToggleOverlay: (key: keyof OverlayState) => void;
   onSelectTool: (tool: CanvasTool) => void;
+  onSelectElement: (elementId: string) => void;
+  onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
   onMissingMaskRegionChange: (region: DraftRegion | null) => void;
@@ -40,7 +45,28 @@ type PointerDraft = {
   startY: number;
 };
 
+type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+type BoxEditDrag = {
+  elementId: string;
+  mode: "move" | "resize";
+  handle: ResizeHandle | null;
+  startX: number;
+  startY: number;
+  startBox: Box;
+};
+
 type DrawingEvent = PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>;
+type ClientPositionEvent = {
+  clientX: number;
+  clientY: number;
+  nativeEvent?: {
+    clientX?: number;
+    clientY?: number;
+  };
+};
+
+const RESIZE_HANDLES: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 export function CanvasStage({
   sourceUrl,
@@ -48,6 +74,9 @@ export function CanvasStage({
   overlays,
   overlayElements,
   selectedElementId,
+  selectedElementIds,
+  editingElementId,
+  mergePreview,
   sourceDetails,
   tool,
   draftRegion,
@@ -58,6 +87,8 @@ export function CanvasStage({
   canDrawMissingMask,
   onToggleOverlay,
   onSelectTool,
+  onSelectElement,
+  onBoxDraftChange,
   onDraftRegionChange,
   onAddSplitRegion,
   onMissingMaskRegionChange,
@@ -151,10 +182,16 @@ export function CanvasStage({
       overlays={overlays}
       overlayElements={overlayElements}
       selectedElementId={selectedElementId}
+      selectedElementIds={selectedElementIds}
+      editingElementId={editingElementId}
+      mergePreview={mergePreview}
       draftRegion={draftRegion}
       splitRegions={splitRegions}
       missingMaskRegion={missingMaskRegion}
       assetCacheKey={assetCacheKey}
+      tool={tool}
+      onSelectElement={onSelectElement}
+      onBoxDraftChange={onBoxDraftChange}
       onPointerDown={beginDraw}
       onPointerMove={updateDraw}
       onPointerUp={endDraw}
@@ -274,10 +311,16 @@ type CanvasArtboardProps = {
   overlays: OverlayState;
   overlayElements: WorkspaceElement[];
   selectedElementId: string | null;
+  selectedElementIds: string[];
+  editingElementId: string | null;
+  mergePreview: Box | null;
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
   missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
+  tool: CanvasTool;
+  onSelectElement: (elementId: string) => void;
+  onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onPointerDown: (event: DrawingEvent) => void;
   onPointerMove: (event: DrawingEvent) => void;
   onPointerUp: (event: DrawingEvent) => void;
@@ -289,20 +332,145 @@ function CanvasArtboard({
   overlays,
   overlayElements,
   selectedElementId,
+  selectedElementIds,
+  editingElementId,
+  mergePreview,
   draftRegion,
   splitRegions,
   missingMaskRegion,
   assetCacheKey,
+  tool,
+  onSelectElement,
+  onBoxDraftChange,
   onPointerDown,
   onPointerMove,
   onPointerUp,
 }: CanvasArtboardProps) {
+  const artboardRef = useRef<HTMLDivElement | null>(null);
+  const boxEditDragRef = useRef<BoxEditDrag | null>(null);
+
+  function handleDrawingPointerDown(event: DrawingEvent) {
+    if (tool === "select") {
+      const hitElement = findTopmostHitElement(event);
+      if (hitElement) {
+        onSelectElement(hitElement.id);
+      }
+      return;
+    }
+
+    onPointerDown(event);
+  }
+
+  function beginBoxMove(event: PointerEvent<HTMLDivElement>, element: WorkspaceElement) {
+    const artboard = artboardRef.current;
+    if (!artboard) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const point = eventPointToImageWithin(event, artboard, source);
+    boxEditDragRef.current = {
+      elementId: element.id,
+      mode: "move",
+      handle: null,
+      startX: point.x,
+      startY: point.y,
+      startBox: element.bbox,
+    };
+    onSelectElement(element.id);
+  }
+
+  function beginBoxResize(
+    event: PointerEvent<HTMLButtonElement>,
+    element: WorkspaceElement,
+    handle: ResizeHandle,
+  ) {
+    const artboard = artboardRef.current;
+    if (!artboard) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const point = eventPointToImageWithin(event, artboard, source);
+    boxEditDragRef.current = {
+      elementId: element.id,
+      mode: "resize",
+      handle,
+      startX: point.x,
+      startY: point.y,
+      startBox: element.bbox,
+    };
+    onSelectElement(element.id);
+  }
+
+  function updateBoxEdit(event: PointerEvent<HTMLDivElement>) {
+    const drag = boxEditDragRef.current;
+    const artboard = artboardRef.current;
+    if (!drag || !artboard) {
+      return;
+    }
+
+    event.preventDefault();
+    const point = eventPointToImageWithin(event, artboard, source);
+    const deltaX = point.x - drag.startX;
+    const deltaY = point.y - drag.startY;
+    const nextBox =
+      drag.mode === "move"
+        ? moveBox(drag.startBox, deltaX, deltaY, source)
+        : resizeBox(drag.startBox, drag.handle ?? "se", deltaX, deltaY, source);
+    onBoxDraftChange(drag.elementId, nextBox);
+  }
+
+  function endBoxEdit(event: PointerEvent<HTMLDivElement>) {
+    if (!boxEditDragRef.current) {
+      return;
+    }
+
+    event.preventDefault();
+    boxEditDragRef.current = null;
+  }
+
+  function handleEditKeyDown(event: KeyboardEvent<HTMLDivElement>, element: WorkspaceElement) {
+    const step = event.shiftKey ? 10 : 1;
+    const delta = keyboardDelta(event.key, step);
+    if (!delta) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onBoxDraftChange(element.id, moveBox(element.bbox, delta.x, delta.y, source));
+  }
+
+  function findTopmostHitElement(event: DrawingEvent): WorkspaceElement | null {
+    const artboard = artboardRef.current;
+    if (!artboard) {
+      return null;
+    }
+
+    const point = eventPointToImageWithin(event, artboard, source);
+    return [...overlayElements]
+      .filter((element) => element.visible && pointIsInsideBox(point, element.bbox))
+      .sort((left, right) => right.layer - left.layer)[0] ?? null;
+  }
+
   return (
     <div
+      ref={artboardRef}
+      data-testid="canvas-artboard"
       className="canvas-artboard"
       style={{
         aspectRatio: `${source.width} / ${source.height}`,
       }}
+      onPointerMove={updateBoxEdit}
+      onPointerUp={endBoxEdit}
+      onPointerCancel={endBoxEdit}
     >
       <img
         alt="Workspace source"
@@ -325,15 +493,23 @@ function CanvasArtboard({
         {overlayElements.map((element) => {
           const overlayStyle = boxToPercentStyle(element.bbox, source);
           const isSelected = selectedElementId === element.id;
+          const isMergeSelected = selectedElementIds.includes(element.id);
+          const isEditing = editingElementId === element.id;
+          const shouldRenderBox = overlays.showBoxes || isSelected || isMergeSelected || isEditing;
 
           return (
             <div
               key={element.id}
               data-testid={`overlay-region-${element.id}`}
-              className={`overlay-item${isSelected ? " is-selected" : ""}`}
+              className={[
+                "overlay-item",
+                isSelected ? "is-selected" : "",
+                isMergeSelected ? "is-merge-selected" : "",
+                isEditing ? "is-editing" : "",
+              ].filter(Boolean).join(" ")}
               style={overlayStyle}
             >
-              {overlays.showBoxes ? (
+              {shouldRenderBox ? (
                 <div
                   data-testid={`overlay-box-${element.id}`}
                   className="overlay-box"
@@ -354,9 +530,42 @@ function CanvasArtboard({
                   src={thumbnailUrl(element.thumbnail) ?? undefined}
                 />
               ) : null}
+              {isEditing ? (
+                <div
+                  aria-label={`Edit ${element.name} box`}
+                  className="canvas-edit-region"
+                  data-testid={`canvas-edit-region-${element.id}`}
+                  role="region"
+                  tabIndex={0}
+                  onKeyDown={(event) => handleEditKeyDown(event, element)}
+                  onPointerDown={(event) => beginBoxMove(event, element)}
+                >
+                  {RESIZE_HANDLES.map((handle) => (
+                    <button
+                      key={handle}
+                      type="button"
+                      aria-label={`Resize ${element.name} box ${handle}`}
+                      className={`resize-handle resize-handle-${handle}`}
+                      data-testid={`resize-handle-${element.id}-${handle}`}
+                      onPointerDown={(event) => beginBoxResize(event, element, handle)}
+                    />
+                  ))}
+                </div>
+              ) : null}
             </div>
           );
         })}
+        {mergePreview ? (
+          <div
+            className="overlay-item overlay-item-merge-preview"
+            style={boxToPercentStyle(mergePreview, source)}
+          >
+            <div
+              className="overlay-box overlay-box-merge-preview"
+              data-testid="merge-preview-outline"
+            />
+          </div>
+        ) : null}
         {draftRegion ? (
           <div className="overlay-item overlay-item-draft" style={boxToPercentStyle(draftRegion.bbox, source)}>
             <div className="overlay-box overlay-box-draft" />
@@ -383,10 +592,10 @@ function CanvasArtboard({
       <div
         className="canvas-drawing-surface"
         data-testid="canvas-drawing-surface"
-        onPointerDown={onPointerDown}
+        onPointerDown={handleDrawingPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onMouseDown={onPointerDown}
+        onMouseDown={handleDrawingPointerDown}
         onMouseMove={onPointerMove}
         onMouseUp={onPointerUp}
       />
@@ -434,6 +643,36 @@ function eventPointToImage(event: DrawingEvent, source: SourceMetadata): { x: nu
   };
 }
 
+function eventPointToImageWithin(
+  event: ClientPositionEvent,
+  element: HTMLElement,
+  source: SourceMetadata,
+): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  const width = rect.width || rect.right - rect.left || source.width || 1;
+  const height = rect.height || rect.bottom - rect.top || source.height || 1;
+  const rawClientX =
+    typeof event.nativeEvent?.clientX === "number"
+      ? event.nativeEvent.clientX
+      : typeof event.clientX === "number"
+        ? event.clientX
+        : rect.left;
+  const rawClientY =
+    typeof event.nativeEvent?.clientY === "number"
+      ? event.nativeEvent.clientY
+      : typeof event.clientY === "number"
+        ? event.clientY
+        : rect.top;
+  const clientX = Number.isFinite(rawClientX) ? rawClientX : rect.left;
+  const clientY = Number.isFinite(rawClientY) ? rawClientY : rect.top;
+  const relativeX = clamp((clientX - rect.left) / width, 0, 1);
+  const relativeY = clamp((clientY - rect.top) / height, 0, 1);
+  return {
+    x: Math.round(relativeX * source.width),
+    y: Math.round(relativeY * source.height),
+  };
+}
+
 function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperties {
   return {
     left: `${(box.x / source.width) * 100}%`,
@@ -441,6 +680,95 @@ function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperties {
     width: `${(box.w / source.width) * 100}%`,
     height: `${(box.h / source.height) * 100}%`,
   };
+}
+
+function keyboardDelta(key: string, step: number): { x: number; y: number } | null {
+  if (key === "ArrowLeft") {
+    return { x: -step, y: 0 };
+  }
+  if (key === "ArrowRight") {
+    return { x: step, y: 0 };
+  }
+  if (key === "ArrowUp") {
+    return { x: 0, y: -step };
+  }
+  if (key === "ArrowDown") {
+    return { x: 0, y: step };
+  }
+  return null;
+}
+
+function moveBox(box: Box, deltaX: number, deltaY: number, source: SourceMetadata): Box {
+  const width = clamp(Math.round(box.w), 1, source.width);
+  const height = clamp(Math.round(box.h), 1, source.height);
+  return {
+    x: clamp(Math.round(box.x + deltaX), 0, source.width - width),
+    y: clamp(Math.round(box.y + deltaY), 0, source.height - height),
+    w: width,
+    h: height,
+  };
+}
+
+function resizeBox(
+  box: Box,
+  handle: ResizeHandle,
+  deltaX: number,
+  deltaY: number,
+  source: SourceMetadata,
+): Box {
+  let left = box.x;
+  let top = box.y;
+  let right = box.x + box.w;
+  let bottom = box.y + box.h;
+
+  if (handle.includes("w")) {
+    left += deltaX;
+  }
+  if (handle.includes("e")) {
+    right += deltaX;
+  }
+  if (handle.includes("n")) {
+    top += deltaY;
+  }
+  if (handle.includes("s")) {
+    bottom += deltaY;
+  }
+
+  left = clamp(Math.round(left), 0, source.width - 1);
+  top = clamp(Math.round(top), 0, source.height - 1);
+  right = clamp(Math.round(right), 1, source.width);
+  bottom = clamp(Math.round(bottom), 1, source.height);
+
+  if (right <= left) {
+    if (handle.includes("w")) {
+      left = Math.max(0, right - 1);
+    } else {
+      right = Math.min(source.width, left + 1);
+    }
+  }
+  if (bottom <= top) {
+    if (handle.includes("n")) {
+      top = Math.max(0, bottom - 1);
+    } else {
+      bottom = Math.min(source.height, top + 1);
+    }
+  }
+
+  return {
+    x: left,
+    y: top,
+    w: Math.max(1, right - left),
+    h: Math.max(1, bottom - top),
+  };
+}
+
+function pointIsInsideBox(point: { x: number; y: number }, box: Box): boolean {
+  return (
+    point.x >= box.x
+    && point.y >= box.y
+    && point.x <= box.x + box.w
+    && point.y <= box.y + box.h
+  );
 }
 
 function clamp(value: number, min: number, max: number): number {

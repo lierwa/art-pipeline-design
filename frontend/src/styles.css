@@ -398,6 +398,7 @@ button:disabled {
 .canvas-drawing-surface {
   position: absolute;
   inset: 0;
+  z-index: 1;
   cursor: crosshair;
 }
 
@@ -412,6 +413,7 @@ button:disabled {
 .canvas-overlay-layer {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
 }
 
@@ -419,9 +421,22 @@ button:disabled {
   position: absolute;
 }
 
+.overlay-item.is-merge-selected .overlay-box {
+  border-color: #5ac4b5;
+  box-shadow: 0 0 0 2px rgba(90, 196, 181, 0.16);
+}
+
 .overlay-item.is-selected .overlay-box {
   border-color: #ffd166;
   box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.18);
+}
+
+.overlay-item.is-editing .overlay-box {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.1);
+  box-shadow:
+    0 0 0 2px rgba(255, 209, 102, 0.18),
+    0 0 0 5px rgba(13, 18, 25, 0.32);
 }
 
 .overlay-box {
@@ -447,6 +462,97 @@ button:disabled {
   border-style: dashed;
   border-color: #ff7272;
   background: rgba(255, 114, 114, 0.16);
+}
+
+.overlay-item-merge-preview {
+  z-index: 3;
+}
+
+.overlay-box-merge-preview {
+  border-style: dashed;
+  border-color: #f5b544;
+  background: rgba(245, 181, 68, 0.1);
+  box-shadow: 0 0 0 2px rgba(245, 181, 68, 0.14);
+}
+
+.canvas-edit-region {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  cursor: move;
+}
+
+.canvas-edit-region:focus-visible {
+  outline: 2px solid #f5b544;
+  outline-offset: 6px;
+}
+
+.resize-handle {
+  position: absolute;
+  width: 12px;
+  min-width: 12px;
+  height: 12px;
+  min-height: 12px;
+  padding: 0;
+  border: 2px solid #0d1219;
+  border-radius: 50%;
+  background: #ffd166;
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.75);
+  pointer-events: auto;
+  transform: translate(-50%, -50%);
+}
+
+.resize-handle:focus-visible {
+  outline: 2px solid #f4f7fb;
+  outline-offset: 2px;
+}
+
+.resize-handle-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle-n {
+  top: 0;
+  left: 50%;
+  cursor: ns-resize;
+}
+
+.resize-handle-ne {
+  top: 0;
+  left: 100%;
+  cursor: nesw-resize;
+}
+
+.resize-handle-e {
+  top: 50%;
+  left: 100%;
+  cursor: ew-resize;
+}
+
+.resize-handle-se {
+  top: 100%;
+  left: 100%;
+  cursor: nwse-resize;
+}
+
+.resize-handle-s {
+  top: 100%;
+  left: 50%;
+  cursor: ns-resize;
+}
+
+.resize-handle-sw {
+  top: 100%;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.resize-handle-w {
+  top: 50%;
+  left: 0;
+  cursor: ew-resize;
 }
 
 .overlay-label,
