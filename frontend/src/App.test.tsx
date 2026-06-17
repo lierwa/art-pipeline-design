@@ -350,6 +350,27 @@ async function drawRectangle(surface: HTMLElement, start: { x: number; y: number
 }
 
 describe("App", () => {
+  it("allows the stacked shell to grow without clipping", async () => {
+    // The app tsconfig omits Node typings, but this regression reads authored CSS in Vitest.
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { readFileSync } = await import("node:fs");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { dirname, resolve } = await import("node:path");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { fileURLToPath } = await import("node:url");
+    const stylesheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "styles.css"), "utf8");
+    const desktopMinimumWidth = 228 + 520 + 392;
+    const responsiveShellRules = stylesheet.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([\s\S]*)\n\}/);
+
+    expect(responsiveShellRules).not.toBeNull();
+    expect(Number(responsiveShellRules?.[1] ?? 0)).toBeGreaterThanOrEqual(desktopMinimumWidth);
+
+    const responsiveCss = responsiveShellRules?.[2] ?? "";
+    expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto;/);
+    expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*min-height:\s*auto;/);
+    expect(responsiveCss).toMatch(/\.app-shell\s*\{[\s\S]*overflow:\s*auto;/);
+  });
+
   it("renders pipeline rail with stage progress", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
