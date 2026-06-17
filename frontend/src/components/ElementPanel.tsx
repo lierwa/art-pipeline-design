@@ -43,7 +43,9 @@ export function ElementPanel({
           <div className="element-list">
             {elements.map((element) => {
               const isSelected = element.id === selectedElementId;
-              const canReject = element.status === "proposal" && element.mode !== "rejected";
+              const canReject =
+                ["proposal", "model_detected", "edited", "child"].includes(element.status)
+                && element.mode !== "rejected";
 
               return (
                 <article

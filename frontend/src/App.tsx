@@ -245,6 +245,9 @@ export function App() {
 
   const visibleElements = useMemo(() => {
     return workspace.elements.filter((element) => {
+      if (!isActionableElement(element)) {
+        return false;
+      }
       if (element.mode === "rejected" && !overlays.showRejected) {
         return false;
       }
@@ -252,12 +255,18 @@ export function App() {
     });
   }, [overlays.showRejected, workspace.elements]);
 
+  const mergeableElements = useMemo(() => {
+    return workspace.elements.filter(isActionableElement);
+  }, [workspace.elements]);
+
   const overlayElements = useMemo(() => {
     return visibleElements.filter((element) => element.visible);
   }, [visibleElements]);
 
   const selectedElement = useMemo(() => {
-    return workspace.elements.find((element) => element.id === selectedElementId) ?? null;
+    return workspace.elements.find(
+      (element) => element.id === selectedElementId && isActionableElement(element),
+    ) ?? null;
   }, [selectedElementId, workspace.elements]);
 
   const canExtractSelected = useMemo(() => {
@@ -400,9 +409,9 @@ export function App() {
 
       const nextState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
       setWorkspace(nextState);
-      const firstElementId = nextState.elements[0]?.id ?? null;
+      const firstElementId = nextState.elements.find(isActionableElement)?.id ?? null;
       setSelectedElementId(firstElementId);
-      setSelectedElementIds(firstElementId ? [firstElementId] : []);
+      setSelectedElementIds([]);
       setExportSummary(null);
       setStatus(nextState.source ? "Workspace loaded." : "Ready");
     } catch (loadError) {
@@ -415,6 +424,7 @@ export function App() {
 
   function replaceWorkspace(nextState: WorkspaceState, nextStatus: string, nextSelectionId?: string | null) {
     const normalized = normalizeWorkspaceState(nextState);
+    const normalizedActionableElements = normalized.elements.filter(isActionableElement);
     setWorkspace(normalized);
     setExportSummary(null);
     setRepairMetadataByElementId((current) => {
@@ -428,26 +438,26 @@ export function App() {
       if (nextSelectionId !== undefined) {
         return nextSelectionId;
       }
-      if (current && normalized.elements.some((element) => element.id === current)) {
+      if (current && normalizedActionableElements.some((element) => element.id === current)) {
         return current;
       }
-      return normalized.elements[0]?.id ?? null;
+      return normalizedActionableElements[0]?.id ?? null;
     });
     setSelectedElementIds((current) => {
-      if (nextSelectionId !== undefined) {
-        return nextSelectionId ? [nextSelectionId] : [];
-      }
-
-      const existingIds = new Set(normalized.elements.map((element) => element.id));
+      const existingIds = new Set(normalizedActionableElements.map((element) => element.id));
       const preserved = current.filter((elementId) => existingIds.has(elementId));
-      if (preserved.length > 0) {
-        return preserved;
-      }
-
-      const firstElementId = normalized.elements[0]?.id;
-      return firstElementId ? [firstElementId] : [];
+      return preserved;
     });
     setStatus(nextStatus);
+  }
+
+  function clearAllLocalRepairState() {
+    setRepairMetadataByElementId({});
+    setSavedMissingMaskElementIds([]);
+    setRepairQaReport(null);
+    setMissingMaskDraft(null);
+    setMissingMaskRegion(null);
+    missingMaskDraftsRef.current = {};
   }
 
   async function persistWorkspace(nextState: WorkspaceState, nextStatus: string): Promise<boolean> {
@@ -551,6 +561,8 @@ export function App() {
 
     try {
       const nextState = normalizeWorkspaceState(await runWorkspaceDetection());
+      clearAllLocalRepairState();
+      setSelectedElementIds([]);
       replaceWorkspace(
         nextState,
         `Detected ${nextState.elements.length} model candidate${nextState.elements.length === 1 ? "" : "s"}.`,
@@ -930,12 +942,12 @@ export function App() {
 
   function handleSelectElement(elementId: string) {
     setSelectedElementId(elementId);
-    setSelectedElementIds((current) =>
-      current.includes(elementId) ? current : [...current, elementId],
-    );
   }
 
   function handleMergeSelectionToggle(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
     setSelectedElementIds((current) =>
       current.includes(elementId)
         ? current.filter((currentId) => currentId !== elementId)
@@ -972,6 +984,10 @@ export function App() {
   }
 
   async function handleAccept(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
+
     const nextState = {
       ...workspace,
       elements: updateElement(workspace.elements, elementId, (element) => ({
@@ -986,11 +1002,15 @@ export function App() {
   }
 
   async function handleReject(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
+
     const nextState = {
       ...workspace,
       elements: updateElement(workspace.elements, elementId, (element) => ({
         ...element,
-        status: "proposal",
+        status: "rejected",
         mode: "rejected",
         visible: false,
       })),
@@ -1002,6 +1022,10 @@ export function App() {
   }
 
   async function handleVisibilityToggle(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
+
     const nextState = {
       ...workspace,
       elements: updateElement(workspace.elements, elementId, (element) => ({
@@ -1127,7 +1151,10 @@ export function App() {
   }
 
   async function handleMergeSelectedElements() {
-    if (selectedElementIds.length < 2) {
+    const mergeElementIds = selectedElementIds.filter((elementId) =>
+      workspace.elements.some((element) => element.id === elementId && isActionableElement(element)),
+    );
+    if (mergeElementIds.length < 2) {
       return;
     }
 
@@ -1137,11 +1164,12 @@ export function App() {
     try {
       const label = mergeLabel.trim();
       const payload = await mergeWorkspaceElements({
-        elementIds: selectedElementIds,
+        elementIds: mergeElementIds,
         ...(label ? { label } : {}),
       });
       replaceWorkspace(payload.state, "Merged selected elements.", payload.element.id);
       setMergeLabel("Merged Asset");
+      setSelectedElementIds([]);
     } catch (mergeError) {
       setStatus("Merge failed.");
       setError(mergeError instanceof Error ? mergeError.message : "Could not merge elements.");
@@ -1338,7 +1366,7 @@ export function App() {
               </button>
             </div>
           ) : null}
-          {workspace.elements.length >= 2 ? (
+          {mergeableElements.length >= 2 ? (
             <div className="manual-create-panel" aria-label="Merge controls">
               <label className="field-group">
                 <span>Merge label</span>
@@ -1350,7 +1378,7 @@ export function App() {
                 />
               </label>
               <div className="element-action-buttons">
-                {workspace.elements.map((element) => (
+                {mergeableElements.map((element) => (
                   <label key={element.id} className="panel-checkbox">
                     <input
                       aria-label={`Select ${element.name} for merge`}
@@ -1364,7 +1392,11 @@ export function App() {
               </div>
               <button
                 type="button"
-                disabled={selectedElementIds.length < 2}
+                disabled={
+                  selectedElementIds.filter((elementId) =>
+                    mergeableElements.some((element) => element.id === elementId),
+                  ).length < 2
+                }
                 onClick={() => void handleMergeSelectedElements()}
               >
                 Merge selected
@@ -1439,6 +1471,10 @@ function canExtractElement(element: WorkspaceElement): boolean {
     return false;
   }
   return ["accepted", "extract_ready", "extracted"].includes(element.status);
+}
+
+function isActionableElement(element: WorkspaceElement): boolean {
+  return element.mergedInto === null;
 }
 
 function hasExtractedAssetPreview(element: WorkspaceElement): boolean {

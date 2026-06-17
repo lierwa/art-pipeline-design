@@ -62,6 +62,17 @@ const detectedState = {
   elements: [detectedElement],
 };
 
+const detectedReplacementState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...detectedElement,
+      id: "element_001",
+      thumbnail: "elements/element_001/thumb.png",
+    },
+  ],
+};
+
 const createdManualElement = {
   id: "element_002",
   name: "Manual Lamp",
@@ -401,6 +412,105 @@ describe("App", () => {
     }
   });
 
+  it("clears stale repair metadata when detection replaces candidates with reused ids", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(completionState);
+      }
+
+      if (
+        input === "/api/workspace/elements/element_001/repair/metadata"
+        && (!init || init.method === "GET")
+      ) {
+        return jsonResponse({
+          elementId: "element_001",
+          files: {
+            missingMask: true,
+            repairPackage: false,
+            completedAsset: false,
+            repairReport: false,
+            qaReport: false,
+            changedPixelsOverlay: false,
+          },
+          paths: {
+            missingMaskPath: "elements/element_001/missing_mask.png",
+            completedAssetPath: null,
+            repairReportPath: null,
+            qaReportPath: null,
+            changedPixelsOverlayPath: null,
+          },
+          qaReport: null,
+        });
+      }
+
+      if (input === "/api/workspace/detect" && init?.method === "POST") {
+        return jsonResponse(detectedReplacementState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("Region 1 missing mask overlay");
+      expect(screen.getByText(/QA pending/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: /run detection/i }));
+
+      expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByText(/QA pending/i)).not.toBeInTheDocument();
+      });
+      expect(screen.queryByAltText("cabinet missing mask overlay")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("allows model-detected candidates to be rejected from the element panel", async () => {
+    const user = userEvent.setup();
+    const rejectedState = {
+      source: detectedState.source,
+      elements: [
+        {
+          ...detectedElement,
+          status: "rejected",
+          mode: "rejected",
+          visible: false,
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        expect(init.body).toBe(JSON.stringify(rejectedState));
+        return jsonResponse(rejectedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("cabinet thumbnail");
+
+      await user.click(screen.getByRole("button", { name: /^reject$/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/state",
+        expect.objectContaining({ method: "PUT" }),
+      );
+      expect(await screen.findAllByText(/element rejected\./i)).toHaveLength(2);
+      expect(screen.queryByAltText("cabinet thumbnail")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("creates a manual element from a drawn rectangle", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -632,6 +742,9 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
+      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
+      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
       const labelField = screen.getByLabelText(/merge label/i);
       await user.clear(labelField);
@@ -649,6 +762,57 @@ describe("App", () => {
         }),
       );
       expect(await screen.findByAltText("Fixture group thumbnail")).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Fixture group");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("keeps browse selection separate from merge selection", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /region 2 thumbnail/i }));
+
+      expect(screen.getByLabelText(/element name/i)).toHaveValue("Region 2");
+      expect(screen.getByRole("button", { name: /merge selected/i })).toBeDisabled();
+      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("hides merged-away source elements from normal actions and merge selection", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("Fixture group thumbnail");
+
+      expect(screen.queryByAltText("Region 1 thumbnail")).not.toBeInTheDocument();
+      expect(screen.queryByAltText("Region 2 thumbnail")).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /toggle visibility for region 1/i })).not.toBeInTheDocument();
+      expect(screen.queryByTestId("overlay-label-element_001")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("overlay-label-element_002")).not.toBeInTheDocument();
       expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Fixture group");
     } finally {
       restoreFetch();
