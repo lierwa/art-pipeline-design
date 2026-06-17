@@ -59,7 +59,7 @@ class ElementRecord(BaseModel):
     id: str
     name: str
     label: str | None = None
-    status: ElementStatus = "proposal"
+    status: ElementStatus = "model_detected"
     mode: ElementMode = "visible_only"
     bbox: BoundingBox
     canvas: CanvasBox | None = None

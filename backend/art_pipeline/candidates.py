@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from art_pipeline.elements import BoundingBox, CandidateHistoryEntry, ElementRecord
+from art_pipeline.elements import BoundingBox, CandidateHistoryEntry, CanvasBox, ElementRecord
 
 
 CandidateStatus = Literal[
@@ -22,10 +22,11 @@ def edit_candidate_box(
     reason: str = "manual_box_edit",
 ) -> ElementRecord:
     before = candidate.model_dump(mode="json")
+    canvas = CanvasBox(**bbox.model_dump())
     edited = candidate.model_copy(
         update={
             "bbox": bbox,
-            "canvas": bbox,
+            "canvas": canvas,
             "status": "edited",
         }
     )
