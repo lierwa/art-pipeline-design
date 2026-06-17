@@ -2,10 +2,11 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { CanvasToolbar } from "./components/CanvasToolbar";
 import { CanvasStage } from "./components/CanvasStage";
-import { ElementPanel } from "./components/ElementPanel";
+import { AssetTreePanel } from "./components/AssetTreePanel";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { ModelStatusStrip } from "./components/ModelStatusStrip";
 import { PipelineRail } from "./components/PipelineRail";
+import { SelectionActionPanel } from "./components/SelectionActionPanel";
 import { TopAppBar } from "./components/TopAppBar";
 import "./styles.css";
 import {
@@ -269,11 +270,17 @@ export function App() {
     );
   }, [overlays.showRejected, visibleElements]);
 
-  const selectedElement = useMemo(() => {
+  const selectedReviewElement = useMemo(() => {
     return workspace.elements.find(
-      (element) => element.id === selectedElementId && isActionableElement(element),
+      (element) => element.id === selectedElementId && isDisplayableElement(element),
     ) ?? null;
   }, [selectedElementId, workspace.elements]);
+
+  const selectedElement = useMemo(() => {
+    return selectedReviewElement && isActionableElement(selectedReviewElement)
+      ? selectedReviewElement
+      : null;
+  }, [selectedReviewElement]);
 
   const canExtractSelected = useMemo(() => {
     return selectedElement !== null && canExtractElement(selectedElement);
@@ -285,11 +292,12 @@ export function App() {
       : false;
   }, [elementDraft, selectedElement]);
 
-  const selectedMergeableElementCount = useMemo(() => {
-    return selectedElementIds.filter((elementId) =>
-      mergeableElements.some((element) => element.id === elementId),
-    ).length;
+  const selectedMergeableElements = useMemo(() => {
+    return selectedElementIds
+      .map((elementId) => mergeableElements.find((element) => element.id === elementId))
+      .filter((element): element is WorkspaceElement => Boolean(element));
   }, [mergeableElements, selectedElementIds]);
+  const selectedMergeableElementCount = selectedMergeableElements.length;
   const canMergeSelectedElements = !hasUnsavedGeometryChanges && selectedMergeableElementCount >= 2;
 
   const canRunSelectedExtraction = canExtractSelected && !hasUnsavedGeometryChanges;
@@ -964,7 +972,7 @@ export function App() {
   }
 
   function handleSelectElement(elementId: string) {
-    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+    if (!workspace.elements.some((element) => element.id === elementId && isDisplayableElement(element))) {
       return;
     }
     setSelectedElementId(elementId);
@@ -1001,6 +1009,22 @@ export function App() {
       setSplitRegions([]);
       setMissingMaskRegion(null);
     }
+  }
+
+  function handleStartBoxEdit() {
+    if (!selectedElement) {
+      return;
+    }
+    handleSelectTool("select");
+    setStatus("Edit box selected. Use inspector fields until canvas handles are available.");
+  }
+
+  function handleStartSplitParent() {
+    if (!selectedElement) {
+      return;
+    }
+    handleSelectTool("split");
+    setStatus("Drag split regions inside the selected parent.");
   }
 
   function clearDrafts() {
@@ -1160,8 +1184,12 @@ export function App() {
     }
   }
 
-  async function handleCreateChildElement() {
-    if (!workspace.source || !draftRegion || !selectedElement) {
+  async function createChildElementFromBox(
+    parentElement: WorkspaceElement,
+    bbox: Box,
+    label: string,
+  ) {
+    if (!workspace.source) {
       return;
     }
 
@@ -1169,10 +1197,9 @@ export function App() {
     setStatus("Creating child element...");
 
     try {
-      const label = manualElementName.trim() || "Child Element";
-      const payload = await createWorkspaceChildElement(selectedElement.id, {
+      const payload = await createWorkspaceChildElement(parentElement.id, {
         label,
-        bbox: draftRegion.bbox,
+        bbox,
       });
       replaceWorkspace(payload.state, "Child element created.", payload.element.id);
       setManualElementName("Manual Element");
@@ -1184,6 +1211,35 @@ export function App() {
         createError instanceof Error ? createError.message : "Could not create child element.",
       );
     }
+  }
+
+  async function handleCreateChildElement() {
+    if (!draftRegion || !selectedElement) {
+      return;
+    }
+
+    await createChildElementFromBox(
+      selectedElement,
+      draftRegion.bbox,
+      manualElementName.trim() || "Child Element",
+    );
+  }
+
+  async function handleAddChildFromSelection() {
+    if (!selectedElement) {
+      return;
+    }
+
+    if (draftRegion) {
+      await handleCreateChildElement();
+      return;
+    }
+
+    await createChildElementFromBox(
+      selectedElement,
+      buildDefaultChildBox(selectedElement.bbox),
+      "Child Element",
+    );
   }
 
   async function handleMergeSelectedElements() {
@@ -1395,39 +1451,6 @@ export function App() {
               </button>
             </div>
           ) : null}
-          {mergeableElements.length >= 2 ? (
-            <div className="manual-create-panel" aria-label="Merge controls">
-              <label className="field-group">
-                <span>Merge label</span>
-                <input
-                  aria-label="Merge label"
-                  type="text"
-                  value={mergeLabel}
-                  onChange={(event) => setMergeLabel(event.target.value)}
-                />
-              </label>
-              <div className="element-action-buttons">
-                {mergeableElements.map((element) => (
-                  <label key={element.id} className="panel-checkbox">
-                    <input
-                      aria-label={`Select ${element.name} for merge`}
-                      type="checkbox"
-                      checked={selectedElementIds.includes(element.id)}
-                      onChange={() => handleMergeSelectionToggle(element.id)}
-                    />
-                    <span>{element.name}</span>
-                  </label>
-                ))}
-              </div>
-              <button
-                type="button"
-                disabled={!canMergeSelectedElements}
-                onClick={() => void handleMergeSelectedElements()}
-              >
-                Merge selected
-              </button>
-            </div>
-          ) : null}
           {error ? <p className="error-text">{error}</p> : null}
           <div className="workspace-preview-panels">
             <ExtractionPreview selectedElement={selectedElement} assetCacheKey={assetCacheKey} />
@@ -1443,15 +1466,34 @@ export function App() {
         </section>
 
         <section className="right-review-panel" aria-label="Review panel">
-          <ElementPanel
+          <AssetTreePanel
             elements={visibleElements}
             selectedElementId={selectedElementId}
+            selectedElementIds={selectedElementIds}
             showRejected={overlays.showRejected}
             onSelectElement={handleSelectElement}
+            onToggleMergeSelection={handleMergeSelectionToggle}
             onToggleShowRejected={() => handleOverlayToggle("showRejected")}
             onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
+          />
+
+          <SelectionActionPanel
+            hasSource={workspace.source !== null}
+            isAnnotating={isAnnotating}
+            selectedElement={selectedReviewElement}
+            selectedMergeElements={selectedMergeableElements}
+            mergeCandidateCount={mergeableElements.length}
+            mergeLabel={mergeLabel}
+            canMergeSelectedElements={canMergeSelectedElements}
+            hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
+            onRunDetection={() => void handleRunDetection()}
+            onEditBox={handleStartBoxEdit}
+            onAddChild={() => void handleAddChildFromSelection()}
+            onSplitParent={handleStartSplitParent}
             onAccept={(elementId) => void handleAccept(elementId)}
             onReject={(elementId) => void handleReject(elementId)}
+            onMergeLabelChange={setMergeLabel}
+            onMerge={() => void handleMergeSelectedElements()}
           />
 
           <InspectorPanel
@@ -1961,6 +2003,17 @@ function sourceBoxToElementCanvasBox(sourceBox: Box, element: WorkspaceElement):
     y: top - canvas.y,
     w: right - left,
     h: bottom - top,
+  };
+}
+
+function buildDefaultChildBox(parentBox: Box): Box {
+  const width = Math.max(1, Math.floor(parentBox.w / 3));
+  const height = Math.max(1, Math.floor(parentBox.h / 3));
+  return {
+    x: parentBox.x + Math.max(0, Math.floor((parentBox.w - width) / 2)),
+    y: parentBox.y + Math.max(0, Math.floor((parentBox.h - height) / 2)),
+    w: width,
+    h: height,
   };
 }
 

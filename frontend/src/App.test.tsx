@@ -217,6 +217,54 @@ const mergedState = {
   ],
 };
 
+const treeState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...detectedElement,
+      id: "element_001",
+      name: "cabinet",
+      label: "cabinet",
+      status: "edited",
+      bbox: { x: 10, y: 10, w: 80, h: 90 },
+      canvas: { x: 10, y: 10, w: 80, h: 90 },
+      parentId: null,
+      sourceProvider: "grounding_dino",
+      sourcePrompt: "cabinet",
+      confidence: 0.88,
+      thumbnail: "elements/element_001/thumb.png",
+    },
+    {
+      ...detectedElement,
+      id: "element_002",
+      name: "plant",
+      label: "plant",
+      status: "child",
+      bbox: { x: 20, y: 20, w: 20, h: 20 },
+      canvas: { x: 20, y: 20, w: 20, h: 20 },
+      parentId: "element_001",
+      source: "manual_child",
+      sourceProvider: "manual",
+      sourcePrompt: "plant",
+      confidence: 0.86,
+      thumbnail: "elements/element_002/thumb.png",
+    },
+    {
+      ...detectedElement,
+      id: "element_003",
+      name: "old towel",
+      label: "old towel",
+      status: "model_detected",
+      bbox: { x: 50, y: 50, w: 14, h: 14 },
+      canvas: { x: 50, y: 50, w: 14, h: 14 },
+      parentId: null,
+      visible: false,
+      mergedInto: "element_004",
+      thumbnail: "elements/element_003/thumb.png",
+    },
+  ],
+};
+
 const extractMergedState = {
   source: loadedState.source,
   elements: [
@@ -475,6 +523,114 @@ describe("App", () => {
     }
   });
 
+  it("renders parent children in the asset tree and hides merged-away sources", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(treeState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const assetTree = await screen.findByRole("tree", { name: /asset tree/i });
+      const parentItem = within(assetTree).getByRole("treeitem", { name: /cabinet/i });
+      expect(within(parentItem).getByRole("treeitem", { name: /plant/i })).toBeInTheDocument();
+      expect(screen.queryByText("old towel")).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("shows single-candidate actions after selecting one asset tree item", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(treeState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      await user.click(await screen.findByRole("button", { name: /select cabinet asset/i }));
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+
+      expect(within(actionPanel).getByRole("button", { name: /^edit box$/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /^add child$/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /run detect inside/i })).toBeDisabled();
+      expect(within(actionPanel).getByRole("button", { name: /^split parent$/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /^accept$/i })).toBeInTheDocument();
+      expect(within(actionPanel).getByRole("button", { name: /^reject$/i })).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("shows run detection in selection actions when nothing is selected", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedStateWithoutElements);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const actionPanel = await screen.findByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).getByRole("button", { name: /run detection/i })).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("merges multiple selected assets from the contextual action panel", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+
+      if (input === "/api/workspace/elements/merge" && init?.method === "POST") {
+        return jsonResponse({
+          element: mergedState.elements[2],
+          state: mergedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
+      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+
+      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      expect(within(actionPanel).getByText("Region 1")).toBeInTheDocument();
+      expect(within(actionPanel).getByText("Region 2")).toBeInTheDocument();
+      await user.click(within(actionPanel).getByRole("button", { name: /merge into one asset/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/merge",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementIds: ["element_001", "element_002"],
+            label: "Merged Asset",
+          }),
+        }),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("loads existing state on mount and renders the saved source and element", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -516,7 +672,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("button", { name: /run detection/i }));
+      const topAppBar = screen.getByRole("banner");
+      await user.click(within(topAppBar).getByRole("button", { name: /run detection/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/detect",
