@@ -842,6 +842,8 @@ button:disabled {
   grid-template-rows: minmax(0, 1fr) auto;
   border-bottom: 1px solid #202b39;
   background: #0b1119;
+  overscroll-behavior: contain;
+  touch-action: none;
 }
 
 .canvas-panel > .canvas-header {
@@ -861,6 +863,8 @@ button:disabled {
   align-items: flex-start;
   justify-content: center;
   overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: none;
   padding: 0.8rem 1rem;
   background:
     linear-gradient(45deg, rgba(28, 36, 47, 0.9) 25%, transparent 25%),

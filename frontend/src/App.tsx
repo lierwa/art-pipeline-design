@@ -129,7 +129,8 @@ const CANVAS_ZOOM_MIN = 40;
 const CANVAS_ZOOM_MAX = 200;
 const CANVAS_ZOOM_FIT = 80;
 const CANVAS_ZOOM_STEP = 5;
-const CANVAS_WHEEL_ZOOM_DELTA = 100;
+const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.04;
+const CANVAS_GESTURE_ZOOM_SENSITIVITY = 60;
 
 type BoxEditHistorySnapshot = {
   elementId: string;
@@ -262,7 +263,6 @@ export function App() {
     createOperationHistory<BoxEditHistorySnapshot>(),
   );
   const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
-  const wheelZoomAccumulatorRef = useRef(0);
 
   useEffect(() => {
     void loadWorkspace();
@@ -1518,12 +1518,10 @@ export function App() {
   }
 
   function handleZoomIn() {
-    wheelZoomAccumulatorRef.current = 0;
     setCanvasZoom((current) => Math.min(CANVAS_ZOOM_MAX, current + CANVAS_ZOOM_STEP));
   }
 
   function handleZoomOut() {
-    wheelZoomAccumulatorRef.current = 0;
     setCanvasZoom((current) => Math.max(CANVAS_ZOOM_MIN, current - CANVAS_ZOOM_STEP));
   }
 
@@ -1532,17 +1530,23 @@ export function App() {
       return;
     }
 
-    const nextAccumulator = wheelZoomAccumulatorRef.current + deltaY;
-    const wheelSteps = Math.trunc(nextAccumulator / CANVAS_WHEEL_ZOOM_DELTA);
-    if (wheelSteps === 0) {
-      wheelZoomAccumulatorRef.current = nextAccumulator;
+    setCanvasZoom((current) =>
+      clampNumber(
+        current - deltaY * CANVAS_WHEEL_ZOOM_SENSITIVITY,
+        CANVAS_ZOOM_MIN,
+        CANVAS_ZOOM_MAX,
+      ),
+    );
+  }
+
+  function handleCanvasGestureZoom(scaleDelta: number) {
+    if (!workspace.source) {
       return;
     }
 
-    wheelZoomAccumulatorRef.current = nextAccumulator - wheelSteps * CANVAS_WHEEL_ZOOM_DELTA;
     setCanvasZoom((current) =>
-      clampInteger(
-        current - wheelSteps * CANVAS_ZOOM_STEP,
+      clampNumber(
+        current + scaleDelta * CANVAS_GESTURE_ZOOM_SENSITIVITY,
         CANVAS_ZOOM_MIN,
         CANVAS_ZOOM_MAX,
       ),
@@ -1550,7 +1554,6 @@ export function App() {
   }
 
   function handleFitCanvas() {
-    wheelZoomAccumulatorRef.current = 0;
     setCanvasZoom(CANVAS_ZOOM_FIT);
     setCanvasPan({ x: 0, y: 0 });
   }
@@ -2142,6 +2145,7 @@ export function App() {
             onToggleMergeSelection={handleMergeSelectionToggle}
             onBoxDraftChange={handleBoxDraftChange}
             onZoomByWheel={handleCanvasWheelZoom}
+            onZoomByGesture={handleCanvasGestureZoom}
             onPanChange={handleCanvasPanChange}
             onDraftRegionChange={setDraftRegion}
             onAddSplitRegion={(region) => setSplitRegions((current) => [...current, region])}
@@ -2837,6 +2841,10 @@ function unionBoxes(boxes: Box[]): Box | null {
 }
 
 function clampInteger(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 

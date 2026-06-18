@@ -41,6 +41,12 @@ const loadedStateWithoutElements = {
   elements: [],
 };
 
+function createGestureEvent(type: string, scale: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "scale", { value: scale });
+  return event;
+}
+
 const detectedElement = {
   ...loadedState.elements[0],
   id: "element_010",
@@ -569,8 +575,9 @@ describe("App", () => {
     expect(stylesheet).toMatch(/\.selection-action-panel\s+\.panel-body\s*\{[\s\S]*overflow:\s*auto;/);
     expect(stylesheet).toMatch(/\.selection-action-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/);
+    expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*overscroll-behavior:\s*contain;[\s\S]*touch-action:\s*none;/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*>\s*\.canvas-header\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
-    expect(stylesheet).toMatch(/\.canvas-stage\s*\{[\s\S]*align-items:\s*flex-start;/);
+    expect(stylesheet).toMatch(/\.canvas-stage\s*\{[\s\S]*align-items:\s*flex-start;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*touch-action:\s*none;/);
     expect(stylesheet).toMatch(/\.canvas-artboard\s*\{[\s\S]*width:\s*min\(100%,\s*calc\(\(100vh - 100px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
     expect(stylesheet).toMatch(/\.workbench-panel-resize-handle\s*\{/);
     expect(stylesheet).toMatch(/\.canvas-pan-viewport\s*\{[\s\S]*transform:/);
@@ -798,9 +805,16 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const canvasArea = screen.getByTestId("canvas-area");
-      fireEvent.wheel(canvasArea, { deltaY: -120 });
-
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+
+      const smallWheel = new WheelEvent("wheel", { deltaY: -20, cancelable: true });
+      fireEvent(canvasArea, smallWheel);
+      expect(smallWheel.defaultPrevented).toBe(true);
+      expect(within(canvasToolbar).getByText("81%")).toBeInTheDocument();
+
+      const pinchWheel = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, cancelable: true });
+      fireEvent(canvasArea, pinchWheel);
+      expect(pinchWheel.defaultPrevented).toBe(true);
       expect(within(canvasToolbar).getByText("85%")).toBeInTheDocument();
 
       fireEvent.keyDown(window, { key: " ", code: "Space" });
@@ -838,6 +852,33 @@ describe("App", () => {
         "aria-pressed",
         "true",
       );
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("handles native pinch gestures on the canvas without browser page zoom", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const canvasArea = screen.getByTestId("canvas-area");
+      const gestureStart = createGestureEvent("gesturestart", 1);
+      const gestureChange = createGestureEvent("gesturechange", 1.1);
+
+      fireEvent(canvasArea, gestureStart);
+      fireEvent(canvasArea, gestureChange);
+
+      expect(gestureStart.defaultPrevented).toBe(true);
+      expect(gestureChange.defaultPrevented).toBe(true);
+      expect(within(screen.getByRole("toolbar", { name: /canvas tools/i })).getByText("86%")).toBeInTheDocument();
     } finally {
       restoreFetch();
     }

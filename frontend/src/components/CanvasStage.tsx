@@ -1,4 +1,4 @@
-import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, WheelEvent, useEffect, useRef } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useRef } from "react";
 
 import {
   Box,
@@ -38,6 +38,7 @@ type CanvasStageProps = {
   onToggleMergeSelection: (elementId: string) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onZoomByWheel: (deltaY: number) => void;
+  onZoomByGesture: (scaleDelta: number) => void;
   onPanChange: (deltaX: number, deltaY: number) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
@@ -78,6 +79,12 @@ type ClientPositionEvent = {
   };
 };
 
+type GestureScaleEvent = Event & {
+  scale?: number;
+};
+
+const WHEEL_DELTA_LINE = 1;
+const WHEEL_DELTA_PAGE = 2;
 const RESIZE_HANDLES: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 
 export function CanvasStage({
@@ -107,6 +114,7 @@ export function CanvasStage({
   onToggleMergeSelection,
   onBoxDraftChange,
   onZoomByWheel,
+  onZoomByGesture,
   onPanChange,
   onDraftRegionChange,
   onAddSplitRegion,
@@ -120,8 +128,17 @@ export function CanvasStage({
   onClearDrafts,
   onApplySplit,
 }: CanvasStageProps) {
+  const canvasPanelRef = useRef<HTMLElement | null>(null);
   const pointerDraftRef = useRef<PointerDraft | null>(null);
   const panDragRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const gestureScaleRef = useRef(1);
+  const onZoomByWheelRef = useRef(onZoomByWheel);
+  const onZoomByGestureRef = useRef(onZoomByGesture);
+
+  useEffect(() => {
+    onZoomByWheelRef.current = onZoomByWheel;
+    onZoomByGestureRef.current = onZoomByGesture;
+  });
 
   function beginDraw(event: DrawingEvent) {
     if (!source || tool === "select") {
@@ -266,21 +283,58 @@ export function CanvasStage({
     panDragRef.current = null;
   }
 
-  function handleWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!source) {
-      return;
+  useEffect(() => {
+    const canvasPanel = canvasPanelRef.current;
+    if (!canvasPanel || !source) {
+      return undefined;
     }
 
-    event.preventDefault();
-    onZoomByWheel(event.deltaY);
-  }
+    const listenerOptions: AddEventListenerOptions = { passive: false };
+
+    function handleNativeWheel(event: globalThis.WheelEvent) {
+      event.preventDefault();
+      onZoomByWheelRef.current(normalizeWheelDelta(event));
+    }
+
+    function handleGestureStart(event: Event) {
+      event.preventDefault();
+      gestureScaleRef.current = readGestureScale(event);
+    }
+
+    function handleGestureChange(event: Event) {
+      event.preventDefault();
+      const nextScale = readGestureScale(event);
+      const scaleDelta = nextScale - gestureScaleRef.current;
+      gestureScaleRef.current = nextScale;
+      if (scaleDelta !== 0) {
+        onZoomByGestureRef.current(scaleDelta);
+      }
+    }
+
+    function handleGestureEnd(event: Event) {
+      event.preventDefault();
+      gestureScaleRef.current = 1;
+    }
+
+    canvasPanel.addEventListener("wheel", handleNativeWheel, listenerOptions);
+    canvasPanel.addEventListener("gesturestart", handleGestureStart, listenerOptions);
+    canvasPanel.addEventListener("gesturechange", handleGestureChange, listenerOptions);
+    canvasPanel.addEventListener("gestureend", handleGestureEnd, listenerOptions);
+
+    return () => {
+      canvasPanel.removeEventListener("wheel", handleNativeWheel);
+      canvasPanel.removeEventListener("gesturestart", handleGestureStart);
+      canvasPanel.removeEventListener("gesturechange", handleGestureChange);
+      canvasPanel.removeEventListener("gestureend", handleGestureEnd);
+    };
+  }, [source]);
 
   return (
     <section
+      ref={canvasPanelRef}
       className="canvas-panel"
       data-testid="canvas-area"
       data-pan-mode={isPanMode ? "true" : "false"}
-      onWheel={handleWheel}
     >
       <div className="canvas-header">
         <h2>Canvas</h2>
@@ -860,6 +914,21 @@ function eventPointToImage(event: DrawingEvent, source: SourceMetadata): { x: nu
     x: Math.round(relativeX * source.width),
     y: Math.round(relativeY * source.height),
   };
+}
+
+function normalizeWheelDelta(event: globalThis.WheelEvent): number {
+  if (event.deltaMode === WHEEL_DELTA_LINE) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === WHEEL_DELTA_PAGE) {
+    return event.deltaY * 240;
+  }
+  return event.deltaY;
+}
+
+function readGestureScale(event: Event): number {
+  const scale = (event as GestureScaleEvent).scale;
+  return typeof scale === "number" && Number.isFinite(scale) ? scale : 1;
 }
 
 function eventPointToImageWithin(

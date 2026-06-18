@@ -66,6 +66,8 @@ export function CanvasToolbar({
   onFitCanvas,
   onTogglePanMode,
 }: CanvasToolbarProps) {
+  const displayZoomPercent = Math.round(zoomPercent);
+
   return (
     <Tooltip.Provider delayDuration={250}>
       <div className="canvas-toolbar" role="toolbar" aria-label="Canvas tools">
@@ -183,7 +185,7 @@ export function CanvasToolbar({
             disabled={!hasSource || zoomPercent <= 40}
             onClick={onZoomOut}
           />
-          <span>{zoomPercent}%</span>
+          <span>{displayZoomPercent}%</span>
           <IconButton
             label="Zoom in"
             icon={<ZoomIn size={16} strokeWidth={2.2} />}
