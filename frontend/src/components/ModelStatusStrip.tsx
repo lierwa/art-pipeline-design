@@ -83,7 +83,7 @@ function needsReview(element: WorkspaceElement): boolean {
   if (element.mode === "rejected") {
     return false;
   }
-  return ["model_detected", "proposal", "edited", "qa_failed"].includes(element.status);
+  return ["model_detected", "proposal", "edited", "child", "merged", "qa_failed"].includes(element.status);
 }
 
 function isAccepted(element: WorkspaceElement): boolean {

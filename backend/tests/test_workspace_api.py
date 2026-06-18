@@ -771,7 +771,7 @@ def test_merge_elements_creates_union_and_marks_sources(
     merged = body["element"]
     by_id = {element["id"]: element for element in body["state"]["elements"]}
 
-    assert merged["bbox"] == {"x": 10, "y": 15, "w": 45, "h": 45}
+    assert merged["bbox"] == {"x": 8, "y": 13, "w": 49, "h": 49}
     assert merged["status"] == "merged"
     assert merged["source"] == "manual_merge"
     assert merged["sourceProvider"] == "manual"

@@ -35,10 +35,14 @@ type CanvasStageProps = {
   panOffset: { x: number; y: number };
   focusRequest: { elementId: string; sequence: number } | null;
   manualElementName: string;
+  renamingElementId: string | null;
   canCreateChildFromDraft: boolean;
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
   onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
+  onStartRenameElement: (elementId: string) => void;
+  onCommitRenameElement: (elementId: string, name: string) => void;
+  onCancelRenameElement: () => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onZoomByWheel: (deltaY: number) => void;
   onZoomByGesture: (scaleDelta: number) => void;
@@ -120,10 +124,14 @@ export function CanvasStage({
   panOffset,
   focusRequest,
   manualElementName,
+  renamingElementId,
   canCreateChildFromDraft,
   onSelectElement,
   onClearSelection,
   onOpenElementContextMenu,
+  onStartRenameElement,
+  onCommitRenameElement,
+  onCancelRenameElement,
   onBoxDraftChange,
   onZoomByWheel,
   onZoomByGesture,
@@ -259,10 +267,14 @@ export function CanvasStage({
       tool={tool}
       isPanMode={isPanMode}
       manualElementName={manualElementName}
+      renamingElementId={renamingElementId}
       canCreateChildFromDraft={canCreateChildFromDraft}
       onSelectElement={onSelectElement}
       onClearSelection={onClearSelection}
       onOpenElementContextMenu={onOpenElementContextMenu}
+      onStartRenameElement={onStartRenameElement}
+      onCommitRenameElement={onCommitRenameElement}
+      onCancelRenameElement={onCancelRenameElement}
       onBoxDraftChange={onBoxDraftChange}
       onManualElementNameChange={onManualElementNameChange}
       onCreateElement={onCreateElement}
@@ -461,11 +473,15 @@ type CanvasArtboardProps = {
   tool: CanvasTool;
   isPanMode: boolean;
   manualElementName: string;
+  renamingElementId: string | null;
   canCreateChildFromDraft: boolean;
   hasUnsavedBoxEdit: boolean;
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
   onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
+  onStartRenameElement: (elementId: string) => void;
+  onCommitRenameElement: (elementId: string, name: string) => void;
+  onCancelRenameElement: () => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onManualElementNameChange: (value: string) => void;
   onCreateElement: (name: string) => void;
@@ -496,11 +512,15 @@ function CanvasArtboard({
   tool,
   isPanMode,
   manualElementName,
+  renamingElementId,
   canCreateChildFromDraft,
   hasUnsavedBoxEdit,
   onSelectElement,
   onClearSelection,
   onOpenElementContextMenu,
+  onStartRenameElement,
+  onCommitRenameElement,
+  onCancelRenameElement,
   onBoxDraftChange,
   onManualElementNameChange,
   onCreateElement,
@@ -516,12 +536,22 @@ function CanvasArtboard({
   const artboardRef = useRef<HTMLDivElement | null>(null);
   const boxEditDragRef = useRef<BoxEditDrag | null>(null);
   const draftNameInputRef = useRef<HTMLInputElement | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const lastPointerDrawingEventRef = useRef<{
     phase: DrawingEventPhase;
     clientX: number;
     clientY: number;
     at: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (renamingElementId) {
+      requestAnimationFrame(() => {
+        renameInputRef.current?.focus();
+        renameInputRef.current?.select();
+      });
+    }
+  }, [renamingElementId]);
 
   function handleDrawingPointerDown(event: DrawingEvent) {
     if (shouldIgnoreMouseFallbackEvent(event, "down")) {
@@ -818,7 +848,7 @@ function CanvasArtboard({
         className="canvas-image"
         src={sourceUrl}
       />
-      <div className="canvas-overlay-layer" aria-hidden="true">
+      <div className="canvas-overlay-layer">
         {overlayElements.map((element) =>
           overlays.showMasks && element.mask ? (
             <img
@@ -836,6 +866,7 @@ function CanvasArtboard({
           const isSelected = selectedElementId === element.id;
           const isMergeSelected = selectedElementIds.includes(element.id);
           const isEditing = editingElementId === element.id;
+          const isRenaming = renamingElementId === element.id;
           const shouldRenderBox = overlays.showBoxes || isSelected || isMergeSelected || isEditing;
 
           return (
@@ -857,12 +888,45 @@ function CanvasArtboard({
                 />
               ) : null}
               {overlays.showNames ? (
-                <div
-                  data-testid={`overlay-label-${element.id}`}
-                  className={overlayLabelClassName(element, source)}
-                >
-                  {element.name}
-                </div>
+                isRenaming ? (
+                  <input
+                    ref={renameInputRef}
+                    aria-label={`Rename ${element.name}`}
+                    data-testid={`overlay-label-${element.id}`}
+                    className={`${overlayLabelClassName(element, source)} overlay-label-input`}
+                    defaultValue={element.label ?? element.name}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                    onBlur={(event) => onCommitRenameElement(element.id, event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        onCancelRenameElement();
+                      }
+                    }}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    data-testid={`overlay-label-${element.id}`}
+                    className={overlayLabelClassName(element, source)}
+                    aria-label={`Rename ${element.name}`}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectElement(element.id, "replace");
+                      onStartRenameElement(element.id);
+                    }}
+                  >
+                    {element.name}
+                  </button>
+                )
               ) : null}
               {overlays.showThumbs && isSelected && element.thumbnail ? (
                 <img

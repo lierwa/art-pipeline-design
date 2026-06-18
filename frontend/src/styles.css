@@ -825,6 +825,7 @@ button:disabled {
 .canvas-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.65rem 0.8rem;
   padding: 0.65rem 0.8rem;
   border-bottom: 1px solid #253040;
@@ -837,6 +838,23 @@ button:disabled {
   gap: 0.45rem;
   color: #c7d2e2;
   font-size: 0.84rem;
+}
+
+.asset-review-complete-button {
+  margin-left: auto;
+  min-height: 30px;
+  padding: 0.28rem 0.62rem;
+  border-color: #2c7be5;
+  background: rgba(39, 117, 255, 0.14);
+  color: #d6e7ff;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.asset-review-complete-button:hover:not(:disabled),
+.asset-review-complete-button:focus-visible {
+  border-color: #58a6ff;
+  background: rgba(39, 117, 255, 0.22);
 }
 
 .pipeline-rail {
@@ -1278,14 +1296,36 @@ button:disabled {
 .overlay-label {
   bottom: calc(100% + 4px);
   z-index: 2;
+  min-width: 0;
+  min-height: 0;
   max-width: min(12rem, 34vw);
   overflow: hidden;
   background: rgba(10, 18, 32, 0.96);
   border: 1px solid rgba(92, 132, 204, 0.9);
   color: #ffffff;
+  cursor: text;
+  pointer-events: auto;
   box-shadow: 0 5px 15px rgba(2, 6, 14, 0.34);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+button.overlay-label {
+  display: block;
+  text-align: left;
+}
+
+button.overlay-label:hover,
+button.overlay-label:focus-visible {
+  border-color: rgba(155, 201, 255, 0.95);
+  background: #123a70;
+}
+
+.overlay-label-input {
+  width: max(7rem, 100%);
+  height: auto;
+  outline: none;
+  text-overflow: clip;
 }
 
 .overlay-label.is-compact {

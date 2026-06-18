@@ -13,8 +13,11 @@ type TopAppBarProps = {
   isAnnotating: boolean;
   isSaving: boolean;
   isExporting: boolean;
+  canRunDetection: boolean;
   canSave: boolean;
   canExport: boolean;
+  detectionActionLabel: string;
+  detectionActionHelp: string | null;
   runs: WorkspaceRunSummary[];
   activeRunId: string | null;
   onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -32,8 +35,11 @@ export function TopAppBar({
   isAnnotating,
   isSaving,
   isExporting,
+  canRunDetection,
   canSave,
   canExport,
+  detectionActionLabel,
+  detectionActionHelp,
   runs,
   activeRunId,
   onUpload,
@@ -73,10 +79,11 @@ export function TopAppBar({
             type="button"
             className="primary-action"
             onClick={onRunDetection}
-            disabled={!source || isAnnotating}
+            disabled={!canRunDetection || isAnnotating}
+            title={detectionActionHelp ?? undefined}
           >
             <Play size={16} fill="currentColor" aria-hidden="true" />
-            Run Detection
+            {isAnnotating ? "Running..." : detectionActionLabel}
           </button>
           <ProcessingRecordsPopover
             runs={runs}
@@ -85,7 +92,7 @@ export function TopAppBar({
             onDeleteRun={onDeleteRun}
           />
           <IconButton
-            label="Save"
+            label="Save Edit"
             icon={<Save size={16} strokeWidth={2.2} />}
             showLabel
             className="icon-button-label"

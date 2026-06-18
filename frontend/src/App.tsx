@@ -251,6 +251,7 @@ export function App() {
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [selectedElementIds, setSelectedElementIds] = useState<SelectedElementIds>([]);
   const [editingElementId, setEditingElementId] = useState<string | null>(null);
+  const [renamingElementId, setRenamingElementId] = useState<string | null>(null);
   const [overlays, setOverlays] = useState<OverlayState>(DEFAULT_OVERLAYS);
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -331,6 +332,26 @@ export function App() {
   const mergeableElements = useMemo(() => {
     return workspace.elements.filter(isMergeableElement);
   }, [workspace.elements]);
+  const activeCandidateCount = useMemo(() => {
+    return workspace.elements.filter(isActiveCandidate).length;
+  }, [workspace.elements]);
+  const activeReviewCount = useMemo(() => {
+    return workspace.elements.filter(needsElementReview).length;
+  }, [workspace.elements]);
+  const reviewableElementCount = activeReviewCount;
+  const canRunDetection = workspace.source !== null && activeCandidateCount === 0;
+  const detectionActionLabel = !workspace.source
+    ? "Upload First"
+    : activeCandidateCount > 0
+      ? activeReviewCount > 0
+        ? "Review First"
+        : "Detection Done"
+      : "Run Detection";
+  const detectionActionHelp = !workspace.source
+    ? "Upload a source image before running detection."
+    : activeCandidateCount > 0
+      ? "Finish the current review or create a new run before running detection again."
+      : null;
 
   const overlayElements = useMemo(() => {
     return visibleElements.filter(
@@ -374,6 +395,11 @@ export function App() {
   const hasUnsavedGeometryChanges = useMemo(() => {
     return selectedElement !== null && elementDraft !== null
       ? isGeometryDraftDirty(selectedElement, elementDraft)
+      : false;
+  }, [elementDraft, selectedElement]);
+  const hasUnsavedElementChanges = useMemo(() => {
+    return selectedElement !== null && elementDraft !== null
+      ? isElementDraftDirty(selectedElement, elementDraft)
       : false;
   }, [elementDraft, selectedElement]);
 
@@ -448,6 +474,9 @@ export function App() {
       .map((element) => element.id);
   }, [workspace.elements]);
   const hasBatchExtractTargets = batchExtractElementIds.length > 0;
+  const canExportAssetPack = useMemo(() => {
+    return workspace.source !== null && workspace.elements.some(isExportReadyElement);
+  }, [workspace.elements, workspace.source]);
   const shouldShowWorkspacePreviews =
     Boolean(selectedElement && (selectedElement.mask || hasExtractedAssetPreview(selectedElement)))
     || Boolean(selectedRepairMetadata)
@@ -755,6 +784,7 @@ export function App() {
     setSelectedElementId(null);
     setSelectedElementIds([]);
     setEditingElementId(null);
+    setRenamingElementId(null);
     setExportSummary(null);
     setTool("select");
     setIsPanMode(false);
@@ -844,6 +874,7 @@ export function App() {
     const normalized = normalizeWorkspaceState(nextState);
     const normalizedActionableElements = normalized.elements.filter(isActionableElement);
     setWorkspace(normalized);
+    setRenamingElementId(null);
     setExportSummary(null);
     setRepairMetadataByElementId((current) => {
       const existingIds = new Set(normalized.elements.map((element) => element.id));
@@ -1118,7 +1149,7 @@ export function App() {
   }
 
   async function handleRunDetection() {
-    if (!workspace.source || isAnnotating) {
+    if (!canRunDetection || isAnnotating) {
       return;
     }
 
@@ -1484,7 +1515,7 @@ export function App() {
   }
 
   async function handleExportAssetPack() {
-    if (!workspace.source || isExporting) {
+    if (!canExportAssetPack || isExporting) {
       return;
     }
 
@@ -1539,6 +1570,7 @@ export function App() {
 
     if (mode === "focus") {
       setSelectedElementId(elementId);
+      setRenamingElementId(null);
       if (options.focusCanvas) {
         requestCanvasFocus(elementId);
       }
@@ -1554,6 +1586,7 @@ export function App() {
         : nextSelectedElementIds[nextSelectedElementIds.length - 1] ?? null;
       setSelectedElementIds(nextSelectedElementIds);
       setSelectedElementId(nextFocusedElementId);
+      setRenamingElementId(null);
       if (options.focusCanvas && nextFocusedElementId) {
         requestCanvasFocus(nextFocusedElementId);
       }
@@ -1562,6 +1595,7 @@ export function App() {
 
     setSelectedElementId(elementId);
     setSelectedElementIds([elementId]);
+    setRenamingElementId(null);
     if (options.focusCanvas) {
       requestCanvasFocus(elementId);
     }
@@ -1580,6 +1614,7 @@ export function App() {
     setEditingElementId(null);
     setAssetContextMenu(null);
     setElementDraft(null);
+    setRenamingElementId(null);
   }
 
   function handleMergeSelectionToggle(elementId: string) {
@@ -1838,6 +1873,54 @@ export function App() {
     await persistWorkspace(nextState, "Element rejected.", null);
   }
 
+  async function handleCompleteReview() {
+    const reviewableElements = workspace.elements.filter(needsElementReview);
+    if (reviewableElements.length === 0) {
+      setError(null);
+      setStatus("Review is already complete.");
+      return;
+    }
+
+    const reviewedAt = new Date().toISOString();
+    const reviewableIds = new Set(reviewableElements.map((element) => element.id));
+    const nextState = {
+      ...workspace,
+      elements: workspace.elements.map((element) => {
+        if (!reviewableIds.has(element.id)) {
+          return element;
+        }
+        return {
+          ...element,
+          status: "accepted" as const,
+          mode: "visible_only" as const,
+          visible: true,
+          history: [
+            ...element.history,
+            {
+              kind: "review_complete",
+              at: reviewedAt,
+              before: {
+                status: element.status,
+                mode: element.mode,
+                visible: element.visible,
+              },
+              after: {
+                status: "accepted",
+                mode: "visible_only",
+                visible: true,
+              },
+            },
+          ],
+        };
+      }),
+    };
+
+    await persistWorkspace(
+      nextState,
+      `Review complete. ${reviewableElements.length} asset${reviewableElements.length === 1 ? "" : "s"} accepted.`,
+    );
+  }
+
   async function handleVisibilityToggle(elementId: string) {
     if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
       return;
@@ -2008,22 +2091,35 @@ export function App() {
     );
   }
 
-  async function handleRenameElement(elementId: string) {
+  function handleStartInlineRenameElement(elementId: string) {
+    if (!workspace.elements.some((element) => element.id === elementId && isActionableElement(element))) {
+      return;
+    }
+    if (hasUnsavedGeometryChanges) {
+      setError("Save geometry changes before renaming.");
+      setStatus("Rename blocked.");
+      return;
+    }
+    setEditingElementId(null);
+    clearBoxEditHistory();
+    setSelectedElementId(elementId);
+    setSelectedElementIds([elementId]);
+    setRenamingElementId(elementId);
+  }
+
+  async function handleCommitInlineRenameElement(elementId: string, nextName: string) {
     const element = workspace.elements.find((candidate) => candidate.id === elementId);
     if (!element || hasUnsavedGeometryChanges) {
+      setRenamingElementId(null);
       return;
     }
 
-    const nextLabel = window.prompt("Rename asset", element.label ?? element.name);
-    if (nextLabel === null) {
-      return;
-    }
-
-    const normalizedLabel = nextLabel.trim() || element.name;
+    const normalizedLabel = nextName.trim() || element.name;
     const currentLabel = element.label ?? element.name;
     if (normalizedLabel === currentLabel) {
       setError(null);
       setStatus("Element details unchanged.");
+      setRenamingElementId(null);
       return;
     }
 
@@ -2046,21 +2142,37 @@ export function App() {
     }
   }
 
-  async function handleAddChildFromSelection() {
+  function handleCancelInlineRenameElement() {
+    setRenamingElementId(null);
+  }
+
+  async function handleRenameElement(elementId: string) {
+    const element = workspace.elements.find((candidate) => candidate.id === elementId);
+    if (!element || hasUnsavedGeometryChanges) {
+      return;
+    }
+
+    const nextLabel = window.prompt("Rename asset", element.label ?? element.name);
+    if (nextLabel === null) {
+      return;
+    }
+
+    await handleCommitInlineRenameElement(elementId, nextLabel);
+  }
+
+  function handleAddChildFromSelection() {
     if (!selectedElement) {
       return;
     }
 
-    if (draftRegion) {
-      await handleCreateChildElement();
-      return;
-    }
-
-    await createChildElementFromBox(
-      selectedElement,
-      buildDefaultChildBox(selectedElement.bbox),
-      "Child Element",
-    );
+    setDraftRegion({ bbox: buildDefaultChildBox(selectedElement.bbox) });
+    setManualElementName(`${selectedElement.label ?? selectedElement.name} detail`);
+    setTool("draw");
+    setEditingElementId(null);
+    setRenamingElementId(null);
+    clearBoxEditHistory();
+    setStatus("Name and adjust the child draft, then create it.");
+    setError(null);
   }
 
   async function handleMergeSelectedElements() {
@@ -2088,7 +2200,7 @@ export function App() {
       .filter((element): element is WorkspaceElement => Boolean(element));
     setMergeDraft({
       elementIds: mergeElementIds,
-      label: buildDefaultMergeLabel(elementsToMerge),
+      label: buildDefaultMergeLabel(elementsToMerge, workspace.elements),
     });
     setError(null);
     setStatus("Name the merged asset before creating it.");
@@ -2107,7 +2219,7 @@ export function App() {
       return;
     }
 
-    const label = mergeDraft.label.trim() || DEFAULT_MERGE_LABEL;
+    const label = mergeDraft.label.trim() || buildUniqueElementName(DEFAULT_MERGE_LABEL, workspace.elements);
     setError(null);
     setStatus("Merging selected elements...");
 
@@ -2216,8 +2328,11 @@ export function App() {
         isAnnotating={isAnnotating}
         isSaving={isSavingState}
         isExporting={isExporting}
-        canSave={selectedElement !== null && elementDraft !== null}
-        canExport={workspace.source !== null}
+        canRunDetection={canRunDetection}
+        canSave={hasUnsavedElementChanges}
+        canExport={canExportAssetPack}
+        detectionActionLabel={detectionActionLabel}
+        detectionActionHelp={detectionActionHelp}
         runs={workspaceRuns}
         activeRunId={activeRunId}
         onUpload={handleUpload}
@@ -2295,10 +2410,14 @@ export function App() {
             panOffset={canvasPan}
             focusRequest={canvasFocusRequest}
             manualElementName={manualElementName}
+            renamingElementId={renamingElementId}
             canCreateChildFromDraft={selectedElement !== null}
             onSelectElement={handleSelectElement}
             onClearSelection={handleClearSelection}
             onOpenElementContextMenu={handleOpenElementContextMenu}
+            onStartRenameElement={handleStartInlineRenameElement}
+            onCommitRenameElement={(elementId, name) => void handleCommitInlineRenameElement(elementId, name)}
+            onCancelRenameElement={handleCancelInlineRenameElement}
             onBoxDraftChange={handleBoxDraftChange}
             onZoomByWheel={handleCanvasWheelZoom}
             onZoomByGesture={handleCanvasGestureZoom}
@@ -2385,9 +2504,11 @@ export function App() {
             workspaceRunId={activeRunId}
             assetCacheKey={assetCacheKey}
             showRejected={overlays.showRejected}
+            reviewableCount={reviewableElementCount}
             onSelectElement={handleSelectElement}
             onToggleShowRejected={() => handleOverlayToggle("showRejected")}
             onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
+            onCompleteReview={() => void handleCompleteReview()}
           />
 
           <InspectorPanel
@@ -2578,6 +2699,17 @@ function isActiveCandidate(element: WorkspaceElement): boolean {
   return isActionableElement(element);
 }
 
+function needsElementReview(element: WorkspaceElement): boolean {
+  return isActionableElement(element) && [
+    "model_detected",
+    "proposal",
+    "edited",
+    "child",
+    "merged",
+    "qa_failed",
+  ].includes(element.status);
+}
+
 function isAcceptedStatus(status: WorkspaceElement["status"]): boolean {
   return [
     "accepted",
@@ -2593,21 +2725,45 @@ function canRejectStatus(status: WorkspaceElement["status"]): boolean {
   return ["proposal", "model_detected", "edited", "child", "merged"].includes(status);
 }
 
-function buildDefaultMergeLabel(elements: WorkspaceElement[]): string {
+function buildDefaultMergeLabel(
+  elements: WorkspaceElement[],
+  existingElements: WorkspaceElement[] = [],
+): string {
   const names = elements
     .map((element) => (element.label ?? element.name).trim())
     .filter(Boolean);
   const uniqueNames = Array.from(new Set(names));
+  let baseLabel = DEFAULT_MERGE_LABEL;
   if (uniqueNames.length === 0) {
-    return DEFAULT_MERGE_LABEL;
+    baseLabel = DEFAULT_MERGE_LABEL;
+  } else if (uniqueNames.length === 1) {
+    baseLabel = `${uniqueNames[0]} group`;
+  } else if (uniqueNames.length === 2) {
+    baseLabel = `${uniqueNames[0]} + ${uniqueNames[1]}`;
+  } else {
+    baseLabel = `${uniqueNames[0]} group`;
   }
-  if (uniqueNames.length === 1) {
-    return `${uniqueNames[0]} group`;
+
+  return buildUniqueElementName(baseLabel, existingElements);
+}
+
+function buildUniqueElementName(baseLabel: string, existingElements: WorkspaceElement[]): string {
+  const normalizedBaseLabel = baseLabel.trim() || DEFAULT_MERGE_LABEL;
+  const existingNames = new Set(
+    existingElements
+      .filter(isDisplayableElement)
+      .map((element) => (element.label ?? element.name).trim().toLowerCase())
+      .filter(Boolean),
+  );
+  if (!existingNames.has(normalizedBaseLabel.toLowerCase())) {
+    return normalizedBaseLabel;
   }
-  if (uniqueNames.length === 2) {
-    return `${uniqueNames[0]} + ${uniqueNames[1]}`;
+
+  let suffix = 2;
+  while (existingNames.has(`${normalizedBaseLabel} ${suffix}`.toLowerCase())) {
+    suffix += 1;
   }
-  return `${uniqueNames[0]} group`;
+  return `${normalizedBaseLabel} ${suffix}`;
 }
 
 function isRejectedElement(element: WorkspaceElement): boolean {
@@ -2616,6 +2772,13 @@ function isRejectedElement(element: WorkspaceElement): boolean {
 
 function hasExtractedAssetPreview(element: WorkspaceElement): boolean {
   return ["extracted", "repair_pending", "repair_complete", "qa_failed"].includes(element.status);
+}
+
+function isExportReadyElement(element: WorkspaceElement): boolean {
+  if (!isActionableElement(element)) {
+    return false;
+  }
+  return Boolean(element.mask) || ["extracted", "repair_complete", "exported"].includes(element.status);
 }
 
 function hasRepairPackage(element: WorkspaceElement): boolean {
@@ -2977,6 +3140,27 @@ function isGeometryDraftDirty(
   }
 
   return !boxesEqual(element.bbox, bbox) || !boxesEqual(element.canvas, canvas);
+}
+
+function isElementDraftDirty(
+  element: WorkspaceElement,
+  draft: ElementEditorDraft,
+): boolean {
+  const nextElement = buildElementFromDraft(element, draft);
+  if (!nextElement) {
+    return true;
+  }
+
+  const currentLabel = element.label ?? element.name;
+  const nextLabel = nextElement.label ?? nextElement.name;
+  return nextElement.name !== element.name
+    || nextLabel !== currentLabel
+    || nextElement.mode !== element.mode
+    || nextElement.layer !== element.layer
+    || !boxesEqual(nextElement.bbox, element.bbox)
+    || !boxesEqual(nextElement.canvas, element.canvas)
+    || nextElement.notes !== element.notes
+    || nextElement.visible !== element.visible;
 }
 
 function canPatchElementDraft(

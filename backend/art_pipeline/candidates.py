@@ -12,7 +12,7 @@ from art_pipeline.elements import (
     ElementRecord,
     next_element_id,
 )
-from art_pipeline.masks import expand_canvas
+from art_pipeline.masks import expand_bbox, expand_canvas
 from art_pipeline.thumbnails import write_thumbnail
 
 
@@ -194,7 +194,7 @@ def merge_candidates(
     if len(source_elements) < 2:
         raise ValueError("Select at least two elements to merge.")
 
-    bbox = union_bbox(source_elements)
+    bbox = expand_bbox(union_bbox(source_elements), source_image.width, source_image.height)
     element_id = _next_candidate_id(state_elements)
     thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)
     source_ids = [element.id for element in source_elements]

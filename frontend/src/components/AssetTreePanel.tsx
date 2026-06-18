@@ -16,6 +16,7 @@ type AssetTreePanelProps = {
   workspaceRunId: string | null;
   assetCacheKey: number;
   showRejected: boolean;
+  reviewableCount: number;
   onSelectElement: (
     elementId: string,
     mode?: ElementSelectionMode,
@@ -23,6 +24,7 @@ type AssetTreePanelProps = {
   ) => void;
   onToggleShowRejected: () => void;
   onToggleVisibility: (elementId: string) => void;
+  onCompleteReview: () => void;
 };
 
 type AssetTreeNode = {
@@ -37,9 +39,11 @@ export function AssetTreePanel({
   workspaceRunId,
   assetCacheKey,
   showRejected,
+  reviewableCount,
   onSelectElement,
   onToggleShowRejected,
   onToggleVisibility,
+  onCompleteReview,
 }: AssetTreePanelProps) {
   const displayElements = useMemo(
     () => elements.filter((element) => element.mergedInto === null),
@@ -201,6 +205,14 @@ export function AssetTreePanel({
           />
           <span>Show rejected</span>
         </label>
+        <button
+          type="button"
+          className="asset-review-complete-button"
+          disabled={reviewableCount === 0}
+          onClick={onCompleteReview}
+        >
+          Complete review
+        </button>
       </div>
       <div className="panel-body panel-scroll">
         {tree.length > 0 ? (
@@ -268,10 +280,11 @@ function collectExpandableIds(nodes: AssetTreeNode[]): string[] {
 function summarizeAssets(elements: WorkspaceElement[]) {
   const reviewed = elements.filter(isReviewed).length;
   const accepted = elements.filter(isAccepted).length;
+  const needsReviewCount = elements.filter(needsReview).length;
   return {
     reviewed,
     accepted,
-    needsReview: Math.max(0, elements.length - reviewed),
+    needsReview: needsReviewCount,
   };
 }
 
@@ -288,6 +301,17 @@ function isReviewed(element: WorkspaceElement): boolean {
     "extracted",
     "repair_pending",
     "repair_complete",
+    "qa_failed",
+  ].includes(element.status);
+}
+
+function needsReview(element: WorkspaceElement): boolean {
+  return isActiveCandidate(element) && [
+    "model_detected",
+    "proposal",
+    "edited",
+    "child",
+    "merged",
     "qa_failed",
   ].includes(element.status);
 }

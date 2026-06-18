@@ -73,6 +73,21 @@ const detectedState = {
   elements: [detectedElement],
 };
 
+const partiallyReviewedState = {
+  source: loadedState.source,
+  elements: [
+    loadedState.elements[0],
+    {
+      ...detectedElement,
+      id: "element_011",
+      name: "plant",
+      label: "plant",
+      bbox: { x: 52, y: 20, w: 18, h: 24 },
+      canvas: { x: 48, y: 18, w: 24, h: 28 },
+    },
+  ],
+};
+
 const detectedReplacementState = {
   source: loadedState.source,
   elements: [
@@ -179,6 +194,42 @@ const mergeSourceState = {
       layer: 2,
       thumbnail: "elements/element_002/thumb.png",
       confidence: 0.8,
+    },
+  ],
+};
+
+const duplicateMergeNameState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...loadedState.elements[0],
+      id: "element_001",
+      name: "bottle + plant",
+      label: "bottle + plant",
+      status: "merged",
+      confidence: null,
+    },
+    {
+      ...loadedState.elements[0],
+      id: "element_002",
+      name: "bottle",
+      label: "bottle",
+      bbox: { x: 48, y: 20, w: 18, h: 22 },
+      canvas: { x: 44, y: 16, w: 26, h: 30 },
+      layer: 2,
+      thumbnail: "elements/element_002/thumb.png",
+      confidence: 0.8,
+    },
+    {
+      ...loadedState.elements[0],
+      id: "element_003",
+      name: "plant",
+      label: "plant",
+      bbox: { x: 70, y: 20, w: 16, h: 20 },
+      canvas: { x: 66, y: 16, w: 24, h: 28 },
+      layer: 3,
+      thumbnail: "elements/element_003/thumb.png",
+      confidence: 0.72,
     },
   ],
 };
@@ -656,7 +707,7 @@ describe("App", () => {
   it("renders pipeline rail with stage progress", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(detectedState);
+        return jsonResponse(partiallyReviewedState);
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -676,7 +727,32 @@ describe("App", () => {
       expect(within(pipelineRail).getByText("Review")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Segment")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Export")).toBeInTheDocument();
-      expect(within(pipelineRail).getByText(/1 candidate/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/2 candidates/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/1 of 2 reviewed/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/finish review first/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Review").closest("li")).toHaveClass("is-active");
+      expect(within(pipelineRail).getByText("Segment").closest("li")).toHaveClass("is-pending");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("activates segmentation only after review is complete and assets are accepted", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
+      expect(within(pipelineRail).getByText("Review").closest("li")).toHaveClass("is-done");
+      expect(within(pipelineRail).getByText("Segment").closest("li")).toHaveClass("is-active");
+      expect(within(pipelineRail).getByText(/1 accepted asset needs masks/i)).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -807,6 +883,31 @@ describe("App", () => {
     }
   });
 
+  it("does not expose run detection while candidates are waiting for review", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const topAppBar = await screen.findByRole("banner");
+      expect(within(topAppBar).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
+      expect(within(topAppBar).getByRole("button", { name: /review first/i })).toBeDisabled();
+      expect(within(topAppBar).getByRole("button", { name: /export asset pack/i })).toBeDisabled();
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        "/api/workspace/detect",
+        expect.objectContaining({ method: "POST" }),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("renders canvas toolbar controls", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -870,6 +971,7 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
+      await screen.findByTestId("canvas-artboard");
 
       const canvasArea = screen.getByTestId("canvas-area");
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
@@ -962,7 +1064,7 @@ describe("App", () => {
 
     try {
       render(<App />);
-      await screen.findByText(/original\.png - 120 x 90/i);
+      await screen.findByTestId("canvas-artboard");
 
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /^edit box$/i }));
@@ -1113,7 +1215,7 @@ describe("App", () => {
         pointerId: 1,
         pointerType: "mouse",
       });
-      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /save edit/i }));
 
       await waitFor(() => {
         expect(patchRequest).toEqual({
@@ -1236,7 +1338,7 @@ describe("App", () => {
       editRegion.focus();
       fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
 
-      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /save edit/i }));
 
       await waitFor(() => {
         expect(patchRequest).toEqual({
@@ -1287,7 +1389,7 @@ describe("App", () => {
       fireEvent.keyDown(resizeHandle, { key: "ArrowRight", shiftKey: true });
       fireEvent.keyDown(resizeHandle, { key: "ArrowDown", shiftKey: true });
 
-      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
+      await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /save edit/i }));
 
       await waitFor(() => {
         expect(patchRequest).toEqual({
@@ -1341,6 +1443,88 @@ describe("App", () => {
       expect(await screen.findAllByText(/element details updated/i)).toHaveLength(2);
     } finally {
       promptSpy.mockRestore();
+      restoreFetch();
+    }
+  });
+
+  it("renames an asset inline from the canvas label", async () => {
+    const user = userEvent.setup();
+    const renamedElement = {
+      ...loadedState.elements[0],
+      name: "Main tub",
+      label: "Main tub",
+    };
+    let patchRequest: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001" && init?.method === "PATCH") {
+        patchRequest = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: renamedElement,
+          state: {
+            source: loadedState.source,
+            elements: [renamedElement],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByTestId("overlay-label-element_001"));
+      const inlineName = await screen.findByLabelText(/rename region 1/i);
+      fireEvent.change(inlineName, { target: { value: "Main tub" } });
+      fireEvent.blur(inlineName);
+
+      await waitFor(() => {
+        expect(patchRequest).toEqual({ label: "Main tub" });
+      });
+      expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Main tub");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("completes review for all remaining usable candidates in one action", async () => {
+    const user = userEvent.setup();
+    const savedStates: typeof detectedState[] = [];
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(detectedState);
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        const parsed = JSON.parse(String(init.body)) as typeof detectedState;
+        savedStates.push(parsed);
+        return jsonResponse(parsed);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByAltText("cabinet thumbnail");
+
+      await user.click(screen.getByRole("button", { name: /complete review/i }));
+
+      await waitFor(() => {
+        expect(savedStates[0]?.elements[0].status).toBe("accepted");
+      });
+      const savedState = savedStates[0];
+      expect(savedState?.elements[0].mode).toBe("visible_only");
+      const latestHistoryEntry = savedState?.elements[0].history[savedState.elements[0].history.length - 1];
+      expect(latestHistoryEntry?.kind).toBe("review_complete");
+      const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
+      expect(within(pipelineRail).getByText("Segment").closest("li")).toHaveClass("is-active");
+    } finally {
       restoreFetch();
     }
   });
@@ -1456,7 +1640,7 @@ describe("App", () => {
 
     try {
       render(<App />);
-      await screen.findByText(/original\.png - 120 x 90/i);
+      await screen.findByTestId("canvas-artboard");
 
       expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
       expect(screen.getByTestId("overlay-region-element_001")).toHaveClass("is-selected");
@@ -1493,7 +1677,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
       scrollIntoView.mockClear();
 
-      const artboard = screen.getByTestId("canvas-artboard");
+      const artboard = await screen.findByTestId("canvas-artboard");
       const stage = screen.getByTestId("canvas-area").querySelector(".canvas-stage");
       const viewport = screen.getByTestId("canvas-area").querySelector<HTMLElement>(".canvas-pan-viewport");
       if (!stage || !viewport) {
@@ -1583,6 +1767,7 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
+      await screen.findByTestId("canvas-artboard");
 
       openAssetContextMenu({ x: 100, y: 100 });
       const contextMenu = openAssetContextMenu({ x: 250, y: 250 });
@@ -1821,8 +2006,7 @@ describe("App", () => {
     }
   });
 
-  it("clears stale repair metadata when detection replaces candidates with reused ids", async () => {
-    const user = userEvent.setup();
+  it("locks model detection once a workspace already has review or extraction state", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(completionState);
@@ -1853,10 +2037,6 @@ describe("App", () => {
         });
       }
 
-      if (input === "/api/workspace/detect" && init?.method === "POST") {
-        return jsonResponse(detectedReplacementState);
-      }
-
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
 
@@ -1865,13 +2045,11 @@ describe("App", () => {
       await screen.findByAltText("Region 1 missing mask overlay");
       expect(screen.getByText(/QA pending/i)).toBeInTheDocument();
 
-      await user.click(screen.getByRole("button", { name: /run detection/i }));
-
-      expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
-      await waitFor(() => {
-        expect(screen.queryByText(/QA pending/i)).not.toBeInTheDocument();
-      });
-      expect(screen.queryByAltText("cabinet missing mask overlay")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /detection done/i })).toBeDisabled();
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        "/api/workspace/detect",
+        expect.objectContaining({ method: "POST" }),
+      );
     } finally {
       restoreFetch();
     }
@@ -2030,6 +2208,54 @@ describe("App", () => {
         }),
       );
       expect(screen.getByTestId("overlay-label-element_002")).toHaveTextContent("Shelf Handle");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("starts add-child as a named draft instead of creating a generic child immediately", async () => {
+    const user = userEvent.setup();
+    const childState = {
+      source: loadedState.source,
+      elements: [...loadedState.elements, createdChildElement],
+    };
+    let childPostBody: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/children" && init?.method === "POST") {
+        childPostBody = JSON.parse(String(init.body));
+        return jsonResponse({
+          element: createdChildElement,
+          state: childState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /add child/i }));
+
+      const nameField = screen.getByLabelText(/new element name/i);
+      expect(nameField).toHaveValue("Region 1 detail");
+      expect(childPostBody).toBeNull();
+
+      fireEvent.change(nameField, { target: { value: "Shelf Handle" } });
+      await user.click(screen.getByRole("button", { name: /create child/i }));
+
+      await waitFor(() => {
+        expect(childPostBody).toEqual({
+          label: "Shelf Handle",
+          bbox: { x: 22, y: 27, w: 10, h: 10 },
+        });
+      });
     } finally {
       restoreFetch();
     }
@@ -2323,6 +2549,33 @@ describe("App", () => {
       );
       expect(await screen.findByAltText("Fixture group thumbnail")).toBeInTheDocument();
       expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Fixture group");
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("adds a numeric suffix to default merge names when the joined label already exists", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(duplicateMergeNameState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      await user.click(screen.getByRole("button", { name: /select bottle$/i }));
+      fireEvent.click(screen.getByRole("button", { name: /select plant$/i }), { shiftKey: true });
+      await user.click(screen.getByRole("button", { name: /^merge$/i }));
+
+      const dialog = await screen.findByRole("dialog", { name: /name merged asset/i });
+      expect(within(dialog).getByRole("textbox", { name: /merged asset name/i })).toHaveValue(
+        "bottle + plant 2",
+      );
     } finally {
       restoreFetch();
     }

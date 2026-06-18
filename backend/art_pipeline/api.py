@@ -52,6 +52,7 @@ from art_pipeline.elements import (
 )
 from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
+from art_pipeline.masks import expand_bbox
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import (
     MissingMaskRequest,
@@ -1052,7 +1053,7 @@ def _detection_results_to_elements(
     generated_elements: list[ElementRecord] = []
     next_index = 1
     for result in results:
-        bbox = result.bbox
+        bbox = expand_bbox(result.bbox, source_image.width, source_image.height)
         element_id = next_element_id(generated_elements, start=next_index)
         next_index = int(element_id.rsplit("_", 1)[1]) + 1
         thumbnail_path = write_thumbnail(source_image, workspace_root, element_id, bbox)

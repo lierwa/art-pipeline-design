@@ -48,46 +48,66 @@ function buildStages(
   elements: WorkspaceElement[],
   exportSummary: ExportSummary | null,
 ): PipelineStage[] {
-  const detectionCount = elements.filter((element) => element.mergedInto === null).length;
+  const activeElements = elements.filter(isActivePipelineElement);
+  const detectionCount = activeElements.length;
   const reviewNeededCount = elements.filter(needsReview).length;
   const reviewedCount = Math.max(detectionCount - reviewNeededCount, 0);
   const maskReadyCount = elements.filter(hasSegmentationReady).length;
+  const segmentableCount = elements.filter(isSegmentableElement).length;
+  const pendingMaskCount = Math.max(segmentableCount - maskReadyCount, 0);
   const exportedCount =
     exportSummary?.exportedElements.length
     ?? elements.filter((element) => element.status === "exported").length;
+  const hasSource = source !== null;
+  const hasDetections = detectionCount > 0;
+  const isReviewComplete = hasDetections && reviewNeededCount === 0;
+  const canSegment = isReviewComplete && segmentableCount > 0;
+  const segmentDetail = !hasDetections
+    ? "Prepare accepted masks"
+    : reviewNeededCount > 0
+      ? "Finish review first"
+        : segmentableCount === 0
+          ? "Accept assets first"
+          : pendingMaskCount > 0
+          ? `${pendingMaskCount} accepted asset${pendingMaskCount === 1 ? " needs" : "s need"} masks`
+          : maskReadyCount > 0
+            ? `${maskReadyCount} mask${maskReadyCount === 1 ? "" : "s"} ready`
+            : "Prepare accepted masks";
 
   return [
     {
       name: "Upload",
       detail: source ? source.filename : "Awaiting source",
-      state: source ? "done" : "active",
+      state: hasSource ? "done" : "active",
     },
     {
       name: "Detect",
       detail: detectionCount > 0
         ? `${detectionCount} candidate${detectionCount === 1 ? "" : "s"}`
-        : source
+        : hasSource
           ? "Ready for model detection"
           : "Needs source",
-      state: detectionCount > 0 ? "done" : source ? "active" : "pending",
+      state: hasDetections ? "done" : hasSource ? "active" : "pending",
     },
     {
       name: "Review",
-      detail: detectionCount > 0
+      detail: hasDetections
         ? `${reviewedCount} of ${detectionCount} reviewed`
         : "Review candidates",
-      state: detectionCount > 0 && reviewNeededCount === 0
+      state: isReviewComplete
         ? "done"
-        : detectionCount > 0
+        : hasDetections
           ? "active"
           : "pending",
     },
     {
       name: "Segment",
-      detail: maskReadyCount > 0
-        ? `${maskReadyCount} mask${maskReadyCount === 1 ? "" : "s"} ready`
-        : "Prepare accepted masks",
-      state: maskReadyCount > 0 ? "done" : reviewedCount > 0 ? "active" : "pending",
+      detail: segmentDetail,
+      state: canSegment && pendingMaskCount > 0
+        ? "active"
+        : canSegment && maskReadyCount > 0
+          ? "done"
+          : "pending",
     },
     {
       name: "Export",
@@ -101,15 +121,34 @@ function buildStages(
   ];
 }
 
+function isActivePipelineElement(element: WorkspaceElement): boolean {
+  return element.mergedInto === null && element.mode !== "rejected" && element.status !== "rejected";
+}
+
 function needsReview(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected" || element.mergedInto !== null) {
+  if (!isActivePipelineElement(element)) {
     return false;
   }
-  return ["model_detected", "proposal", "edited", "qa_failed"].includes(element.status);
+  return ["model_detected", "proposal", "edited", "child", "merged", "qa_failed"].includes(element.status);
+}
+
+function isSegmentableElement(element: WorkspaceElement): boolean {
+  if (!isActivePipelineElement(element)) {
+    return false;
+  }
+  return [
+    "accepted",
+    "extract_ready",
+    "extracted",
+    "repair_pending",
+    "repair_complete",
+    "qa_failed",
+    "exported",
+  ].includes(element.status);
 }
 
 function hasSegmentationReady(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected" || element.mergedInto !== null) {
+  if (!isActivePipelineElement(element)) {
     return false;
   }
   return Boolean(element.mask)

@@ -372,6 +372,8 @@ def test_detect_uses_configured_provider_without_cv_fallback(
     assert body["elements"][0]["label"] == "cabinet"
     assert body["elements"][0]["status"] == "model_detected"
     assert body["elements"][0]["sourceProvider"] == "test_provider"
+    assert body["elements"][0]["bbox"] == {"x": 8, "y": 10, "w": 34, "h": 44}
+    assert body["elements"][1]["bbox"] == {"x": 50, "y": 18, "w": 22, "h": 20}
     assert all(element["source"] == "model_detection" for element in body["elements"])
 
 
