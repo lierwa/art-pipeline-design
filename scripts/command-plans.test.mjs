@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -9,6 +12,10 @@ import {
   parseDevArgs,
   parseInstallArgs,
 } from "./lib/command-plans.mjs";
+import {
+  findPythonCommand,
+  pythonCandidates,
+} from "./lib/python-command.mjs";
 
 test("createInstallPlan installs backend dev package and frontend dependencies", () => {
   const plan = createInstallPlan({
@@ -114,6 +121,42 @@ test("createDownloadModelPlan downloads the formal GroundingDINO model", () => {
       },
     ],
   );
+});
+
+test("findPythonCommand prefers the repository virtual environment", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "art-pipeline-python-"));
+  const venvBin = join(tempRoot, ".venv", "bin");
+  const venvPython = join(venvBin, "python");
+  mkdirSync(venvBin, { recursive: true });
+  writeFileSync(venvPython, "#!/bin/sh\nexit 0\n");
+  chmodSync(venvPython, 0o755);
+
+  try {
+    assert.deepEqual(
+      pythonCandidates({ platform: "darwin", cwd: tempRoot, env: {} }).slice(0, 3),
+      [
+        { command: venvPython, args: [] },
+        { command: "python3", args: [] },
+        { command: "python", args: [] },
+      ],
+    );
+
+    const calls = [];
+    const found = findPythonCommand({
+      platform: "darwin",
+      cwd: tempRoot,
+      env: {},
+      spawnSync(command) {
+        calls.push(command);
+        return { status: command === venvPython ? 0 : 1 };
+      },
+    });
+
+    assert.equal(found.command, venvPython);
+    assert.deepEqual(calls, [venvPython]);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("npmCommandForRuntime uses npm_execpath when npm launched the script", () => {
