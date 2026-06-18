@@ -37,7 +37,7 @@ type CanvasStageProps = {
   onSelectElement: (elementId: string) => void;
   onToggleMergeSelection: (elementId: string) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
-  onZoomByWheel: (direction: 1 | -1) => void;
+  onZoomByWheel: (deltaY: number) => void;
   onPanChange: (deltaX: number, deltaY: number) => void;
   onDraftRegionChange: (region: DraftRegion | null) => void;
   onAddSplitRegion: (region: DraftRegion) => void;
@@ -272,7 +272,7 @@ export function CanvasStage({
     }
 
     event.preventDefault();
-    onZoomByWheel(event.deltaY < 0 ? 1 : -1);
+    onZoomByWheel(event.deltaY);
   }
 
   return (

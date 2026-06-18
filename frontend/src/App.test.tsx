@@ -774,7 +774,7 @@ describe("App", () => {
 
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
       await user.click(within(canvasToolbar).getByRole("button", { name: /zoom in/i }));
-      expect(within(canvasToolbar).getByText("90%")).toBeInTheDocument();
+      expect(within(canvasToolbar).getByText("85%")).toBeInTheDocument();
 
       const panButton = within(canvasToolbar).getByRole("button", { name: /pan canvas/i });
       await user.click(panButton);
@@ -801,7 +801,21 @@ describe("App", () => {
       fireEvent.wheel(canvasArea, { deltaY: -120 });
 
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
-      expect(within(canvasToolbar).getByText("90%")).toBeInTheDocument();
+      expect(within(canvasToolbar).getByText("85%")).toBeInTheDocument();
+
+      fireEvent.keyDown(window, { key: " ", code: "Space" });
+      expect(within(canvasToolbar).getByRole("button", { name: /pan canvas/i })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(canvasArea).toHaveAttribute("data-pan-mode", "true");
+
+      fireEvent.keyUp(window, { key: " ", code: "Space" });
+      expect(within(canvasToolbar).getByRole("button", { name: /pan canvas/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+      expect(canvasArea).toHaveAttribute("data-pan-mode", "false");
 
       fireEvent.keyDown(window, { key: "w" });
       expect(await screen.findByTestId("canvas-edit-region-element_001")).toBeInTheDocument();

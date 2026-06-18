@@ -98,10 +98,10 @@ export function CanvasToolbar({
             onClick={() => onSelectTool("draw")}
           />
           <IconButton
-            label="Pan canvas (R)"
+            label="Pan canvas (R / Space)"
             aria-label="Pan canvas"
             icon={<Hand size={16} strokeWidth={2.2} />}
-            aria-keyshortcuts="R"
+            aria-keyshortcuts="R Space"
             aria-pressed={isPanMode}
             isActive={isPanMode}
             disabled={!hasSource}

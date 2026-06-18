@@ -11,6 +11,16 @@ import { SelectionActionPanel } from "./components/SelectionActionPanel";
 import { TopAppBar } from "./components/TopAppBar";
 import "./styles.css";
 import {
+  canRedoHistory,
+  canUndoHistory,
+  clearOperationHistory,
+  createOperationHistory,
+  dropLatestUndoOperation,
+  recordOperation,
+  stepOperationHistory,
+  type WorkspaceHistorySnapshot,
+} from "./operationHistory";
+import {
   assetIncompleteUrl,
   Box,
   buildSourceUrl,
@@ -115,13 +125,11 @@ type ValidateRepairResponse = {
 
 type Fetcher = typeof fetch;
 
-const MAX_HISTORY_DEPTH = 50;
-
-type WorkspaceHistorySnapshot = {
-  state: WorkspaceState;
-  selectedElementId: string | null;
-  selectedElementIds: SelectedElementIds;
-};
+const CANVAS_ZOOM_MIN = 40;
+const CANVAS_ZOOM_MAX = 200;
+const CANVAS_ZOOM_FIT = 80;
+const CANVAS_ZOOM_STEP = 5;
+const CANVAS_WHEEL_ZOOM_DELTA = 100;
 
 type BoxEditHistorySnapshot = {
   elementId: string;
@@ -230,8 +238,9 @@ export function App() {
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
   const [assetCacheKey, setAssetCacheKey] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("select");
-  const [canvasZoom, setCanvasZoom] = useState(80);
+  const [canvasZoom, setCanvasZoom] = useState(CANVAS_ZOOM_FIT);
   const [isPanMode, setIsPanMode] = useState(false);
+  const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
   const [missingMaskRegion, setMissingMaskRegion] = useState<DraftRegion | null>(null);
@@ -246,11 +255,14 @@ export function App() {
   const [isRepairing, setIsRepairing] = useState(false);
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
   const [isExporting, setIsExporting] = useState(false);
-  const [undoStack, setUndoStack] = useState<WorkspaceHistorySnapshot[]>([]);
-  const [redoStack, setRedoStack] = useState<WorkspaceHistorySnapshot[]>([]);
-  const [boxEditUndoStack, setBoxEditUndoStack] = useState<BoxEditHistorySnapshot[]>([]);
-  const [boxEditRedoStack, setBoxEditRedoStack] = useState<BoxEditHistorySnapshot[]>([]);
+  const [workspaceHistory, setWorkspaceHistory] = useState(() =>
+    createOperationHistory<WorkspaceHistorySnapshot>(),
+  );
+  const [boxEditHistory, setBoxEditHistory] = useState(() =>
+    createOperationHistory<BoxEditHistorySnapshot>(),
+  );
   const missingMaskDraftsRef = useRef<Record<string, MissingMaskDraft>>({});
+  const wheelZoomAccumulatorRef = useRef(0);
 
   useEffect(() => {
     void loadWorkspace();
@@ -416,8 +428,7 @@ export function App() {
     setRepairQaReport((current) =>
       current?.elementId === selectedElement.id ? current : null,
     );
-    setBoxEditUndoStack([]);
-    setBoxEditRedoStack([]);
+    clearBoxEditHistory();
   }, [selectedElement]);
 
   useEffect(() => {
@@ -441,6 +452,12 @@ export function App() {
       const hasSystemModifier = event.ctrlKey || event.metaKey;
 
       if (isEditableShortcutTarget(event.target)) {
+        return;
+      }
+
+      if (isSpacePanShortcut(event) && workspace.source) {
+        event.preventDefault();
+        setIsSpacePanning(true);
         return;
       }
 
@@ -532,9 +549,33 @@ export function App() {
       }
     }
 
+    function handleGlobalKeyUp(event: globalThis.KeyboardEvent) {
+      if (isEditableShortcutTarget(event.target)) {
+        return;
+      }
+
+      if (isSpacePanShortcut(event)) {
+        event.preventDefault();
+        setIsSpacePanning(false);
+      }
+    }
+
     window.addEventListener("keydown", handleGlobalKeyDown);
-    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+    window.addEventListener("keyup", handleGlobalKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+      window.removeEventListener("keyup", handleGlobalKeyUp);
+    };
   });
+
+  useEffect(() => {
+    function releaseTemporaryPan() {
+      setIsSpacePanning(false);
+    }
+
+    window.addEventListener("blur", releaseTemporaryPan);
+    return () => window.removeEventListener("blur", releaseTemporaryPan);
+  }, []);
 
   useEffect(() => {
     if (!selectedElement || !shouldLoadRepairMetadata(selectedElement)) {
@@ -663,7 +704,8 @@ export function App() {
     setExportSummary(null);
     setTool("select");
     setIsPanMode(false);
-    setCanvasZoom(80);
+    setIsSpacePanning(false);
+    setCanvasZoom(CANVAS_ZOOM_FIT);
     setCanvasPan({ x: 0, y: 0 });
     setDraftRegion(null);
     setSplitRegions([]);
@@ -701,7 +743,8 @@ export function App() {
       setSelectedElementIds([]);
       setTool("select");
       setIsPanMode(false);
-      setCanvasZoom(80);
+      setIsSpacePanning(false);
+      setCanvasZoom(CANVAS_ZOOM_FIT);
       setCanvasPan({ x: 0, y: 0 });
       setDraftRegion(null);
       setSplitRegions([]);
@@ -782,14 +825,24 @@ export function App() {
     };
   }
 
+  function restoreHistorySnapshot(
+    snapshot: WorkspaceHistorySnapshot,
+    nextStatus: string,
+  ) {
+    replaceWorkspace(snapshot.state, nextStatus, snapshot.selectedElementId);
+    setSelectedElementIds(snapshot.selectedElementIds);
+  }
+
   function pushUndoSnapshot(snapshot: WorkspaceHistorySnapshot = createHistorySnapshot()) {
-    setUndoStack((current) => [...current, snapshot].slice(-MAX_HISTORY_DEPTH));
-    setRedoStack([]);
+    setWorkspaceHistory((current) => recordOperation(current, snapshot));
   }
 
   function clearWorkspaceHistory() {
-    setUndoStack([]);
-    setRedoStack([]);
+    setWorkspaceHistory((current) => clearOperationHistory(current));
+  }
+
+  function clearBoxEditHistory() {
+    setBoxEditHistory((current) => clearOperationHistory(current));
   }
 
   function applyWorkspaceMutation(
@@ -846,7 +899,7 @@ export function App() {
       void refreshWorkspaceRuns();
       return true;
     } catch (saveError) {
-      setUndoStack((current) => current.slice(0, -1));
+      setWorkspaceHistory((current) => dropLatestUndoOperation(current));
       setWorkspace(previousState);
       setSelectedElementId(previousSelection);
       setSelectedElementIds(previousMergeSelection);
@@ -864,8 +917,7 @@ export function App() {
     snapshot: WorkspaceHistorySnapshot,
     nextStatus: string,
   ): Promise<boolean> {
-    replaceWorkspace(snapshot.state, nextStatus, snapshot.selectedElementId);
-    setSelectedElementIds(snapshot.selectedElementIds);
+    restoreHistorySnapshot(snapshot, nextStatus);
     setIsSavingState(true);
     setError(null);
 
@@ -884,8 +936,13 @@ export function App() {
       }
 
       const persistedState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
-      replaceWorkspace(persistedState, nextStatus, snapshot.selectedElementId);
-      setSelectedElementIds(snapshot.selectedElementIds);
+      restoreHistorySnapshot(
+        {
+          ...snapshot,
+          state: persistedState,
+        },
+        nextStatus,
+      );
       void refreshWorkspaceRuns();
       return true;
     } catch (saveError) {
@@ -900,37 +957,45 @@ export function App() {
   }
 
   async function handleUndo() {
-    if (editingElementId && boxEditUndoStack.length > 0) {
+    if (editingElementId && canUndoHistory(boxEditHistory)) {
       handleUndoBoxDraft();
       return;
     }
 
-    const snapshot = undoStack[undoStack.length - 1];
-    if (!snapshot) {
+    const currentSnapshot = createHistorySnapshot();
+    const step = stepOperationHistory(workspaceHistory, "undo", currentSnapshot);
+    if (!step.target) {
       return;
     }
 
-    const currentSnapshot = createHistorySnapshot();
-    setUndoStack((current) => current.slice(0, -1));
-    setRedoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
-    await persistHistorySnapshot(snapshot, "Undone.");
+    const previousHistory = workspaceHistory;
+    setWorkspaceHistory(step.history);
+    const restored = await persistHistorySnapshot(step.target, "Undone.");
+    if (!restored) {
+      setWorkspaceHistory(previousHistory);
+      restoreHistorySnapshot(currentSnapshot, "History restore failed.");
+    }
   }
 
   async function handleRedo() {
-    if (editingElementId && boxEditRedoStack.length > 0) {
+    if (editingElementId && canRedoHistory(boxEditHistory)) {
       handleRedoBoxDraft();
       return;
     }
 
-    const snapshot = redoStack[redoStack.length - 1];
-    if (!snapshot) {
+    const currentSnapshot = createHistorySnapshot();
+    const step = stepOperationHistory(workspaceHistory, "redo", currentSnapshot);
+    if (!step.target) {
       return;
     }
 
-    const currentSnapshot = createHistorySnapshot();
-    setRedoStack((current) => current.slice(0, -1));
-    setUndoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
-    await persistHistorySnapshot(snapshot, "Redone.");
+    const previousHistory = workspaceHistory;
+    setWorkspaceHistory(step.history);
+    const restored = await persistHistorySnapshot(step.target, "Redone.");
+    if (!restored) {
+      setWorkspaceHistory(previousHistory);
+      restoreHistorySnapshot(currentSnapshot, "History restore failed.");
+    }
   }
 
   async function handleUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -974,7 +1039,8 @@ export function App() {
       setSourceUrl(buildSourceUrl(Date.now(), payload.run.id));
       setTool("select");
       setIsPanMode(false);
-      setCanvasZoom(80);
+      setIsSpacePanning(false);
+      setCanvasZoom(CANVAS_ZOOM_FIT);
       setCanvasPan({ x: 0, y: 0 });
       setDraftRegion(null);
       setMissingMaskRegion(null);
@@ -1452,22 +1518,40 @@ export function App() {
   }
 
   function handleZoomIn() {
-    setCanvasZoom((current) => Math.min(200, current + 10));
+    wheelZoomAccumulatorRef.current = 0;
+    setCanvasZoom((current) => Math.min(CANVAS_ZOOM_MAX, current + CANVAS_ZOOM_STEP));
   }
 
   function handleZoomOut() {
-    setCanvasZoom((current) => Math.max(40, current - 10));
+    wheelZoomAccumulatorRef.current = 0;
+    setCanvasZoom((current) => Math.max(CANVAS_ZOOM_MIN, current - CANVAS_ZOOM_STEP));
   }
 
-  function handleCanvasWheelZoom(direction: 1 | -1) {
+  function handleCanvasWheelZoom(deltaY: number) {
     if (!workspace.source) {
       return;
     }
-    setCanvasZoom((current) => clampInteger(current + direction * 10, 40, 200));
+
+    const nextAccumulator = wheelZoomAccumulatorRef.current + deltaY;
+    const wheelSteps = Math.trunc(nextAccumulator / CANVAS_WHEEL_ZOOM_DELTA);
+    if (wheelSteps === 0) {
+      wheelZoomAccumulatorRef.current = nextAccumulator;
+      return;
+    }
+
+    wheelZoomAccumulatorRef.current = nextAccumulator - wheelSteps * CANVAS_WHEEL_ZOOM_DELTA;
+    setCanvasZoom((current) =>
+      clampInteger(
+        current - wheelSteps * CANVAS_ZOOM_STEP,
+        CANVAS_ZOOM_MIN,
+        CANVAS_ZOOM_MAX,
+      ),
+    );
   }
 
   function handleFitCanvas() {
-    setCanvasZoom(80);
+    wheelZoomAccumulatorRef.current = 0;
+    setCanvasZoom(CANVAS_ZOOM_FIT);
     setCanvasPan({ x: 0, y: 0 });
   }
 
@@ -1493,8 +1577,7 @@ export function App() {
     }
     handleSelectTool("select");
     setEditingElementId(selectedElement.id);
-    setBoxEditUndoStack([]);
-    setBoxEditRedoStack([]);
+    clearBoxEditHistory();
     setStatus("Editing selected box.");
     setError(null);
   }
@@ -1507,11 +1590,9 @@ export function App() {
     const nextBbox = clampBoxToSource(bbox, workspace.source);
     const currentBbox = elementDraft ? parseBox(elementDraft.bbox) : selectedElement.bbox;
     if (currentBbox && !boxesEqual(currentBbox, nextBbox)) {
-      setBoxEditUndoStack((current) => [
-        ...current,
-        { elementId: selectedElement.id, bbox: currentBbox },
-      ].slice(-MAX_HISTORY_DEPTH));
-      setBoxEditRedoStack([]);
+      setBoxEditHistory((current) =>
+        recordOperation(current, { elementId: selectedElement.id, bbox: currentBbox }),
+      );
     }
     setElementDraft((current) => {
       const nextDraft = current ?? draftFromElement(selectedElement);
@@ -1528,8 +1609,7 @@ export function App() {
       setElementDraft(draftFromElement(selectedElement));
     }
     setEditingElementId(null);
-    setBoxEditUndoStack([]);
-    setBoxEditRedoStack([]);
+    clearBoxEditHistory();
     setError(null);
     setStatus("Box edit cancelled.");
   }
@@ -1563,28 +1643,34 @@ export function App() {
   }
 
   function handleUndoBoxDraft() {
-    const snapshot = boxEditUndoStack[boxEditUndoStack.length - 1];
     const currentSnapshot = currentBoxEditSnapshot();
-    if (!snapshot || !currentSnapshot) {
+    if (!currentSnapshot) {
       return;
     }
 
-    setBoxEditUndoStack((current) => current.slice(0, -1));
-    setBoxEditRedoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
-    applyBoxEditSnapshot(snapshot);
+    const step = stepOperationHistory(boxEditHistory, "undo", currentSnapshot);
+    if (!step.target) {
+      return;
+    }
+
+    setBoxEditHistory(step.history);
+    applyBoxEditSnapshot(step.target);
     setStatus("Box edit undone.");
   }
 
   function handleRedoBoxDraft() {
-    const snapshot = boxEditRedoStack[boxEditRedoStack.length - 1];
     const currentSnapshot = currentBoxEditSnapshot();
-    if (!snapshot || !currentSnapshot) {
+    if (!currentSnapshot) {
       return;
     }
 
-    setBoxEditRedoStack((current) => current.slice(0, -1));
-    setBoxEditUndoStack((current) => [...current, currentSnapshot].slice(-MAX_HISTORY_DEPTH));
-    applyBoxEditSnapshot(snapshot);
+    const step = stepOperationHistory(boxEditHistory, "redo", currentSnapshot);
+    if (!step.target) {
+      return;
+    }
+
+    setBoxEditHistory(step.history);
+    applyBoxEditSnapshot(step.target);
     setStatus("Box edit redone.");
   }
 
@@ -1684,8 +1770,7 @@ export function App() {
         setStatus("Element details unchanged.");
         setElementDraft(draftFromElement(selectedElement));
         setEditingElementId(null);
-        setBoxEditUndoStack([]);
-        setBoxEditRedoStack([]);
+        clearBoxEditHistory();
         return;
       }
 
@@ -1696,8 +1781,7 @@ export function App() {
         const payload = await patchWorkspaceElement(selectedElement.id, patchRequest, activeRunId);
         applyWorkspaceMutation(payload.state, "Element details updated. Thumbnail refreshed.", payload.element.id);
         setEditingElementId(null);
-        setBoxEditUndoStack([]);
-        setBoxEditRedoStack([]);
+        clearBoxEditHistory();
         void refreshWorkspaceRuns();
         if (geometryChanged) {
           clearLocalRepairMetadata([selectedElement.id]);
@@ -1706,8 +1790,7 @@ export function App() {
         setStatus("State save failed.");
         setError(saveError instanceof Error ? saveError.message : "Could not save element.");
         setElementDraft(draftFromElement(selectedElement));
-        setBoxEditUndoStack([]);
-        setBoxEditRedoStack([]);
+        clearBoxEditHistory();
       } finally {
         setIsSavingState(false);
       }
@@ -1721,8 +1804,7 @@ export function App() {
     const saved = await persistWorkspace(nextState, "Element details updated.");
     if (saved) {
       setEditingElementId(null);
-      setBoxEditUndoStack([]);
-      setBoxEditRedoStack([]);
+      clearBoxEditHistory();
     }
     if (saved && geometryChanged) {
       clearLocalRepairMetadata([selectedElement.id]);
@@ -2018,10 +2100,10 @@ export function App() {
             hasSelection={selectedElement !== null}
             canSplit={selectedElement !== null}
             canMerge={canMergeSelectedElements}
-            canUndo={boxEditUndoStack.length > 0 || undoStack.length > 0}
-            canRedo={boxEditRedoStack.length > 0 || redoStack.length > 0}
+            canUndo={canUndoHistory(boxEditHistory) || canUndoHistory(workspaceHistory)}
+            canRedo={canRedoHistory(boxEditHistory) || canRedoHistory(workspaceHistory)}
             zoomPercent={canvasZoom}
-            isPanMode={isPanMode}
+            isPanMode={isPanMode || isSpacePanning}
             onSelectTool={handleSelectTool}
             onToggleOverlay={handleOverlayToggle}
             onEditBox={handleStartBoxEdit}
@@ -2052,7 +2134,7 @@ export function App() {
             canDrawMissingMask={canDrawMissingMask}
             hasUnsavedBoxEdit={editingElementId === selectedElement?.id && hasUnsavedGeometryChanges}
             zoomPercent={canvasZoom}
-            isPanMode={isPanMode}
+            isPanMode={isPanMode || isSpacePanning}
             panOffset={canvasPan}
             manualElementName={manualElementName}
             canCreateChildFromDraft={selectedElement !== null}
@@ -2224,6 +2306,10 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
     || target instanceof HTMLSelectElement
     || target.isContentEditable
   );
+}
+
+function isSpacePanShortcut(event: globalThis.KeyboardEvent): boolean {
+  return event.code === "Space" || event.key === " " || event.key === "Spacebar";
 }
 
 function canExtractElement(element: WorkspaceElement): boolean {
