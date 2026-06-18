@@ -72,9 +72,29 @@ test("createDevPlan starts backend and frontend from repository root", () => {
     {
       label: "frontend",
       command: "npm",
-      args: ["--prefix", "frontend", "run", "dev", "--", "--host", "127.0.0.1"],
+      args: [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5176",
+      ],
     },
   ]);
+});
+
+test("createDevPlan lets the frontend dev port avoid other local services", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_FRONTEND_PORT: "5186" },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.deepEqual(plan[1].args.slice(-2), ["--port", "5186"]);
 });
 
 test("createDevPlan preserves python launcher prefix arguments", () => {

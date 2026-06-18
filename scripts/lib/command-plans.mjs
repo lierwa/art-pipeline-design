@@ -96,6 +96,7 @@ export function createDevPlan({
     useDemoProvider
       ? "demo"
       : env.ART_PIPELINE_DETECTION_PROVIDER?.trim() || "grounding_dino";
+  const frontendPort = env.ART_PIPELINE_FRONTEND_PORT?.trim() || "5176";
 
   return [
     {
@@ -126,6 +127,8 @@ export function createDevPlan({
         "--",
         "--host",
         host,
+        "--port",
+        frontendPort,
       ],
     },
   ];

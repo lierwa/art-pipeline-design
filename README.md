@@ -16,7 +16,7 @@ Start the backend and frontend together:
 npm run dev
 ```
 
-Open the URL Vite prints, usually `http://localhost:5173`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the real GroundingDINO provider.
+Open the URL Vite prints, usually `http://127.0.0.1:5176`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the real GroundingDINO provider.
 
 Install and cache the real GroundingDINO model before first use:
 
@@ -82,7 +82,7 @@ Run the Vite dev server:
 npm run dev
 ```
 
-Open the URL Vite prints, usually `http://localhost:5173`. Keep the backend running in a separate terminal.
+Open the URL Vite prints, usually `http://127.0.0.1:5176`. Keep the backend running in a separate terminal.
 
 ## Upload And Run Detection
 
