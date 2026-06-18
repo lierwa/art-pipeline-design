@@ -50,9 +50,9 @@ export function AssetContextMenu({
   onMerge,
 }: AssetContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const hasMergeSelection = selectedMergeElements.length > 0;
-  const hasMergeSelectionReady = selectedMergeElements.length >= 2;
-  const hasMergeActions = hasMergeSelectionReady || canMergeWithSelection || canSelectForMerge;
+  const hasMultiSelection = selectedMergeElements.length >= 2;
+  const canRemoveFromSelection = canSelectForMerge && isSelectedForMerge && hasMultiSelection;
+  const hasMergeActions = hasMultiSelection || canMergeWithSelection || canRemoveFromSelection;
   const displayName = element.label ?? element.name;
   const position = constrainMenuPosition(x, y, hasMergeActions);
 
@@ -101,12 +101,12 @@ export function AssetContextMenu({
     >
       <div className="asset-context-menu-header">
         <span>{displayName}</span>
-        <small>{element.status}</small>
+        <small>{formatStatusLabel(element.status)}</small>
       </div>
 
       {hasMergeActions ? (
         <>
-          {hasMergeSelectionReady ? (
+          {hasMultiSelection ? (
             <button
               type="button"
               role="menuitem"
@@ -125,17 +125,13 @@ export function AssetContextMenu({
               Merge with selected
             </button>
           ) : null}
-          {canSelectForMerge ? (
+          {canRemoveFromSelection ? (
             <button
               type="button"
               role="menuitem"
               onClick={() => runAction(() => onToggleMergeSelection(element.id))}
             >
-              {isSelectedForMerge
-                ? "Remove from merge selection"
-                : hasMergeSelection
-                  ? "Add to merge selection"
-                  : "Select for merge"}
+              Remove from selection
             </button>
           ) : null}
           <div className="asset-context-menu-separator" role="separator" />
@@ -216,4 +212,32 @@ function constrainMenuPosition(x: number, y: number, hasMergeActions: boolean) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function formatStatusLabel(status: WorkspaceElement["status"]): string {
+  if (["accepted", "exported", "extract_ready", "extracted", "repair_complete"].includes(status)) {
+    return "Accepted";
+  }
+  if (status === "rejected") {
+    return "Rejected";
+  }
+  if (status === "edited") {
+    return "Edited";
+  }
+  if (status === "child") {
+    return "Child";
+  }
+  if (status === "merged") {
+    return "Merged";
+  }
+  if (status === "split_parent") {
+    return "Split source";
+  }
+  if (status === "repair_pending") {
+    return "Repairing";
+  }
+  if (status === "qa_failed") {
+    return "Needs fix";
+  }
+  return "Needs review";
 }

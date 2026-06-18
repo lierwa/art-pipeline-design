@@ -1,9 +1,10 @@
-import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useRef } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, useEffect, useRef, useState } from "react";
 
 import {
   Box,
   CanvasTool,
   DraftRegion,
+  ElementSelectionMode,
   OverlayState,
   SourceMetadata,
   WorkspaceElement,
@@ -32,10 +33,11 @@ type CanvasStageProps = {
   zoomPercent: number;
   isPanMode: boolean;
   panOffset: { x: number; y: number };
+  focusRequest: { elementId: string; sequence: number } | null;
   manualElementName: string;
   canCreateChildFromDraft: boolean;
-  onSelectElement: (elementId: string) => void;
-  onToggleMergeSelection: (elementId: string) => void;
+  onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
+  onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onZoomByWheel: (deltaY: number) => void;
@@ -84,9 +86,16 @@ type GestureScaleEvent = Event & {
   scale?: number;
 };
 
+type DrawingEventPhase = "down" | "move" | "up";
+type ViewportRect = Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">;
+
 const WHEEL_DELTA_LINE = 1;
 const WHEEL_DELTA_PAGE = 2;
 const RESIZE_HANDLES: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const FOCUS_EDGE_GUTTER = 24;
+const FOCUS_COMFORT_INSET_X = 0.28;
+const FOCUS_COMFORT_INSET_Y = 0.24;
+const FOCUS_PAN_THRESHOLD = 16;
 
 export function CanvasStage({
   sourceUrl,
@@ -109,10 +118,11 @@ export function CanvasStage({
   zoomPercent,
   isPanMode,
   panOffset,
+  focusRequest,
   manualElementName,
   canCreateChildFromDraft,
   onSelectElement,
-  onToggleMergeSelection,
+  onClearSelection,
   onOpenElementContextMenu,
   onBoxDraftChange,
   onZoomByWheel,
@@ -136,11 +146,23 @@ export function CanvasStage({
   const gestureScaleRef = useRef(1);
   const onZoomByWheelRef = useRef(onZoomByWheel);
   const onZoomByGestureRef = useRef(onZoomByGesture);
+  const onPanChangeRef = useRef(onPanChange);
+  const focusPanTimerRef = useRef<number | null>(null);
+  const [isFocusPanning, setIsFocusPanning] = useState(false);
 
   useEffect(() => {
     onZoomByWheelRef.current = onZoomByWheel;
     onZoomByGestureRef.current = onZoomByGesture;
+    onPanChangeRef.current = onPanChange;
   });
+
+  useEffect(() => {
+    return () => {
+      if (focusPanTimerRef.current !== null) {
+        window.clearTimeout(focusPanTimerRef.current);
+      }
+    };
+  }, []);
 
   function beginDraw(event: DrawingEvent) {
     if (!source || tool === "select") {
@@ -239,7 +261,7 @@ export function CanvasStage({
       manualElementName={manualElementName}
       canCreateChildFromDraft={canCreateChildFromDraft}
       onSelectElement={onSelectElement}
-      onToggleMergeSelection={onToggleMergeSelection}
+      onClearSelection={onClearSelection}
       onOpenElementContextMenu={onOpenElementContextMenu}
       onBoxDraftChange={onBoxDraftChange}
       onManualElementNameChange={onManualElementNameChange}
@@ -332,6 +354,59 @@ export function CanvasStage({
     };
   }, [source]);
 
+  useEffect(() => {
+    if (!focusRequest || !source) {
+      return undefined;
+    }
+
+    const selectedElement = overlayElements.find((element) => element.id === focusRequest.elementId);
+    const canvasPanel = canvasPanelRef.current;
+    if (!selectedElement || !canvasPanel) {
+      return undefined;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      const artboard = canvasPanel.querySelector<HTMLElement>(".canvas-artboard");
+      const stage = canvasPanel.querySelector<HTMLElement>(".canvas-stage");
+      if (!artboard || !stage) {
+        return;
+      }
+
+      const artboardRect = artboard.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      if (artboardRect.width <= 0 || artboardRect.height <= 0 || stageRect.width <= 0 || stageRect.height <= 0) {
+        return;
+      }
+
+      const elementCenterX = selectedElement.bbox.x + selectedElement.bbox.w / 2;
+      const elementCenterY = selectedElement.bbox.y + selectedElement.bbox.h / 2;
+      const elementScreenX = artboardRect.left + (elementCenterX / source.width) * artboardRect.width;
+      const elementScreenY = artboardRect.top + (elementCenterY / source.height) * artboardRect.height;
+      const { deltaX, deltaY } = calculateFocusPanDelta({
+        artboardRect,
+        stageRect,
+        elementScreenX,
+        elementScreenY,
+      });
+
+      if (Math.abs(deltaX) <= FOCUS_PAN_THRESHOLD && Math.abs(deltaY) <= FOCUS_PAN_THRESHOLD) {
+        return;
+      }
+
+      setIsFocusPanning(true);
+      if (focusPanTimerRef.current !== null) {
+        window.clearTimeout(focusPanTimerRef.current);
+      }
+      focusPanTimerRef.current = window.setTimeout(() => {
+        setIsFocusPanning(false);
+        focusPanTimerRef.current = null;
+      }, 240);
+      onPanChangeRef.current(deltaX, deltaY);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [focusRequest?.elementId, focusRequest?.sequence, overlayElements, source]);
+
   return (
     <section
       ref={canvasPanelRef}
@@ -352,7 +427,7 @@ export function CanvasStage({
       >
         {artboard ? (
           <div
-            className="canvas-pan-viewport"
+            className={`canvas-pan-viewport${isFocusPanning ? " is-focus-panning" : ""}`}
             style={{
               transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomPercent / 80})`,
             }}
@@ -388,8 +463,8 @@ type CanvasArtboardProps = {
   manualElementName: string;
   canCreateChildFromDraft: boolean;
   hasUnsavedBoxEdit: boolean;
-  onSelectElement: (elementId: string) => void;
-  onToggleMergeSelection: (elementId: string) => void;
+  onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
+  onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onManualElementNameChange: (value: string) => void;
@@ -424,7 +499,7 @@ function CanvasArtboard({
   canCreateChildFromDraft,
   hasUnsavedBoxEdit,
   onSelectElement,
-  onToggleMergeSelection,
+  onClearSelection,
   onOpenElementContextMenu,
   onBoxDraftChange,
   onManualElementNameChange,
@@ -441,8 +516,17 @@ function CanvasArtboard({
   const artboardRef = useRef<HTMLDivElement | null>(null);
   const boxEditDragRef = useRef<BoxEditDrag | null>(null);
   const draftNameInputRef = useRef<HTMLInputElement | null>(null);
+  const lastPointerDrawingEventRef = useRef<{
+    phase: DrawingEventPhase;
+    clientX: number;
+    clientY: number;
+    at: number;
+  } | null>(null);
 
   function handleDrawingPointerDown(event: DrawingEvent) {
+    if (shouldIgnoreMouseFallbackEvent(event, "down")) {
+      return;
+    }
     if (isPanMode) {
       return;
     }
@@ -450,17 +534,34 @@ function CanvasArtboard({
       const isMergeToggle = event.shiftKey || event.ctrlKey || event.metaKey;
       const hitElement = findHitElement(event, isMergeToggle ? "smallest" : "front");
       if (!hitElement) {
+        if (!isMergeToggle && (selectedElementId || selectedElementIds.length > 0)) {
+          onClearSelection();
+        }
         return;
       }
       if (isMergeToggle) {
-        onToggleMergeSelection(hitElement.id);
+        onSelectElement(hitElement.id, "toggle");
       } else {
-        onSelectElement(hitElement.id);
+        onSelectElement(hitElement.id, "replace");
       }
       return;
     }
 
     onPointerDown(event);
+  }
+
+  function handleDrawingPointerMove(event: DrawingEvent) {
+    if (shouldIgnoreMouseFallbackEvent(event, "move")) {
+      return;
+    }
+    onPointerMove(event);
+  }
+
+  function handleDrawingPointerUp(event: DrawingEvent) {
+    if (shouldIgnoreMouseFallbackEvent(event, "up")) {
+      return;
+    }
+    onPointerUp(event);
   }
 
   function handleDrawingContextMenu(event: MouseEvent<HTMLDivElement>) {
@@ -475,8 +576,39 @@ function CanvasArtboard({
 
     event.preventDefault();
     event.stopPropagation();
-    onSelectElement(hitElement.id);
+    const shouldPreserveSelection =
+      selectedElementIds.length > 1
+      || (selectedElementIds.length > 0 && !selectedElementIds.includes(hitElement.id));
+    onSelectElement(
+      hitElement.id,
+      shouldPreserveSelection ? "focus" : "replace",
+    );
     onOpenElementContextMenu(hitElement.id, { x: event.clientX, y: event.clientY });
+  }
+
+  function shouldIgnoreMouseFallbackEvent(event: DrawingEvent, phase: DrawingEventPhase): boolean {
+    if (event.type.startsWith("pointer")) {
+      lastPointerDrawingEventRef.current = {
+        phase,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        at: Date.now(),
+      };
+      return false;
+    }
+
+    if (!event.type.startsWith("mouse")) {
+      return false;
+    }
+
+    const lastPointerEvent = lastPointerDrawingEventRef.current;
+    return Boolean(
+      lastPointerEvent
+        && lastPointerEvent.phase === phase
+        && Date.now() - lastPointerEvent.at < 500
+        && Math.abs(lastPointerEvent.clientX - event.clientX) < 1
+        && Math.abs(lastPointerEvent.clientY - event.clientY) < 1,
+    );
   }
 
   useEffect(() => {
@@ -727,7 +859,7 @@ function CanvasArtboard({
               {overlays.showNames ? (
                 <div
                   data-testid={`overlay-label-${element.id}`}
-                  className="overlay-label"
+                  className={overlayLabelClassName(element, source)}
                 >
                   {element.name}
                 </div>
@@ -902,12 +1034,12 @@ function CanvasArtboard({
         className="canvas-drawing-surface"
         data-testid="canvas-drawing-surface"
         onPointerDown={handleDrawingPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
+        onPointerMove={handleDrawingPointerMove}
+        onPointerUp={handleDrawingPointerUp}
         onContextMenu={handleDrawingContextMenu}
         onMouseDown={handleDrawingPointerDown}
-        onMouseMove={onPointerMove}
-        onMouseUp={onPointerUp}
+        onMouseMove={handleDrawingPointerMove}
+        onMouseUp={handleDrawingPointerUp}
       />
     </div>
   );
@@ -998,6 +1130,85 @@ function eventPointToImageWithin(
   };
 }
 
+function calculateFocusPanDelta({
+  artboardRect,
+  stageRect,
+  elementScreenX,
+  elementScreenY,
+}: {
+  artboardRect: ViewportRect;
+  stageRect: ViewportRect;
+  elementScreenX: number;
+  elementScreenY: number;
+}): { deltaX: number; deltaY: number } {
+  return {
+    deltaX: calculateFocusAxisDelta({
+      artStart: artboardRect.left,
+      artEnd: artboardRect.right,
+      artSize: artboardRect.width,
+      stageStart: stageRect.left,
+      stageEnd: stageRect.right,
+      stageSize: stageRect.width,
+      elementScreenPosition: elementScreenX,
+      comfortInset: FOCUS_COMFORT_INSET_X,
+      fitMode: "center",
+    }),
+    deltaY: calculateFocusAxisDelta({
+      artStart: artboardRect.top,
+      artEnd: artboardRect.bottom,
+      artSize: artboardRect.height,
+      stageStart: stageRect.top,
+      stageEnd: stageRect.bottom,
+      stageSize: stageRect.height,
+      elementScreenPosition: elementScreenY,
+      comfortInset: FOCUS_COMFORT_INSET_Y,
+      fitMode: "start",
+    }),
+  };
+}
+
+function calculateFocusAxisDelta({
+  artStart,
+  artEnd,
+  artSize,
+  stageStart,
+  stageEnd,
+  stageSize,
+  elementScreenPosition,
+  comfortInset,
+  fitMode,
+}: {
+  artStart: number;
+  artEnd: number;
+  artSize: number;
+  stageStart: number;
+  stageEnd: number;
+  stageSize: number;
+  elementScreenPosition: number;
+  comfortInset: number;
+  fitMode: "center" | "start";
+}): number {
+  const gutter = Math.min(FOCUS_EDGE_GUTTER, Math.max(8, stageSize * 0.08));
+  if (artSize <= stageSize - gutter * 2) {
+    const targetArtStart = fitMode === "center"
+      ? stageStart + (stageSize - artSize) / 2
+      : stageStart + gutter;
+    return targetArtStart - artStart;
+  }
+
+  const comfortStart = stageStart + stageSize * comfortInset;
+  const comfortEnd = stageEnd - stageSize * comfortInset;
+  const rawDelta =
+    elementScreenPosition < comfortStart
+      ? comfortStart - elementScreenPosition
+      : elementScreenPosition > comfortEnd
+        ? comfortEnd - elementScreenPosition
+        : 0;
+  const minDelta = stageEnd - gutter - artEnd;
+  const maxDelta = stageStart + gutter - artStart;
+  return clamp(rawDelta, minDelta, maxDelta);
+}
+
 function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperties {
   return {
     left: `${(box.x / source.width) * 100}%`,
@@ -1005,6 +1216,26 @@ function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperties {
     width: `${(box.w / source.width) * 100}%`,
     height: `${(box.h / source.height) * 100}%`,
   };
+}
+
+function overlayLabelClassName(element: WorkspaceElement, source: SourceMetadata): string {
+  const classes = ["overlay-label"];
+  const relativeWidth = element.bbox.w / source.width;
+  const relativeHeight = element.bbox.h / source.height;
+  const relativeX = element.bbox.x / source.width;
+  const relativeY = element.bbox.y / source.height;
+
+  if (relativeWidth < 0.09 || relativeHeight < 0.07) {
+    classes.push("is-compact");
+  }
+  if (relativeX > 0.72) {
+    classes.push("is-align-right");
+  }
+  if (relativeY < 0.08) {
+    classes.push("is-below");
+  }
+
+  return classes.join(" ");
 }
 
 function draftEditorStyle(box: Box, source: SourceMetadata): CSSProperties {

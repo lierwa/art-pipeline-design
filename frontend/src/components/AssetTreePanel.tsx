@@ -1,6 +1,13 @@
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { CSSProperties, MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 
-import { SelectedElementIds, thumbnailUrl, WorkspaceElement } from "../workspace";
+import {
+  ElementSelectionMode,
+  ElementSelectionOptions,
+  SelectedElementIds,
+  thumbnailUrl,
+  WorkspaceElement,
+} from "../workspace";
 
 type AssetTreePanelProps = {
   elements: WorkspaceElement[];
@@ -9,8 +16,11 @@ type AssetTreePanelProps = {
   workspaceRunId: string | null;
   assetCacheKey: number;
   showRejected: boolean;
-  onSelectElement: (elementId: string) => void;
-  onToggleMergeSelection: (elementId: string) => void;
+  onSelectElement: (
+    elementId: string,
+    mode?: ElementSelectionMode,
+    options?: ElementSelectionOptions,
+  ) => void;
   onToggleShowRejected: () => void;
   onToggleVisibility: (elementId: string) => void;
 };
@@ -28,7 +38,6 @@ export function AssetTreePanel({
   assetCacheKey,
   showRejected,
   onSelectElement,
-  onToggleMergeSelection,
   onToggleShowRejected,
   onToggleVisibility,
 }: AssetTreePanelProps) {
@@ -38,7 +47,8 @@ export function AssetTreePanel({
   );
   const tree = useMemo(() => buildAssetTree(displayElements), [displayElements]);
   const summary = useMemo(() => summarizeAssets(displayElements), [displayElements]);
-  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [expandedIds, setExpandedIds] = useState<string[]>(() => collectExpandableIds(tree));
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
 
   useEffect(() => {
     setExpandedIds((current) => {
@@ -49,6 +59,17 @@ export function AssetTreePanel({
   }, [tree]);
 
   const expandedSet = new Set(expandedIds);
+
+  useEffect(() => {
+    if (!selectedElementId) {
+      return;
+    }
+    rowRefs.current.get(selectedElementId)?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [selectedElementId]);
 
   function toggleExpanded(elementId: string) {
     setExpandedIds((current) =>
@@ -62,11 +83,19 @@ export function AssetTreePanel({
     const element = node.element;
     const childCount = node.children.length;
     const isExpanded = expandedSet.has(element.id);
-    const isSelected = selectedElementId === element.id;
+    const isFocused = selectedElementId === element.id;
+    const isSelected = selectedElementIds.includes(element.id);
     const canAct = isActiveCandidate(element);
-    const canMerge = canAct && element.visible;
     const labelId = `asset-tree-label-${element.id}`;
     const thumbUrl = thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId);
+
+    function handleSelect(event: MouseEvent<HTMLButtonElement>) {
+      onSelectElement(
+        element.id,
+        event.shiftKey || event.metaKey || event.ctrlKey ? "toggle" : "replace",
+        { focusCanvas: true },
+      );
+    }
 
     return (
       <div
@@ -76,7 +105,19 @@ export function AssetTreePanel({
         aria-selected={isSelected}
         aria-expanded={childCount > 0 ? isExpanded : undefined}
         aria-labelledby={labelId}
-        className={`asset-tree-item${isSelected ? " is-selected" : ""}${!canAct ? " is-display-only" : ""}`}
+        ref={(node) => {
+          if (node) {
+            rowRefs.current.set(element.id, node);
+          } else {
+            rowRefs.current.delete(element.id);
+          }
+        }}
+        className={[
+          "asset-tree-item",
+          isSelected ? "is-selected" : "",
+          isFocused ? "is-focused" : "",
+          !canAct ? "is-display-only" : "",
+        ].filter(Boolean).join(" ")}
       >
           <div
             className="asset-tree-row"
@@ -91,23 +132,12 @@ export function AssetTreePanel({
           >
             {childCount > 0 ? (isExpanded ? "v" : ">") : ""}
           </button>
-          {canMerge ? (
-            <label className="asset-merge-checkbox">
-              <input
-                aria-label={`Select ${element.name} for merge`}
-                type="checkbox"
-                checked={selectedElementIds.includes(element.id)}
-                onChange={() => onToggleMergeSelection(element.id)}
-              />
-            </label>
-          ) : (
-            <span className="asset-merge-spacer" aria-hidden="true" />
-          )}
           <button
             type="button"
             className="asset-tree-select"
-            aria-label={`Select ${element.name} asset ${element.name} thumbnail`}
-            onClick={() => onSelectElement(element.id)}
+            aria-label={`Select ${element.name}`}
+            aria-pressed={isSelected}
+            onClick={handleSelect}
           >
             {thumbUrl ? (
               <img
@@ -120,25 +150,22 @@ export function AssetTreePanel({
             )}
             <span className="asset-tree-copy">
               <strong id={labelId}>{element.name}</strong>
-              <span>{formatConfidence(element.confidence)}</span>
+              <span>{formatConfidence(element.confidence)} · {formatOriginLabel(element)}</span>
             </span>
             <span className="asset-tree-badges" aria-label={`${element.name} metadata`}>
-              <span className={`asset-badge ${statusToneClass(element.status)}`}>{element.status}</span>
-              {element.sourceProvider ? (
-                <span className="asset-badge asset-badge-source">{element.sourceProvider}</span>
-              ) : null}
+              <span className={`asset-badge ${statusToneClass(element.status)}`}>{formatStatusLabel(element.status)}</span>
             </span>
           </button>
           {canAct ? (
-            <label className="asset-visibility-toggle">
-              <input
-                aria-label={`Toggle visibility for ${element.name}`}
-                type="checkbox"
-                checked={element.visible}
-                onChange={() => onToggleVisibility(element.id)}
-              />
-              <span>{element.visible ? "Visible" : "Hidden"}</span>
-            </label>
+            <button
+              type="button"
+              className={`asset-visibility-toggle${element.visible ? " is-visible" : ""}`}
+              aria-label={`${element.visible ? "Hide" : "Show"} ${element.name}`}
+              aria-pressed={element.visible}
+              onClick={() => onToggleVisibility(element.id)}
+            >
+              {element.visible ? <Eye size={16} strokeWidth={2.3} /> : <EyeOff size={16} strokeWidth={2.3} />}
+            </button>
           ) : null}
         </div>
         {childCount > 0 && isExpanded ? (
@@ -278,6 +305,53 @@ function isAccepted(element: WorkspaceElement): boolean {
 
 function formatConfidence(confidence: number | null | undefined): string {
   return typeof confidence === "number" ? confidence.toFixed(2) : "No score";
+}
+
+function formatOriginLabel(element: WorkspaceElement): string {
+  if (element.status === "edited") {
+    return "Edited";
+  }
+  if (element.status === "child") {
+    return "Manual child";
+  }
+  if (element.status === "merged") {
+    return "Merged";
+  }
+  if (element.sourceProvider) {
+    return "Model";
+  }
+  if (element.source === "manual") {
+    return "Manual";
+  }
+  return "Workspace";
+}
+
+function formatStatusLabel(status: WorkspaceElement["status"]): string {
+  if (["accepted", "exported", "extract_ready", "extracted", "repair_complete"].includes(status)) {
+    return "Accepted";
+  }
+  if (status === "rejected") {
+    return "Rejected";
+  }
+  if (status === "edited") {
+    return "Edited";
+  }
+  if (status === "child") {
+    return "Child";
+  }
+  if (status === "merged") {
+    return "Merged";
+  }
+  if (status === "split_parent") {
+    return "Split source";
+  }
+  if (status === "repair_pending") {
+    return "Repairing";
+  }
+  if (status === "qa_failed") {
+    return "Needs fix";
+  }
+  return "Needs review";
 }
 
 function statusToneClass(status: WorkspaceElement["status"]): string {

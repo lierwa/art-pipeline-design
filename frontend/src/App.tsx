@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 
 import { CanvasToolbar } from "./components/CanvasToolbar";
@@ -29,6 +29,8 @@ import {
   DEFAULT_OVERLAYS,
   DraftRegion,
   ElementEditorDraft,
+  ElementSelectionMode,
+  ElementSelectionOptions,
   EMPTY_STATE,
   ExportSummary,
   missingMaskUrl,
@@ -144,6 +146,16 @@ type AssetContextMenuState = {
   y: number;
 };
 
+type CanvasFocusRequest = {
+  elementId: string;
+  sequence: number;
+};
+
+type MergeDraft = {
+  elementIds: string[];
+  label: string;
+};
+
 export async function runWorkspaceDetection(
   runId: string | null = null,
   fetcher: Fetcher = fetch,
@@ -250,6 +262,7 @@ export function App() {
   const [isPanMode, setIsPanMode] = useState(false);
   const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [canvasPan, setCanvasPan] = useState({ x: 0, y: 0 });
+  const [canvasFocusRequest, setCanvasFocusRequest] = useState<CanvasFocusRequest | null>(null);
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
   const [missingMaskRegion, setMissingMaskRegion] = useState<DraftRegion | null>(null);
   const [manualElementName, setManualElementName] = useState("Manual Element");
@@ -263,6 +276,7 @@ export function App() {
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [assetContextMenu, setAssetContextMenu] = useState<AssetContextMenuState | null>(null);
+  const [mergeDraft, setMergeDraft] = useState<MergeDraft | null>(null);
   const [workspaceHistory, setWorkspaceHistory] = useState(() =>
     createOperationHistory<WorkspaceHistorySnapshot>(),
   );
@@ -397,6 +411,14 @@ export function App() {
       && selectedMergeableElementCount >= 1
       && !hasUnsavedGeometryChanges,
   );
+  const mergeDraftElements = useMemo(() => {
+    if (!mergeDraft) {
+      return [];
+    }
+    return mergeDraft.elementIds
+      .map((elementId) => workspace.elements.find((element) => element.id === elementId))
+      .filter((element): element is WorkspaceElement => Boolean(element));
+  }, [mergeDraft, workspace.elements]);
   const selectedRepairMetadata = selectedElement
     ? repairMetadataByElementId[selectedElement.id] ?? null
     : null;
@@ -710,7 +732,7 @@ export function App() {
       clearWorkspaceHistory();
       const firstElementId = nextState.elements.find(isActionableElement)?.id ?? null;
       setSelectedElementId(firstElementId);
-      setSelectedElementIds([]);
+      setSelectedElementIds(firstElementId ? [firstElementId] : []);
       setExportSummary(null);
       setStatus(nextState.source ? "Workspace loaded." : "Ready");
     } catch (loadError) {
@@ -830,21 +852,22 @@ export function App() {
       );
     });
     setAssetCacheKey((current) => current + 1);
-    setSelectedElementId((current) => {
-      const requestedSelectionId = nextSelectionId !== undefined ? nextSelectionId : current;
-      if (
-        requestedSelectionId
-        && normalizedActionableElements.some((element) => element.id === requestedSelectionId)
-      ) {
-        return requestedSelectionId;
-      }
-
-      return normalizedActionableElements[0]?.id ?? null;
-    });
+    const requestedSelectionId = nextSelectionId !== undefined ? nextSelectionId : selectedElementId;
+    const resolvedSelectionId =
+      requestedSelectionId
+      && normalizedActionableElements.some((element) => element.id === requestedSelectionId)
+        ? requestedSelectionId
+        : normalizedActionableElements[0]?.id ?? null;
+    setSelectedElementId(resolvedSelectionId);
     setSelectedElementIds((current) => {
       const existingIds = new Set(normalizedActionableElements.map((element) => element.id));
       const preserved = current.filter((elementId) => existingIds.has(elementId));
-      return preserved;
+      if (preserved.length > 0) {
+        return resolvedSelectionId && !preserved.includes(resolvedSelectionId)
+          ? [...preserved, resolvedSelectionId]
+          : preserved;
+      }
+      return resolvedSelectionId ? [resolvedSelectionId] : [];
     });
     setStatus(nextStatus);
   }
@@ -1505,22 +1528,65 @@ export function App() {
     }));
   }
 
-  function handleSelectElement(elementId: string) {
+  function handleSelectElement(
+    elementId: string,
+    mode: ElementSelectionMode = "replace",
+    options: ElementSelectionOptions = {},
+  ) {
     if (!workspace.elements.some((element) => element.id === elementId && isDisplayableElement(element))) {
       return;
     }
+
+    if (mode === "focus") {
+      setSelectedElementId(elementId);
+      if (options.focusCanvas) {
+        requestCanvasFocus(elementId);
+      }
+      return;
+    }
+
+    if (mode === "toggle") {
+      const nextSelectedElementIds = selectedElementIds.includes(elementId)
+        ? selectedElementIds.filter((currentId) => currentId !== elementId)
+        : [...selectedElementIds, elementId];
+      const nextFocusedElementId = nextSelectedElementIds.includes(elementId)
+        ? elementId
+        : nextSelectedElementIds[nextSelectedElementIds.length - 1] ?? null;
+      setSelectedElementIds(nextSelectedElementIds);
+      setSelectedElementId(nextFocusedElementId);
+      if (options.focusCanvas && nextFocusedElementId) {
+        requestCanvasFocus(nextFocusedElementId);
+      }
+      return;
+    }
+
     setSelectedElementId(elementId);
+    setSelectedElementIds([elementId]);
+    if (options.focusCanvas) {
+      requestCanvasFocus(elementId);
+    }
+  }
+
+  function requestCanvasFocus(elementId: string) {
+    setCanvasFocusRequest((current) => ({
+      elementId,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+  }
+
+  function handleClearSelection() {
+    setSelectedElementId(null);
+    setSelectedElementIds([]);
+    setEditingElementId(null);
+    setAssetContextMenu(null);
+    setElementDraft(null);
   }
 
   function handleMergeSelectionToggle(elementId: string) {
     if (!workspace.elements.some((element) => element.id === elementId && isMergeableElement(element))) {
       return;
     }
-    setSelectedElementIds((current) =>
-      current.includes(elementId)
-        ? current.filter((currentId) => currentId !== elementId)
-        : [...current, elementId],
-    );
+    handleSelectElement(elementId, "toggle");
   }
 
   function handleOpenElementContextMenu(
@@ -1998,14 +2064,14 @@ export function App() {
   }
 
   async function handleMergeSelectedElements() {
-    await mergeElementsByIds(selectedElementIds);
+    beginMergeElementsByIds(selectedElementIds);
   }
 
-  async function handleMergeWithSelection(elementId: string) {
-    await mergeElementsByIds([...selectedElementIds, elementId]);
+  function handleMergeWithSelection(elementId: string) {
+    beginMergeElementsByIds([...selectedElementIds, elementId]);
   }
 
-  async function mergeElementsByIds(elementIds: string[]) {
+  function beginMergeElementsByIds(elementIds: string[]) {
     if (hasUnsavedGeometryChanges) {
       return;
     }
@@ -2017,21 +2083,51 @@ export function App() {
       return;
     }
 
+    const elementsToMerge = mergeElementIds
+      .map((elementId) => workspace.elements.find((element) => element.id === elementId))
+      .filter((element): element is WorkspaceElement => Boolean(element));
+    setMergeDraft({
+      elementIds: mergeElementIds,
+      label: buildDefaultMergeLabel(elementsToMerge),
+    });
+    setError(null);
+    setStatus("Name the merged asset before creating it.");
+  }
+
+  async function confirmMergeDraft() {
+    if (!mergeDraft || hasUnsavedGeometryChanges) {
+      return;
+    }
+
+    const mergeElementIds = Array.from(new Set(mergeDraft.elementIds)).filter((elementId) =>
+      workspace.elements.some((element) => element.id === elementId && isMergeableElement(element)),
+    );
+    if (mergeElementIds.length < 2) {
+      setMergeDraft(null);
+      return;
+    }
+
+    const label = mergeDraft.label.trim() || DEFAULT_MERGE_LABEL;
     setError(null);
     setStatus("Merging selected elements...");
 
     try {
       const payload = await mergeWorkspaceElements({
         elementIds: mergeElementIds,
-        label: DEFAULT_MERGE_LABEL,
+        label,
       }, activeRunId);
+      setMergeDraft(null);
       applyWorkspaceMutation(payload.state, "Merged selected elements.", payload.element.id);
       void refreshWorkspaceRuns();
-      setSelectedElementIds([]);
     } catch (mergeError) {
       setStatus("Merge failed.");
       setError(mergeError instanceof Error ? mergeError.message : "Could not merge elements.");
     }
+  }
+
+  function cancelMergeDraft() {
+    setMergeDraft(null);
+    setStatus("Merge cancelled.");
   }
 
   async function handleApplySplit() {
@@ -2197,10 +2293,11 @@ export function App() {
             zoomPercent={canvasZoom}
             isPanMode={isPanMode || isSpacePanning}
             panOffset={canvasPan}
+            focusRequest={canvasFocusRequest}
             manualElementName={manualElementName}
             canCreateChildFromDraft={selectedElement !== null}
             onSelectElement={handleSelectElement}
-            onToggleMergeSelection={handleMergeSelectionToggle}
+            onClearSelection={handleClearSelection}
             onOpenElementContextMenu={handleOpenElementContextMenu}
             onBoxDraftChange={handleBoxDraftChange}
             onZoomByWheel={handleCanvasWheelZoom}
@@ -2289,7 +2386,6 @@ export function App() {
             assetCacheKey={assetCacheKey}
             showRejected={overlays.showRejected}
             onSelectElement={handleSelectElement}
-            onToggleMergeSelection={handleMergeSelectionToggle}
             onToggleShowRejected={() => handleOverlayToggle("showRejected")}
             onToggleVisibility={(elementId) => void handleVisibilityToggle(elementId)}
           />
@@ -2332,6 +2428,15 @@ export function App() {
         isSaving={isSavingState}
         exportSummary={exportSummary}
       />
+      {mergeDraft ? (
+        <MergeAssetDialog
+          elements={mergeDraftElements}
+          label={mergeDraft.label}
+          onLabelChange={(label) => setMergeDraft((current) => current ? { ...current, label } : current)}
+          onCancel={cancelMergeDraft}
+          onConfirm={() => void confirmMergeDraft()}
+        />
+      ) : null}
       {assetContextMenu && contextMenuElement && isActionableElement(contextMenuElement) ? (
         <AssetContextMenu
           x={assetContextMenu.x}
@@ -2363,6 +2468,65 @@ export function App() {
           onMerge={() => void handleMergeSelectedElements()}
         />
       ) : null}
+    </div>
+  );
+}
+
+function MergeAssetDialog({
+  elements,
+  label,
+  onLabelChange,
+  onCancel,
+  onConfirm,
+}: {
+  elements: WorkspaceElement[];
+  label: string;
+  onLabelChange: (label: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onConfirm();
+  }
+
+  return (
+    <div className="operation-dialog-backdrop" role="presentation">
+      <form
+        aria-label="Name merged asset"
+        aria-modal="true"
+        className="operation-dialog"
+        role="dialog"
+        onSubmit={handleSubmit}
+      >
+        <div className="operation-dialog-header">
+          <span>Merge assets</span>
+          <strong>{elements.length} selected</strong>
+        </div>
+        <label className="operation-dialog-field">
+          <span>Merged asset name</span>
+          <input
+            autoFocus
+            aria-label="Merged asset name"
+            value={label}
+            onChange={(event) => onLabelChange(event.target.value)}
+          />
+        </label>
+        <div className="operation-dialog-preview" aria-label="Assets to merge">
+          {elements.slice(0, 4).map((element) => (
+            <span key={element.id}>{element.label ?? element.name}</span>
+          ))}
+          {elements.length > 4 ? <span>+{elements.length - 4} more</span> : null}
+        </div>
+        <div className="operation-dialog-actions">
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="primary-action">
+            Create merged asset
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -2427,6 +2591,23 @@ function isAcceptedStatus(status: WorkspaceElement["status"]): boolean {
 
 function canRejectStatus(status: WorkspaceElement["status"]): boolean {
   return ["proposal", "model_detected", "edited", "child", "merged"].includes(status);
+}
+
+function buildDefaultMergeLabel(elements: WorkspaceElement[]): string {
+  const names = elements
+    .map((element) => (element.label ?? element.name).trim())
+    .filter(Boolean);
+  const uniqueNames = Array.from(new Set(names));
+  if (uniqueNames.length === 0) {
+    return DEFAULT_MERGE_LABEL;
+  }
+  if (uniqueNames.length === 1) {
+    return `${uniqueNames[0]} group`;
+  }
+  if (uniqueNames.length === 2) {
+    return `${uniqueNames[0]} + ${uniqueNames[1]}`;
+  }
+  return `${uniqueNames[0]} group`;
 }
 
 function isRejectedElement(element: WorkspaceElement): boolean {

@@ -203,6 +203,12 @@ export type DraftRegion = {
   bbox: Box;
 };
 
+export type ElementSelectionMode = "replace" | "toggle" | "focus";
+
+export type ElementSelectionOptions = {
+  focusCanvas?: boolean;
+};
+
 export type SelectedElementIds = string[];
 
 export const EMPTY_STATE: WorkspaceState = {

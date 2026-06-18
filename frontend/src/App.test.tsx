@@ -462,6 +462,22 @@ function setCanvasRect(surface: HTMLElement) {
   });
 }
 
+function mockRect(element: Element, rect: { left: number; top: number; width: number; height: number }) {
+  vi.spyOn(element, "getBoundingClientRect").mockReturnValue({
+    x: rect.left,
+    y: rect.top,
+    top: rect.top,
+    left: rect.left,
+    right: rect.left + rect.width,
+    bottom: rect.top + rect.height,
+    width: rect.width,
+    height: rect.height,
+    toJSON() {
+      return {};
+    },
+  });
+}
+
 async function drawRectangle(surface: HTMLElement, start: { x: number; y: number }, end: { x: number; y: number }) {
   setCanvasRect(surface);
   fireEvent.mouseDown(surface, { clientX: start.x, clientY: start.y, button: 0 });
@@ -476,6 +492,22 @@ function openAssetContextMenu(point: { x: number; y: number } = { x: 100, y: 120
     clientY: point.y,
   });
   return screen.getByRole("menu", { name: /asset context menu/i });
+}
+
+function assetSelectButton(name: RegExp) {
+  return screen.getByRole("button", { name });
+}
+
+function toggleAssetSelection(name: RegExp) {
+  fireEvent.click(assetSelectButton(name), { shiftKey: true });
+}
+
+async function confirmMergeDialog(user: ReturnType<typeof userEvent.setup>, label: string) {
+  const dialog = await screen.findByRole("dialog", { name: /name merged asset/i });
+  const input = within(dialog).getByRole("textbox", { name: /merged asset name/i });
+  await user.clear(input);
+  await user.type(input, label);
+  await user.click(within(dialog).getByRole("button", { name: /create merged asset/i }));
 }
 
 describe("App", () => {
@@ -606,7 +638,7 @@ describe("App", () => {
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.asset-tree-panel\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto\s+minmax\(0,\s*1fr\);/);
     expect(stylesheet).toMatch(/\.asset-tree-select\s*\{[\s\S]*min-height:\s*34px;/);
     expect(stylesheet).toMatch(/\.asset-tree-badges\s*\{[\s\S]*grid-column:\s*auto;/);
-    expect(stylesheet).toMatch(/\.asset-visibility-toggle\s+span\s*\{[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
+    expect(stylesheet).toMatch(/\.asset-visibility-toggle\s*\{[\s\S]*width:\s*28px;[\s\S]*height:\s*28px;/);
     expect(stylesheet).toMatch(/\.canvas-overlay-switches\s+\.overlay-toggle\s+input\s*\{[\s\S]*opacity:\s*0;/);
     expect(stylesheet).toMatch(/\.asset-context-menu\s*\{[\s\S]*position:\s*fixed;[\s\S]*z-index:\s*80;/);
     expect(stylesheet).toMatch(/\.asset-context-menu\s+button\s*\{[\s\S]*justify-content:\s*flex-start;/);
@@ -1314,7 +1346,6 @@ describe("App", () => {
   });
 
   it("renders a merge preview outline for multiple selected assets", async () => {
-    const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(mergeSourceState);
@@ -1328,12 +1359,11 @@ describe("App", () => {
 
       expect(screen.queryByTestId("merge-preview-outline")).not.toBeInTheDocument();
 
-      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
-      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+      toggleAssetSelection(/select region 2/i);
 
       expect(screen.getByTestId("merge-preview-outline")).toHaveClass("overlay-box-merge-preview");
 
-      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+      toggleAssetSelection(/select region 2/i);
 
       expect(screen.queryByTestId("merge-preview-outline")).not.toBeInTheDocument();
     } finally {
@@ -1378,11 +1408,10 @@ describe("App", () => {
 
       setCanvasRect(screen.getByTestId("canvas-artboard"));
       const surface = screen.getByTestId("canvas-drawing-surface");
-      fireEvent.mouseDown(surface, { clientX: 100, clientY: 120, shiftKey: true, button: 0 });
       fireEvent.mouseDown(surface, { clientX: 270, clientY: 130, shiftKey: true, button: 0 });
 
-      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).toBeChecked();
-      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).toBeChecked();
+      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "true");
       const contextMenu = openAssetContextMenu();
       expect(within(contextMenu).getByRole("menuitem", { name: /merge selected/i })).toBeEnabled();
     } finally {
@@ -1404,15 +1433,131 @@ describe("App", () => {
 
       setCanvasRect(screen.getByTestId("canvas-artboard"));
       const surface = screen.getByTestId("canvas-drawing-surface");
-      fireEvent.mouseDown(surface, { clientX: 100, clientY: 100, shiftKey: true, button: 0 });
       fireEvent.mouseDown(surface, { clientX: 250, clientY: 250, shiftKey: true, button: 0 });
 
-      expect(screen.getByRole("checkbox", { name: /select basket for merge/i })).toBeChecked();
-      expect(screen.getByRole("checkbox", { name: /select towel for merge/i })).toBeChecked();
+      expect(screen.getByRole("treeitem", { name: /basket/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("treeitem", { name: /towel/i })).toHaveAttribute("aria-selected", "true");
       expect(within(openAssetContextMenu({ x: 250, y: 250 })).getByRole(
         "menuitem",
         { name: /merge selected/i },
       )).toBeEnabled();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("clears selection when clicking empty canvas space in select mode", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByTestId("overlay-region-element_001")).toHaveClass("is-selected");
+
+      setCanvasRect(screen.getByTestId("canvas-artboard"));
+      fireEvent.mouseDown(screen.getByTestId("canvas-drawing-surface"), {
+        clientX: 590,
+        clientY: 440,
+        button: 0,
+      });
+
+      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByTestId("overlay-region-element_001")).not.toHaveClass("is-selected");
+      expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("only pans the canvas for asset-tree focus, not direct canvas selection", async () => {
+    const user = userEvent.setup();
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+    HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(mergeSourceState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+      scrollIntoView.mockClear();
+
+      const artboard = screen.getByTestId("canvas-artboard");
+      const stage = screen.getByTestId("canvas-area").querySelector(".canvas-stage");
+      const viewport = screen.getByTestId("canvas-area").querySelector<HTMLElement>(".canvas-pan-viewport");
+      if (!stage || !viewport) {
+        throw new Error("Canvas stage was not rendered.");
+      }
+
+      mockRect(artboard, { left: 0, top: 0, width: 600, height: 450 });
+      mockRect(stage, { left: 0, top: 0, width: 300, height: 300 });
+
+      fireEvent.mouseDown(screen.getByTestId("canvas-drawing-surface"), {
+        clientX: 270,
+        clientY: 130,
+        button: 0,
+      });
+      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "true");
+      expect(viewport.style.transform).toBe("translate(0px, 0px) scale(1)");
+
+      await user.click(assetSelectButton(/select region 2/i));
+
+      await waitFor(() => {
+        expect(viewport).toHaveClass("is-focus-panning");
+        expect(viewport.style.transform).toContain("translate(-");
+      });
+      expect(scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ behavior: "smooth" }),
+      );
+    } finally {
+      if (originalScrollIntoView) {
+        HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      }
+      restoreFetch();
+    }
+  });
+
+  it("recenters a fully visible artboard instead of over-panning to an asset center", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(loadedState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      const artboard = screen.getByTestId("canvas-artboard");
+      const stage = screen.getByTestId("canvas-area").querySelector(".canvas-stage");
+      const viewport = screen.getByTestId("canvas-area").querySelector<HTMLElement>(".canvas-pan-viewport");
+      if (!stage || !viewport) {
+        throw new Error("Canvas stage was not rendered.");
+      }
+
+      mockRect(artboard, { left: 500, top: 400, width: 600, height: 450 });
+      mockRect(stage, { left: 0, top: 0, width: 900, height: 700 });
+
+      await user.click(assetSelectButton(/select region 1/i));
+
+      await waitFor(() => {
+        expect(viewport.style.transform).toBe("translate(-350px, -376px) scale(1)");
+      });
     } finally {
       restoreFetch();
     }
@@ -1439,12 +1584,11 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      let contextMenu = openAssetContextMenu({ x: 100, y: 100 });
-      await user.click(within(contextMenu).getByRole("menuitem", { name: /select for merge/i }));
-
-      contextMenu = openAssetContextMenu({ x: 250, y: 250 });
+      openAssetContextMenu({ x: 100, y: 100 });
+      const contextMenu = openAssetContextMenu({ x: 250, y: 250 });
       expect(within(contextMenu).getByText("towel")).toBeInTheDocument();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /merge with selected/i }));
+      await confirmMergeDialog(user, "Fixture group");
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -1452,7 +1596,7 @@ describe("App", () => {
           method: "POST",
           body: JSON.stringify({
             elementIds: ["element_001", "element_002"],
-            label: "Merged Asset",
+            label: "Fixture group",
           }),
         }),
       );
@@ -1494,7 +1638,7 @@ describe("App", () => {
     try {
       render(<App />);
 
-      await user.click(await screen.findByRole("button", { name: /select cabinet asset/i }));
+      await user.click(await screen.findByRole("button", { name: /select cabinet/i }));
       expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
 
       const contextMenu = openAssetContextMenu({ x: 250, y: 150 });
@@ -1544,13 +1688,13 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
-      await user.click(await screen.findByRole("button", { name: /select rejected vase asset/i }));
-      expect(screen.getByText("rejected")).toBeInTheDocument();
+      await user.click(await screen.findByRole("button", { name: /select rejected vase/i }));
+      expect(screen.getByText("Rejected")).toBeInTheDocument();
 
       await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
 
       expect(screen.queryByText("Rejected Vase")).not.toBeInTheDocument();
-      expect(screen.queryByText("rejected")).not.toBeInTheDocument();
+      expect(screen.queryByText("Rejected")).not.toBeInTheDocument();
       expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
     } finally {
       restoreFetch();
@@ -1570,7 +1714,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       expect(screen.queryByText("Legacy Reject")).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /select legacy reject asset/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /select legacy reject/i })).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
       expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
     } finally {
@@ -1599,11 +1743,11 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
-      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+      toggleAssetSelection(/select region 2/i);
 
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /merge selected/i }));
+      await confirmMergeDialog(user, "Fixture group");
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -1611,10 +1755,11 @@ describe("App", () => {
           method: "POST",
           body: JSON.stringify({
             elementIds: ["element_001", "element_002"],
-            label: "Merged Asset",
+            label: "Fixture group",
           }),
         }),
       );
+      expect(await screen.findByAltText("Fixture group thumbnail")).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1669,7 +1814,7 @@ describe("App", () => {
         expect.objectContaining({ method: "POST" }),
       );
       expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
-      expect(screen.getByText("model_detected")).toBeInTheDocument();
+      expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
       expect(screen.getByTestId("overlay-label-element_010")).toHaveTextContent("cabinet");
     } finally {
       restoreFetch();
@@ -1777,9 +1922,8 @@ describe("App", () => {
 
       expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
       expect(screen.getByTestId("overlay-label-element_010")).toHaveTextContent("cabinet");
-      expect(screen.getByText("rejected")).toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /select cabinet for merge/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /toggle visibility for cabinet/i })).not.toBeInTheDocument();
+      expect(screen.getByText("Rejected")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /hide cabinet/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /^accept$/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /^reject$/i })).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
@@ -1934,9 +2078,9 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const nameField = screen.getByLabelText(/element name/i);
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
-      const visibilityField = screen.getByRole("checkbox", { name: /element visible/i });
+      const nameField = await screen.findByLabelText(/element name/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
+      const visibilityField = await screen.findByRole("checkbox", { name: /element visible/i });
 
       fireEvent.change(nameField, { target: { value: "Hero Shelf" } });
       fireEvent.change(bboxWidthField, { target: { value: "34" } });
@@ -1992,7 +2136,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("checkbox", { name: /element visible/i }));
+      await user.click(await screen.findByRole("checkbox", { name: /element visible/i }));
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -2000,7 +2144,7 @@ describe("App", () => {
         expect.objectContaining({ method: "PATCH" }),
       );
       expect(patchRequest).toEqual({ visible: false });
-      expect(screen.getAllByText("accepted").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
       expect(screen.getByRole("button", { name: /^extract$/i })).not.toBeDisabled();
     } finally {
       restoreFetch();
@@ -2044,7 +2188,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
       fireEvent.change(bboxWidthField, { target: { value: "34" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
@@ -2160,12 +2304,12 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
-      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
-      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
-      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
+      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "false");
+      toggleAssetSelection(/select region 2/i);
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /merge selected/i }));
+      await confirmMergeDialog(user, "Fixture group");
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -2173,7 +2317,7 @@ describe("App", () => {
           method: "POST",
           body: JSON.stringify({
             elementIds: ["element_001", "element_002"],
-            label: "Merged Asset",
+            label: "Fixture group",
           }),
         }),
       );
@@ -2207,13 +2351,12 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
+      toggleAssetSelection(/select region 2/i);
       const bboxWidthField = screen.getByLabelText(/bbox width/i);
       await user.clear(bboxWidthField);
       await user.type(bboxWidthField, "34");
-      await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
-      await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
 
-      const contextMenu = openAssetContextMenu();
+      const contextMenu = openAssetContextMenu({ x: 270, y: 130 });
       const mergeButton = within(contextMenu).getByRole("menuitem", { name: /merge selected/i });
       expect(mergeButton).toBeDisabled();
 
@@ -2254,14 +2397,14 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      expect(screen.queryByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /select region 2/i })).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/merge label/i)).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
   });
 
-  it("keeps browse selection separate from merge selection", async () => {
+  it("keeps single selection from enabling merge until another asset is added", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -2275,12 +2418,16 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("button", { name: /region 2 thumbnail/i }));
+      await user.click(screen.getByRole("button", { name: /select region 2/i }));
 
       expect(screen.getByLabelText(/element name/i)).toHaveValue("Region 2");
       expect(screen.getByRole("button", { name: /^merge$/i })).toBeDisabled();
-      expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
-      expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
+      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "true");
+
+      toggleAssetSelection(/select region 1/i);
+
+      expect(screen.getByRole("button", { name: /^merge$/i })).toBeEnabled();
     } finally {
       restoreFetch();
     }
@@ -2364,12 +2511,48 @@ describe("App", () => {
 
       expect(screen.queryByAltText("Region 1 thumbnail")).not.toBeInTheDocument();
       expect(screen.queryByAltText("Region 2 thumbnail")).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /toggle visibility for region 1/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /select region 1/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /select region 2/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /hide region 1/i })).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-label-element_001")).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-label-element_002")).not.toBeInTheDocument();
       expect(screen.getByTestId("overlay-region-element_003")).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("uses compact single-line label placement for narrow edge assets", async () => {
+    const edgeLabelState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          id: "element_edge",
+          name: "very long bottle label",
+          label: "very long bottle label",
+          bbox: { x: 100, y: 2, w: 8, h: 18 },
+          canvas: { x: 100, y: 2, w: 8, h: 18 },
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(edgeLabelState);
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const label = await screen.findByTestId("overlay-label-element_edge");
+      expect(label).toHaveClass("overlay-label");
+      expect(label).toHaveClass("is-compact");
+      expect(label).toHaveClass("is-align-right");
+      expect(label).toHaveClass("is-below");
+      expect(label).toHaveTextContent("very long bottle label");
     } finally {
       restoreFetch();
     }
@@ -2405,7 +2588,7 @@ describe("App", () => {
       await user.click(await screen.findByRole("button", { name: /apply split regions/i }));
 
       await screen.findByAltText("Left Shelf thumbnail");
-      expect(screen.getByText("split_parent")).toBeInTheDocument();
+      expect(screen.getByText("Split source")).toBeInTheDocument();
       expect(screen.getByTestId("overlay-label-element_002")).toHaveTextContent("Left Shelf");
       expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Right Shelf");
 
@@ -2462,14 +2645,14 @@ describe("App", () => {
 
       await user.click(undoButton);
       expect(await screen.findAllByText(/undone\./i)).toHaveLength(2);
-      expect(screen.getByText("model_detected")).toBeInTheDocument();
+      expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
       expect(redoButton).toBeEnabled();
 
       fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
       await waitFor(() => {
         expect(screen.getAllByText(/redone\./i)).toHaveLength(2);
       });
-      expect(screen.getByText("accepted")).toBeInTheDocument();
+      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
 
       expect(savedStates).toEqual([
         acceptedState,
@@ -2713,7 +2896,7 @@ describe("App", () => {
         }),
       );
       expect(await screen.findAllByText(/mask replaced\./i)).toHaveLength(2);
-      expect(screen.getByText("extract_ready")).toBeInTheDocument();
+      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
     } finally {
       restoreFetch();
     }

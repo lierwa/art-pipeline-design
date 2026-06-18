@@ -209,6 +209,7 @@ cabinet
 - 多选状态。
 - merge preview。
 - segmentation 后的 mask overlay。
+- Select 模式下，点击空白画布等同于失焦：清空当前选中框和编辑状态。
 
 默认视图不显示所有 debug overlay。优先显示：
 
@@ -216,6 +217,42 @@ cabinet
 - accepted 候选。
 - needs review 候选。
 - 当前编辑或合并预览。
+
+## 智能点选补漏
+
+典型场景：全图检测没有识别出某个物体，比如画面里的木桶。用户不应该被迫手动画完整框，也不应该重新跑一遍全图检测赌运气。需要一个专门处理“漏网之鱼”的入口。
+
+交互设计：
+
+1. 用户切到 `Smart pick` 工具，或者在 Select 模式下使用明确的快捷入口。
+2. 用户点击漏检物体的中心附近。
+3. 前端把点击点、当前缩放视图、可选局部半径、以及当前词表发送给后端。
+4. 后端以点击点为中心裁剪一个 ROI，只在局部范围内跑开放词汇检测或 point-prompt segmentation。
+5. 系统只返回与点击点相关的候选，不把整张图的新结果混进来。
+6. 画布显示一个待确认候选，用户可以 `Accept`、`Rename`、`Edit box`、`Retry`、或 `Cancel`。
+
+模型要求：
+
+- 优先使用真实模型能力：GroundingDINO / Florence 类开放词汇检测做局部 bbox，SAM2 类 point prompt 生成 mask 或辅助边界。
+- 如果模型没有配置、模型不支持点选、或者没有找到候选，必须明确提示失败或无结果。
+- 禁止用同色连通域、边缘连通域、局部阈值等启发式 fallback 假装智能点选。
+
+后端需要新增接口，例如：
+
+```text
+POST /api/workspace/elements/smart-pick
+body:
+  x, y              # 图片坐标
+  radius            # 局部搜索半径
+  vocabulary        # 当前资产词表
+  parentId?         # 如果在父对象内补漏，挂到父节点
+
+return:
+  candidate element # bbox / label / confidence / provider / status
+  optional mask     # 如果 segmentation provider 可用
+```
+
+智能点选的定位是“漏检补救”，不是全图检测的替代品。它生成的候选默认仍然是 `Needs review`，必须经过用户确认后才进入导出。
 
 ## 导出规则
 
