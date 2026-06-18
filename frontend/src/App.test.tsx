@@ -2538,7 +2538,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("button", { name: /replace mask by current shape/i }));
+      await user.click(await screen.findByRole("button", { name: /replace mask by current shape/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/element_001/mask/replace",
