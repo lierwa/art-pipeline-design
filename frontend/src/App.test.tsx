@@ -440,6 +440,15 @@ async function drawRectangle(surface: HTMLElement, start: { x: number; y: number
   fireEvent.mouseUp(surface, { clientX: end.x, clientY: end.y, button: 0 });
 }
 
+function openAssetContextMenu(point: { x: number; y: number } = { x: 100, y: 120 }) {
+  setCanvasRect(screen.getByTestId("canvas-artboard"));
+  fireEvent.contextMenu(screen.getByTestId("canvas-drawing-surface"), {
+    clientX: point.x,
+    clientY: point.y,
+  });
+  return screen.getByRole("menu", { name: /asset context menu/i });
+}
+
 describe("App", () => {
   it("starts on a new pending workspace with processing records in a floating list", async () => {
     const user = userEvent.setup();
@@ -570,10 +579,8 @@ describe("App", () => {
     expect(stylesheet).toMatch(/\.asset-tree-badges\s*\{[\s\S]*grid-column:\s*auto;/);
     expect(stylesheet).toMatch(/\.asset-visibility-toggle\s+span\s*\{[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
     expect(stylesheet).toMatch(/\.canvas-overlay-switches\s+\.overlay-toggle\s+input\s*\{[\s\S]*opacity:\s*0;/);
-    expect(stylesheet).toMatch(/\.selection-action-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*overflow:\s*hidden;/);
-    expect(stylesheet).toMatch(/\.selection-action-panel\s*>\s*\.panel-header\s*\{[\s\S]*display:\s*none;/);
-    expect(stylesheet).toMatch(/\.selection-action-panel\s+\.panel-body\s*\{[\s\S]*overflow:\s*auto;/);
-    expect(stylesheet).toMatch(/\.selection-action-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/);
+    expect(stylesheet).toMatch(/\.asset-context-menu\s*\{[\s\S]*position:\s*fixed;[\s\S]*z-index:\s*80;/);
+    expect(stylesheet).toMatch(/\.asset-context-menu\s+button\s*\{[\s\S]*justify-content:\s*flex-start;/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*overscroll-behavior:\s*contain;[\s\S]*touch-action:\s*none;/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*>\s*\.canvas-header\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
@@ -582,7 +589,6 @@ describe("App", () => {
     expect(stylesheet).toMatch(/\.workbench-panel-resize-handle\s*\{/);
     expect(stylesheet).toMatch(/\.canvas-pan-viewport\s*\{[\s\S]*transform:/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-workspace\s*>\s*\.canvas-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
-    expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.selection-action-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-artboard\s*\{[\s\S]*width:\s*min\(calc\(100vw - 1\.5rem\),\s*calc\(\(100vh - 260px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
   });
 
@@ -897,8 +903,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /^edit box$/i }));
 
       expect(await screen.findByTestId("canvas-edit-region-element_001")).toHaveAttribute(
         "aria-label",
@@ -964,8 +970,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
       const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
       editRegion.focus();
       fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
@@ -1098,8 +1104,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
       const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
       editRegion.focus();
       fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
@@ -1111,7 +1117,7 @@ describe("App", () => {
       expect(patchRequest).toBeNull();
       expect(screen.queryByRole("group", { name: /confirm region 1 box edit/i })).not.toBeInTheDocument();
 
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
       const nextEditRegion = await screen.findByTestId("canvas-edit-region-element_001");
       nextEditRegion.focus();
       fireEvent.keyDown(nextEditRegion, { key: "ArrowRight", shiftKey: true });
@@ -1163,8 +1169,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
       const editRegion = await screen.findByTestId("canvas-edit-region-element_001");
       editRegion.focus();
       fireEvent.keyDown(editRegion, { key: "ArrowRight", shiftKey: true });
@@ -1213,8 +1219,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      await user.click(within(actionPanel).getByRole("button", { name: /^edit box$/i }));
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await user.click(within(canvasToolbar).getByRole("button", { name: /^edit box$/i }));
       const resizeHandle = await screen.findByTestId("resize-handle-element_001-se");
       resizeHandle.focus();
       fireEvent.keyDown(resizeHandle, { key: "ArrowRight", shiftKey: true });
@@ -1232,8 +1238,9 @@ describe("App", () => {
     }
   });
 
-  it("renames the selected asset from the contextual action panel", async () => {
+  it("renames the selected asset from the canvas context menu", async () => {
     const user = userEvent.setup();
+    const promptSpy = vi.spyOn(window, "prompt").mockReturnValue("Main tub");
     const renamedElement = {
       ...loadedState.elements[0],
       name: "Main tub",
@@ -1263,16 +1270,16 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const nameField = screen.getByLabelText(/selected asset name/i);
-      fireEvent.change(nameField, { target: { value: "Main tub" } });
-      expect(nameField).toHaveValue("Main tub");
-      await user.click(screen.getByRole("button", { name: /save name/i }));
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /rename/i }));
 
       await waitFor(() => {
         expect(patchRequest).toEqual({ label: "Main tub" });
       });
+      expect(promptSpy).toHaveBeenCalledWith("Rename asset", "Region 1");
       expect(await screen.findAllByText(/element details updated/i)).toHaveLength(2);
     } finally {
+      promptSpy.mockRestore();
       restoreFetch();
     }
   });
@@ -1347,9 +1354,9 @@ describe("App", () => {
 
       expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).toBeChecked();
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByText(/merge selection/i)).toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /merge into one asset/i })).toBeEnabled();
+      const contextMenu = openAssetContextMenu();
+      expect(within(contextMenu).getByText(/2 selected/i)).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i })).toBeEnabled();
     } finally {
       restoreFetch();
     }
@@ -1375,7 +1382,7 @@ describe("App", () => {
     }
   });
 
-  it("shows single-candidate actions after selecting one asset tree item", async () => {
+  it("shows single-candidate actions from the canvas context menu", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -1388,14 +1395,17 @@ describe("App", () => {
       render(<App />);
 
       await user.click(await screen.findByRole("button", { name: /select cabinet asset/i }));
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
+      expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
 
-      expect(within(actionPanel).getByRole("button", { name: /^edit box$/i })).toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /^add child$/i })).toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /run detect inside/i })).toBeDisabled();
-      expect(within(actionPanel).getByRole("button", { name: /^split asset$/i })).toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /^accept$/i })).toBeInTheDocument();
-      expect(within(actionPanel).getByRole("button", { name: /^reject$/i })).toBeInTheDocument();
+      const contextMenu = openAssetContextMenu({ x: 250, y: 150 });
+      expect(within(contextMenu).getByText("cabinet")).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /^edit box$/i })).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /rename/i })).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /^add child$/i })).toBeInTheDocument();
+      expect(within(contextMenu).queryByRole("menuitem", { name: /run detect inside/i })).not.toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /^split asset$/i })).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /^accept$/i })).toBeInTheDocument();
+      expect(within(contextMenu).getByRole("menuitem", { name: /^reject$/i })).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1412,9 +1422,8 @@ describe("App", () => {
     try {
       render(<App />);
 
-      const actionPanel = await screen.findByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
-      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
+      await screen.findByText(/original\.png - 120 x 90/i);
+      expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
       expect(screen.getAllByRole("button", { name: /run detection/i })).toHaveLength(1);
     } finally {
       restoreFetch();
@@ -1436,15 +1445,13 @@ describe("App", () => {
 
       await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
       await user.click(await screen.findByRole("button", { name: /select rejected vase asset/i }));
-      expect(screen.getByText(/rejected or merged assets are shown for review only/i)).toBeInTheDocument();
+      expect(screen.getByText("rejected")).toBeInTheDocument();
 
       await user.click(screen.getByRole("checkbox", { name: /show rejected/i }));
 
       expect(screen.queryByText("Rejected Vase")).not.toBeInTheDocument();
-      expect(screen.queryByText(/rejected or merged assets are shown for review only/i)).not.toBeInTheDocument();
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
-      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("rejected")).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1465,16 +1472,13 @@ describe("App", () => {
       expect(screen.queryByText("Legacy Reject")).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /select legacy reject asset/i })).not.toBeInTheDocument();
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).queryByRole("button", { name: /^edit box$/i })).not.toBeInTheDocument();
-      expect(within(actionPanel).getByText(/run detection from the top bar/i)).toBeInTheDocument();
-      expect(within(actionPanel).queryByRole("button", { name: /run detection/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: /selection actions/i })).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
   });
 
-  it("merges multiple selected assets from the contextual action panel", async () => {
+  it("merges multiple selected assets from the canvas context menu", async () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
@@ -1498,10 +1502,9 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
 
-      const actionPanel = screen.getByRole("region", { name: /selection actions/i });
-      expect(within(actionPanel).getByText("Region 1")).toBeInTheDocument();
-      expect(within(actionPanel).getByText("Region 2")).toBeInTheDocument();
-      await user.click(within(actionPanel).getByRole("button", { name: /merge into one asset/i }));
+      const contextMenu = openAssetContextMenu();
+      expect(within(contextMenu).getByText("Region 1, Region 2")).toBeInTheDocument();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -1630,7 +1633,7 @@ describe("App", () => {
     }
   });
 
-  it("allows model-detected candidates to be rejected from the element panel", async () => {
+  it("allows model-detected candidates to be rejected from the canvas context menu", async () => {
     const user = userEvent.setup();
     const rejectedState = {
       source: detectedState.source,
@@ -1660,7 +1663,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByAltText("cabinet thumbnail");
 
-      await user.click(screen.getByRole("button", { name: /^reject$/i }));
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /^reject$/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/state",
@@ -2061,9 +2065,8 @@ describe("App", () => {
       expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
       await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
-      const labelField = screen.getByLabelText(/merge label/i);
-      fireEvent.change(labelField, { target: { value: "Fixture group" } });
-      await user.click(screen.getByRole("button", { name: /merge selected/i }));
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -2071,7 +2074,7 @@ describe("App", () => {
           method: "POST",
           body: JSON.stringify({
             elementIds: ["element_001", "element_002"],
-            label: "Fixture group",
+            label: "Merged Asset",
           }),
         }),
       );
@@ -2111,7 +2114,8 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
 
-      const mergeButton = screen.getByRole("button", { name: /merge selected/i });
+      const contextMenu = openAssetContextMenu();
+      const mergeButton = within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i });
       expect(mergeButton).toBeDisabled();
 
       await user.click(mergeButton);
@@ -2175,7 +2179,7 @@ describe("App", () => {
       await user.click(screen.getByRole("button", { name: /region 2 thumbnail/i }));
 
       expect(screen.getByLabelText(/element name/i)).toHaveValue("Region 2");
-      expect(screen.getByRole("button", { name: /merge selected/i })).toBeDisabled();
+      expect(screen.getByRole("button", { name: /^merge$/i })).toBeDisabled();
       expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).not.toBeChecked();
       expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).not.toBeChecked();
     } finally {
@@ -2266,7 +2270,7 @@ describe("App", () => {
       expect(screen.queryByRole("checkbox", { name: /toggle visibility for region 1/i })).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-label-element_001")).not.toBeInTheDocument();
       expect(screen.queryByTestId("overlay-label-element_002")).not.toBeInTheDocument();
-      expect(screen.getByTestId("overlay-label-element_003")).toHaveTextContent("Fixture group");
+      expect(screen.getByTestId("overlay-region-element_003")).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -2347,7 +2351,8 @@ describe("App", () => {
       render(<App />);
       await screen.findByAltText("cabinet thumbnail");
 
-      await user.click(screen.getByRole("button", { name: /^accept$/i }));
+      const contextMenu = openAssetContextMenu();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /^accept$/i }));
       expect(await screen.findAllByText(/element accepted\./i)).toHaveLength(2);
 
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });

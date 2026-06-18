@@ -36,6 +36,7 @@ type CanvasStageProps = {
   canCreateChildFromDraft: boolean;
   onSelectElement: (elementId: string) => void;
   onToggleMergeSelection: (elementId: string) => void;
+  onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onZoomByWheel: (deltaY: number) => void;
   onZoomByGesture: (scaleDelta: number) => void;
@@ -112,6 +113,7 @@ export function CanvasStage({
   canCreateChildFromDraft,
   onSelectElement,
   onToggleMergeSelection,
+  onOpenElementContextMenu,
   onBoxDraftChange,
   onZoomByWheel,
   onZoomByGesture,
@@ -238,6 +240,7 @@ export function CanvasStage({
       canCreateChildFromDraft={canCreateChildFromDraft}
       onSelectElement={onSelectElement}
       onToggleMergeSelection={onToggleMergeSelection}
+      onOpenElementContextMenu={onOpenElementContextMenu}
       onBoxDraftChange={onBoxDraftChange}
       onManualElementNameChange={onManualElementNameChange}
       onCreateElement={onCreateElement}
@@ -387,6 +390,7 @@ type CanvasArtboardProps = {
   hasUnsavedBoxEdit: boolean;
   onSelectElement: (elementId: string) => void;
   onToggleMergeSelection: (elementId: string) => void;
+  onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
   onManualElementNameChange: (value: string) => void;
   onCreateElement: (name: string) => void;
@@ -421,6 +425,7 @@ function CanvasArtboard({
   hasUnsavedBoxEdit,
   onSelectElement,
   onToggleMergeSelection,
+  onOpenElementContextMenu,
   onBoxDraftChange,
   onManualElementNameChange,
   onCreateElement,
@@ -455,6 +460,22 @@ function CanvasArtboard({
     }
 
     onPointerDown(event);
+  }
+
+  function handleDrawingContextMenu(event: MouseEvent<HTMLDivElement>) {
+    if (isPanMode || tool !== "select") {
+      return;
+    }
+
+    const hitElement = findTopmostHitElement(event);
+    if (!hitElement) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectElement(hitElement.id);
+    onOpenElementContextMenu(hitElement.id, { x: event.clientX, y: event.clientY });
   }
 
   useEffect(() => {
@@ -801,6 +822,12 @@ function CanvasArtboard({
                 role="region"
                 tabIndex={0}
                 onKeyDown={(event) => handleEditKeyDown(event, element)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onSelectElement(element.id);
+                  onOpenElementContextMenu(element.id, { x: event.clientX, y: event.clientY });
+                }}
                 onPointerDown={(event) => beginBoxMove(event, element)}
                 onPointerMove={updateBoxEdit}
                 onPointerUp={endBoxEdit}
@@ -868,6 +895,7 @@ function CanvasArtboard({
         onPointerDown={handleDrawingPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onContextMenu={handleDrawingContextMenu}
         onMouseDown={handleDrawingPointerDown}
         onMouseMove={onPointerMove}
         onMouseUp={onPointerUp}
