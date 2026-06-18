@@ -447,11 +447,12 @@ function CanvasArtboard({
       return;
     }
     if (tool === "select") {
-      const hitElement = findTopmostHitElement(event);
+      const isMergeToggle = event.shiftKey || event.ctrlKey || event.metaKey;
+      const hitElement = findHitElement(event, isMergeToggle ? "smallest" : "front");
       if (!hitElement) {
         return;
       }
-      if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      if (isMergeToggle) {
         onToggleMergeSelection(hitElement.id);
       } else {
         onSelectElement(hitElement.id);
@@ -467,7 +468,7 @@ function CanvasArtboard({
       return;
     }
 
-    const hitElement = findTopmostHitElement(event);
+    const hitElement = findHitElement(event, "smallest");
     if (!hitElement) {
       return;
     }
@@ -647,7 +648,7 @@ function CanvasArtboard({
     onBoxDraftChange(element.id, resizeBox(element.bbox, handle, delta.x, delta.y, source));
   }
 
-  function findTopmostHitElement(event: DrawingEvent): WorkspaceElement | null {
+  function findHitElement(event: DrawingEvent, strategy: "front" | "smallest"): WorkspaceElement | null {
     const artboard = artboardRef.current;
     if (!artboard) {
       return null;
@@ -656,7 +657,15 @@ function CanvasArtboard({
     const point = eventPointToImageWithin(event, artboard, source);
     return [...overlayElements]
       .filter((element) => element.visible && pointIsInsideBox(point, element.bbox))
-      .sort((left, right) => right.layer - left.layer)[0] ?? null;
+      .sort((left, right) => {
+        if (strategy === "smallest") {
+          const areaDelta = boxArea(left.bbox) - boxArea(right.bbox);
+          if (areaDelta !== 0) {
+            return areaDelta;
+          }
+        }
+        return right.layer - left.layer;
+      })[0] ?? null;
   }
 
   return (
@@ -1096,6 +1105,10 @@ function pointIsInsideBox(point: { x: number; y: number }, box: Box): boolean {
     && point.x <= box.x + box.w
     && point.y <= box.y + box.h
   );
+}
+
+function boxArea(box: Box): number {
+  return Math.max(1, box.w) * Math.max(1, box.h);
 }
 
 function clamp(value: number, min: number, max: number): number {

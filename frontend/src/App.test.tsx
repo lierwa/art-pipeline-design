@@ -183,6 +183,35 @@ const mergeSourceState = {
   ],
 };
 
+const overlappingMergeState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...loadedState.elements[0],
+      id: "element_001",
+      name: "basket",
+      label: "basket",
+      status: "model_detected",
+      bbox: { x: 10, y: 10, w: 80, h: 70 },
+      canvas: { x: 10, y: 10, w: 80, h: 70 },
+      layer: 5,
+      thumbnail: "elements/element_001/thumb.png",
+    },
+    {
+      ...loadedState.elements[0],
+      id: "element_002",
+      name: "towel",
+      label: "towel",
+      status: "model_detected",
+      bbox: { x: 45, y: 38, w: 30, h: 28 },
+      canvas: { x: 45, y: 38, w: 30, h: 28 },
+      layer: 1,
+      thumbnail: "elements/element_002/thumb.png",
+      confidence: 0.8,
+    },
+  ],
+};
+
 const mergedState = {
   source: loadedState.source,
   elements: [
@@ -1355,8 +1384,79 @@ describe("App", () => {
       expect(screen.getByRole("checkbox", { name: /select region 1 for merge/i })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: /select region 2 for merge/i })).toBeChecked();
       const contextMenu = openAssetContextMenu();
-      expect(within(contextMenu).getByText(/2 selected/i)).toBeInTheDocument();
-      expect(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i })).toBeEnabled();
+      expect(within(contextMenu).getByRole("menuitem", { name: /merge selected/i })).toBeEnabled();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("shift-selects the smaller overlapped box instead of the enclosing box", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(overlappingMergeState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      setCanvasRect(screen.getByTestId("canvas-artboard"));
+      const surface = screen.getByTestId("canvas-drawing-surface");
+      fireEvent.mouseDown(surface, { clientX: 100, clientY: 100, shiftKey: true, button: 0 });
+      fireEvent.mouseDown(surface, { clientX: 250, clientY: 250, shiftKey: true, button: 0 });
+
+      expect(screen.getByRole("checkbox", { name: /select basket for merge/i })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: /select towel for merge/i })).toBeChecked();
+      expect(within(openAssetContextMenu({ x: 250, y: 250 })).getByRole(
+        "menuitem",
+        { name: /merge selected/i },
+      )).toBeEnabled();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("merges an overlapped asset with the current merge selection from the context menu", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(overlappingMergeState);
+      }
+
+      if (input === "/api/workspace/elements/merge" && init?.method === "POST") {
+        return jsonResponse({
+          element: mergedState.elements[2],
+          state: mergedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+
+      let contextMenu = openAssetContextMenu({ x: 100, y: 100 });
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /select for merge/i }));
+
+      contextMenu = openAssetContextMenu({ x: 250, y: 250 });
+      expect(within(contextMenu).getByText("towel")).toBeInTheDocument();
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge with selected/i }));
+
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/workspace/elements/merge",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            elementIds: ["element_001", "element_002"],
+            label: "Merged Asset",
+          }),
+        }),
+      );
+      expect(await screen.findByAltText("Fixture group thumbnail")).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1503,8 +1603,7 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
 
       const contextMenu = openAssetContextMenu();
-      expect(within(contextMenu).getByText("Region 1, Region 2")).toBeInTheDocument();
-      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i }));
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge selected/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -2066,7 +2165,7 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 1 for merge/i }));
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
       const contextMenu = openAssetContextMenu();
-      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i }));
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /merge selected/i }));
 
       expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/workspace/elements/merge",
@@ -2115,7 +2214,7 @@ describe("App", () => {
       await user.click(screen.getByRole("checkbox", { name: /select region 2 for merge/i }));
 
       const contextMenu = openAssetContextMenu();
-      const mergeButton = within(contextMenu).getByRole("menuitem", { name: /merge into one asset/i });
+      const mergeButton = within(contextMenu).getByRole("menuitem", { name: /merge selected/i });
       expect(mergeButton).toBeDisabled();
 
       await user.click(mergeButton);

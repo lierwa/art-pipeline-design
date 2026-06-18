@@ -8,10 +8,15 @@ type AssetContextMenuProps = {
   element: WorkspaceElement;
   selectedMergeElements: WorkspaceElement[];
   canMergeSelectedElements: boolean;
+  isSelectedForMerge: boolean;
+  canSelectForMerge: boolean;
+  canMergeWithSelection: boolean;
   canAccept: boolean;
   canReject: boolean;
   hasUnsavedGeometryChanges: boolean;
   onClose: () => void;
+  onToggleMergeSelection: (elementId: string) => void;
+  onMergeWithSelection: (elementId: string) => void;
   onEditBox: () => void;
   onRename: (elementId: string) => void;
   onAddChild: () => void;
@@ -27,10 +32,15 @@ export function AssetContextMenu({
   element,
   selectedMergeElements,
   canMergeSelectedElements,
+  isSelectedForMerge,
+  canSelectForMerge,
+  canMergeWithSelection,
   canAccept,
   canReject,
   hasUnsavedGeometryChanges,
   onClose,
+  onToggleMergeSelection,
+  onMergeWithSelection,
   onEditBox,
   onRename,
   onAddChild,
@@ -40,13 +50,15 @@ export function AssetContextMenu({
   onMerge,
 }: AssetContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const isMergeMenu = selectedMergeElements.length >= 2;
+  const hasMergeSelection = selectedMergeElements.length > 0;
+  const hasMergeSelectionReady = selectedMergeElements.length >= 2;
+  const hasMergeActions = hasMergeSelectionReady || canMergeWithSelection || canSelectForMerge;
   const displayName = element.label ?? element.name;
-  const position = constrainMenuPosition(x, y, isMergeMenu);
+  const position = constrainMenuPosition(x, y, hasMergeActions);
 
   useEffect(() => {
     menuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
-  }, [displayName, isMergeMenu]);
+  }, [displayName, hasMergeActions]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -80,7 +92,7 @@ export function AssetContextMenu({
   return (
     <div
       ref={menuRef}
-      aria-label={isMergeMenu ? "Asset context menu for selection" : `Asset context menu for ${displayName}`}
+      aria-label={`Asset context menu for ${displayName}`}
       className="asset-context-menu"
       role="menu"
       style={{ left: position.left, top: position.top }}
@@ -88,75 +100,98 @@ export function AssetContextMenu({
       onPointerDown={(event) => event.stopPropagation()}
     >
       <div className="asset-context-menu-header">
-        <span>{isMergeMenu ? `${selectedMergeElements.length} selected` : displayName}</span>
-        {isMergeMenu ? (
-          <small>{selectedMergeElements.map((selectedElement) => selectedElement.name).join(", ")}</small>
-        ) : (
-          <small>{element.status}</small>
-        )}
+        <span>{displayName}</span>
+        <small>{element.status}</small>
       </div>
 
-      {isMergeMenu ? (
+      {hasMergeActions ? (
+        <>
+          {hasMergeSelectionReady ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={!canMergeSelectedElements}
+              onClick={() => runAction(onMerge)}
+            >
+              Merge selected
+            </button>
+          ) : null}
+          {canMergeWithSelection ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runAction(() => onMergeWithSelection(element.id))}
+            >
+              Merge with selected
+            </button>
+          ) : null}
+          {canSelectForMerge ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runAction(() => onToggleMergeSelection(element.id))}
+            >
+              {isSelectedForMerge
+                ? "Remove from merge selection"
+                : hasMergeSelection
+                  ? "Add to merge selection"
+                  : "Select for merge"}
+            </button>
+          ) : null}
+          <div className="asset-context-menu-separator" role="separator" />
+        </>
+      ) : null}
+
+      <>
         <button
           type="button"
           role="menuitem"
-          disabled={!canMergeSelectedElements}
-          onClick={() => runAction(onMerge)}
+          onClick={() => runAction(onEditBox)}
         >
-          Merge into one asset
+          Edit box
         </button>
-      ) : (
-        <>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={hasUnsavedGeometryChanges}
+          onClick={() => runAction(() => onRename(element.id))}
+        >
+          Rename...
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => runAction(onAddChild)}
+        >
+          Add child
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => runAction(onSplitParent)}
+        >
+          Split asset
+        </button>
+        {(canAccept || canReject) ? <div className="asset-context-menu-separator" role="separator" /> : null}
+        {canAccept ? (
           <button
             type="button"
             role="menuitem"
-            onClick={() => runAction(onEditBox)}
+            onClick={() => runAction(() => onAccept(element.id))}
           >
-            Edit box
+            Accept
           </button>
+        ) : null}
+        {canReject ? (
           <button
             type="button"
             role="menuitem"
-            disabled={hasUnsavedGeometryChanges}
-            onClick={() => runAction(() => onRename(element.id))}
+            onClick={() => runAction(() => onReject(element.id))}
           >
-            Rename...
+            Reject
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => runAction(onAddChild)}
-          >
-            Add child
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => runAction(onSplitParent)}
-          >
-            Split asset
-          </button>
-          {(canAccept || canReject) ? <div className="asset-context-menu-separator" role="separator" /> : null}
-          {canAccept ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runAction(() => onAccept(element.id))}
-            >
-              Accept
-            </button>
-          ) : null}
-          {canReject ? (
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => runAction(() => onReject(element.id))}
-            >
-              Reject
-            </button>
-          ) : null}
-        </>
-      )}
+        ) : null}
+      </>
 
       {hasUnsavedGeometryChanges ? (
         <p className="asset-context-menu-note">Save geometry changes before merge or export actions.</p>
@@ -165,13 +200,13 @@ export function AssetContextMenu({
   );
 }
 
-function constrainMenuPosition(x: number, y: number, isMergeMenu: boolean) {
+function constrainMenuPosition(x: number, y: number, hasMergeActions: boolean) {
   if (typeof window === "undefined") {
     return { left: x, top: y };
   }
 
   const estimatedWidth = 292;
-  const estimatedHeight = isMergeMenu ? 128 : 276;
+  const estimatedHeight = hasMergeActions ? 344 : 276;
   const margin = 12;
   return {
     left: clamp(x, margin, Math.max(margin, window.innerWidth - estimatedWidth)),

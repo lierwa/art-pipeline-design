@@ -383,9 +383,20 @@ export function App() {
     ? visibleElements.find((element) => element.id === assetContextMenu.elementId) ?? null
     : null;
   const contextMenuMergeElements =
-    contextMenuElement && selectedMergeableElements.some((element) => element.id === contextMenuElement.id)
-      ? selectedMergeableElements
-      : [];
+    contextMenuElement ? selectedMergeableElements : [];
+  const isContextMenuElementSelectedForMerge = contextMenuElement
+    ? selectedElementIds.includes(contextMenuElement.id)
+    : false;
+  const canContextMenuElementJoinMerge = contextMenuElement
+    ? isMergeableElement(contextMenuElement)
+    : false;
+  const canContextMenuMergeWithSelection = Boolean(
+    contextMenuElement
+      && canContextMenuElementJoinMerge
+      && !isContextMenuElementSelectedForMerge
+      && selectedMergeableElementCount >= 1
+      && !hasUnsavedGeometryChanges,
+  );
   const selectedRepairMetadata = selectedElement
     ? repairMetadataByElementId[selectedElement.id] ?? null
     : null;
@@ -1987,11 +1998,19 @@ export function App() {
   }
 
   async function handleMergeSelectedElements() {
+    await mergeElementsByIds(selectedElementIds);
+  }
+
+  async function handleMergeWithSelection(elementId: string) {
+    await mergeElementsByIds([...selectedElementIds, elementId]);
+  }
+
+  async function mergeElementsByIds(elementIds: string[]) {
     if (hasUnsavedGeometryChanges) {
       return;
     }
 
-    const mergeElementIds = selectedElementIds.filter((elementId) =>
+    const mergeElementIds = Array.from(new Set(elementIds)).filter((elementId) =>
       workspace.elements.some((element) => element.id === elementId && isMergeableElement(element)),
     );
     if (mergeElementIds.length < 2) {
@@ -2320,6 +2339,9 @@ export function App() {
           element={contextMenuElement}
           selectedMergeElements={contextMenuMergeElements}
           canMergeSelectedElements={canMergeSelectedElements}
+          isSelectedForMerge={isContextMenuElementSelectedForMerge}
+          canSelectForMerge={canContextMenuElementJoinMerge}
+          canMergeWithSelection={canContextMenuMergeWithSelection}
           canAccept={
             isActiveCandidate(contextMenuElement)
             && !isAcceptedStatus(contextMenuElement.status)
@@ -2330,6 +2352,8 @@ export function App() {
           }
           hasUnsavedGeometryChanges={hasUnsavedGeometryChanges}
           onClose={closeAssetContextMenu}
+          onToggleMergeSelection={handleMergeSelectionToggle}
+          onMergeWithSelection={(elementId) => void handleMergeWithSelection(elementId)}
           onEditBox={handleStartBoxEdit}
           onRename={(elementId) => void handleRenameElement(elementId)}
           onAddChild={() => void handleAddChildFromSelection()}
