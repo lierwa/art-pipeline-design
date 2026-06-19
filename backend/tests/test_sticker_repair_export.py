@@ -13,8 +13,12 @@ from art_pipeline.api import create_app
 
 class FullMaskProvider:
     def detect(self, image: Image.Image, prompt: dict[str, Any]) -> Image.Image:
-        _ = prompt
-        return Image.new("L", image.size, 255)
+        mask = Image.new("L", image.size, 0)
+        bbox = prompt["bbox"]
+        for x in range(bbox["x"], bbox["x"] + bbox["w"]):
+            for y in range(bbox["y"], bbox["y"] + bbox["h"]):
+                mask.putpixel((x, y), 255)
+        return mask
 
 
 class SequenceMaskProvider:
@@ -392,7 +396,12 @@ def _validate_parent_repair_complete(client: TestClient, tmp_path: Path):
     repair_dir = tmp_path / "workspace" / "elements" / "parent_001" / "repair"
     with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
         completed = incomplete.convert("RGBA")
-    completed.putpixel((3, 2), (40, 90, 160, 255))
+    with Image.open(repair_dir / "remove_mask.png") as remove_mask:
+        remove_pixels = remove_mask.convert("L").load()
+        for y in range(remove_mask.height):
+            for x in range(remove_mask.width):
+                if remove_pixels[x, y] > 0:
+                    completed.putpixel((x, y), (40, 90, 160, 255))
     completed.save(repair_dir / "completed_asset.png", format="PNG")
     (repair_dir / "repair_report.json").write_text('{"summary":"filled child removal"}', encoding="utf-8")
     response = client.post("/api/workspace/elements/parent_001/repair/validate")

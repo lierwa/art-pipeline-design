@@ -44,6 +44,7 @@ import {
   repairAssetUrl,
   RepairMetadata,
   RepairQaReport,
+  sam2EdgeArtifactUrls,
   SelectedElementIds,
   SourceMetadata,
   sourceCropUrl,
@@ -117,6 +118,12 @@ type SegmentMaskPatchRequest = {
     coordinateSpace: "canvas";
     bbox: Box;
   };
+};
+
+type CodexFinalGenerateResponse = {
+  element: WorkspaceElement;
+  generation: Record<string, unknown>;
+  state: WorkspaceState;
 };
 
 type ExtractWorkspaceResponse = {
@@ -347,6 +354,19 @@ export async function patchElementSegmentMask(
   );
 }
 
+export async function generateElementCodexFinal(
+  elementId: string,
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<CodexFinalGenerateResponse> {
+  return requestJson<CodexFinalGenerateResponse>(
+    fetcher,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}/codex-final/generate`, runId),
+    { method: "POST" },
+    "Could not generate Codex final asset.",
+  );
+}
+
 async function requestJson<T>(
   fetcher: Fetcher,
   input: RequestInfo | URL,
@@ -397,6 +417,7 @@ export function App() {
   const [isRepairing, setIsRepairing] = useState(false);
   const [suggestingSegmentElementId, setSuggestingSegmentElementId] = useState<string | null>(null);
   const [acceptingSegmentElementId, setAcceptingSegmentElementId] = useState<string | null>(null);
+  const [generatingCodexElementId, setGeneratingCodexElementId] = useState<string | null>(null);
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [assetContextMenu, setAssetContextMenu] = useState<AssetContextMenuState | null>(null);
@@ -1416,6 +1437,29 @@ export function App() {
       setError(segmentError instanceof Error ? segmentError.message : "Could not update segment mask.");
     } finally {
       setSuggestingSegmentElementId(null);
+    }
+  }
+
+  async function handleGenerateCodexFinal(elementId: string) {
+    if (generatingCodexElementId || !workspace.elements.some((element) => element.id === elementId)) {
+      return;
+    }
+
+    setGeneratingCodexElementId(elementId);
+    setStatus("Generating final asset with Codex CLI...");
+    setError(null);
+
+    try {
+      const payload = await generateElementCodexFinal(elementId, activeRunId);
+      clearLocalRepairMetadata([elementId]);
+      applyWorkspaceMutation(payload.state, "Codex final asset ready.", payload.element.id);
+      setAssetCacheKey((current) => current + 1);
+      void refreshWorkspaceRuns();
+    } catch (codexError) {
+      setStatus("Codex final generation failed.");
+      setError(codexError instanceof Error ? codexError.message : "Could not generate Codex final asset.");
+    } finally {
+      setGeneratingCodexElementId(null);
     }
   }
 
@@ -2609,7 +2653,7 @@ export function App() {
           className="workbench-grid"
           orientation="horizontal"
         >
-          <Panel className="workbench-panel workbench-panel-rail" defaultSize="16%" minSize="12%" maxSize="24%">
+          <Panel className="workbench-panel workbench-panel-rail" defaultSize="6%" minSize="5%" maxSize="10%">
             <PipelineRail
               source={workspace.source}
               elements={workspace.elements}
@@ -2624,8 +2668,11 @@ export function App() {
             <span aria-hidden="true" />
           </PanelResizeHandle>
 
-          <Panel className="workbench-panel workbench-panel-canvas" defaultSize="57%" minSize="42%">
-            <section className="canvas-workspace" aria-label="Canvas workspace">
+          <Panel className="workbench-panel workbench-panel-canvas" defaultSize="73%" minSize="62%">
+            <section
+              className={`canvas-workspace${selectedSegmentElement ? " has-stage-drawer" : ""}`}
+              aria-label="Canvas workspace"
+            >
           <CanvasToolbar
             tool={tool}
             overlays={overlays}
@@ -2705,8 +2752,10 @@ export function App() {
                 workspaceRunId={activeRunId}
                 isSuggesting={suggestingSegmentElementId === selectedSegmentElement.id}
                 isAccepting={acceptingSegmentElementId === selectedSegmentElement.id}
+                isGeneratingFinal={generatingCodexElementId === selectedSegmentElement.id}
                 onSuggestMask={(elementId) => void handleSuggestSegmentMask(elementId)}
                 onAcceptMask={(elementId) => void handleAcceptSegmentMask(elementId)}
+                onGenerateFinal={(elementId) => void handleGenerateCodexFinal(elementId)}
                 onPatchMask={(elementId, patch) => void handlePatchSegmentMask(elementId, patch)}
               />
             </FloatingStageDrawer>
@@ -2772,7 +2821,7 @@ export function App() {
             <span aria-hidden="true" />
           </PanelResizeHandle>
 
-          <Panel className="workbench-panel workbench-panel-review" defaultSize="27%" minSize="20%" maxSize="40%">
+          <Panel className="workbench-panel workbench-panel-review" defaultSize="21%" minSize="18%" maxSize="30%">
             <section className="right-review-panel" aria-label="Review panel">
           {workspace.source ? (
             <DetectionVocabularyPanel
@@ -2975,6 +3024,11 @@ function isSegmentableWorkbenchElement(element: WorkspaceElement): boolean {
     return false;
   }
 
+  if (element.sourceProvider === "codex_cli") {
+    // WHY: Codex final 已经越过传统 accepted/extract_ready 状态，仍需要复用分割抽屉展示参考图与正式重绘结果。
+    return ["repair_complete", "qa_failed"].includes(element.status);
+  }
+
   return [
     "accepted",
     "extract_ready",
@@ -3092,6 +3146,9 @@ function isExportReadyElement(element: WorkspaceElement): boolean {
   if (!isActionableElement(element)) {
     return false;
   }
+  if (element.sourceProvider === "codex_cli") {
+    return isRepairGateSatisfied(element) && isBackendExportGateSatisfied(element);
+  }
   // WHY: 导出资格必须以分割确认和后端 gate 为准；suggested mask 与 legacy bbox_alpha 只是预览/调试资产。
   return (
     element.segmentationStatus === "mask_accepted"
@@ -3142,6 +3199,11 @@ function ExtractionPreview({
   }
 
   const hasExtractedAsset = hasExtractedAssetPreview(selectedElement) && selectedElement.mask;
+  const hasSam2EdgePreview = selectedElement.segmentationStatus === "mask_suggested"
+    || selectedElement.segmentationStatus === "mask_accepted";
+  const sam2Urls = hasSam2EdgePreview
+    ? sam2EdgeArtifactUrls(selectedElement, assetCacheKey, workspaceRunId)
+    : null;
 
   return (
     <div className="extraction-preview">
@@ -3175,6 +3237,32 @@ function ExtractionPreview({
               />
             </div>
             <figcaption>Transparent asset</figcaption>
+          </figure>
+        </div>
+      ) : sam2Urls ? (
+        <div className="extraction-preview-grid">
+          <figure>
+            <img
+              alt={`${selectedElement.name} source crop`}
+              src={sam2Urls.sourceCropUrl ?? undefined}
+            />
+            <figcaption>Source crop</figcaption>
+          </figure>
+          <figure>
+            <img
+              alt={`${selectedElement.name} SAM2 edge mask`}
+              src={sam2Urls.maskUrl ?? undefined}
+            />
+            <figcaption>SAM2 edge mask</figcaption>
+          </figure>
+          <figure>
+            <div className="checkerboard-preview">
+              <img
+                alt={`${selectedElement.name} transparent sticker`}
+                src={sam2Urls.transparentAssetUrl ?? undefined}
+              />
+            </div>
+            <figcaption>Transparent sticker</figcaption>
           </figure>
         </div>
       ) : selectedElement.mask ? (

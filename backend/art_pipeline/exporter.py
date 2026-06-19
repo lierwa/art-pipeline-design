@@ -8,6 +8,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from art_pipeline.elements import ElementRecord, WorkspaceState
+from art_pipeline.codex_assets import (
+    codex_final_asset_path,
+    has_codex_final_asset,
+)
 from art_pipeline.export_files import (
     CONTACT_SHEET_PATH,
     EXPORT_ASSETS_DIR,
@@ -31,6 +35,7 @@ from art_pipeline.parent_repair_contracts import parent_removal_contract_covers_
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import read_repair_metadata, repair_relative_path
 from art_pipeline.segment_assets import has_sam2_edge_asset, sam2_edge_asset_path
+from art_pipeline.segment_quality import segmentation_quality_block_reason
 from art_pipeline.export_files import copy_workspace_file as _copy_workspace_file
 
 
@@ -48,6 +53,7 @@ PARENT_REPAIR_REQUIRED_REASON = "parent_repair_required"
 MASK_NOT_ACCEPTED_REASON = "mask_not_accepted"
 REJECTED_REASON = "rejected"
 SAM2_ASSET_MISSING_REASON = "accepted_sam2_asset_missing"
+CODEX_ASSET_MASK_UNAVAILABLE_REASON = "codex_final_alpha_mask_unavailable"
 
 
 def export_workspace(
@@ -168,11 +174,32 @@ def _plan_visible_export(
     element: ElementRecord,
     plan: ExportPlan,
 ) -> None:
+    if has_codex_final_asset(workspace_root, element):
+        # WHY: Codex final 是对低质量 cutout 的正式重绘结果；导出应以它的 alpha 为准，
+        # 不再让旧 SAM2 mask 的洞和毛边继续决定最终资产包。
+        _append_planned_export(
+            plan,
+            workspace_root,
+            element,
+            codex_final_asset_path(element),
+            [],
+            force_mask_from_asset=True,
+            mask_unavailable_reason=CODEX_ASSET_MASK_UNAVAILABLE_REASON,
+        )
+        return
+
     # WHY: Wave 2 sticker 的准入条件是“已接受 SAM2 mask”，不是磁盘上是否已有 legacy mask；
     # 先判断这个语义门槛，避免 fresh/bbox_alpha 两条路径产生不同 block reason。
     if _requires_accepted_sam2_mask(element) and element.segmentationStatus != "mask_accepted":
         plan.blocked.append(_blocked(element, MASK_NOT_ACCEPTED_REASON))
         return
+    if _requires_accepted_sam2_mask(element):
+        quality_block_reason = segmentation_quality_block_reason(element)
+        if quality_block_reason is not None:
+            # WHY: final export 是资产包的最后防线；没有质量报告的 accepted mask 无法证明
+            # 内部洞、碎片和候选选择已经过检查，不能绕过分割质量门禁。
+            plan.blocked.append(_blocked(element, quality_block_reason))
+            return
 
     explicit_mask = _explicit_source_mask_path(workspace_root, element)
     if explicit_mask is None:

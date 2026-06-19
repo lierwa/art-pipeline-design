@@ -50,7 +50,6 @@ export function AssetTreePanel({
     [elements],
   );
   const tree = useMemo(() => buildAssetTree(displayElements), [displayElements]);
-  const summary = useMemo(() => summarizeAssets(displayElements), [displayElements]);
   const [expandedIds, setExpandedIds] = useState<string[]>(() => collectExpandableIds(tree));
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
 
@@ -157,7 +156,7 @@ export function AssetTreePanel({
               <span>{formatConfidence(element.confidence)} · {formatOriginLabel(element)}</span>
             </span>
             <span className="asset-tree-badges" aria-label={`${element.name} metadata`}>
-              <span className={`asset-badge ${statusToneClass(element.status)}`}>{formatStatusLabel(element.status)}</span>
+              <span className={`asset-badge ${statusToneClass(element.status)}`}>{formatAssetBadgeLabel(element)}</span>
             </span>
           </button>
           {canAct ? (
@@ -188,12 +187,7 @@ export function AssetTreePanel({
           Assets ({displayElements.length})
           <span className="visually-hidden"> Elements</span>
         </h2>
-        <span className="panel-header-kicker">Review queue</span>
-      </div>
-      <div className="asset-tree-summary" aria-label="Asset review summary">
-        <span><strong>{summary.reviewed}</strong> Reviewed</span>
-        <span><strong>{summary.accepted}</strong> Accepted</span>
-        <span><strong>{summary.needsReview}</strong> Needs Review</span>
+        <span className="panel-header-kicker">Sticker outputs</span>
       </div>
       <div className="panel-toolbar">
         <label className="panel-checkbox">
@@ -211,7 +205,7 @@ export function AssetTreePanel({
           disabled={reviewableCount === 0}
           onClick={onCompleteReview}
         >
-          Complete review
+          Use detected assets
         </button>
       </div>
       <div className="panel-body panel-scroll">
@@ -223,7 +217,7 @@ export function AssetTreePanel({
           <div className="asset-empty-state">
             <span className="asset-empty-icon" aria-hidden="true" />
             <strong>Model proposals pending</strong>
-            <p>Run detection to fill this queue with reviewable candidates, confidence scores, and source tags.</p>
+            <p>Run real detection to create candidate assets, then send them into SAM2 mask work.</p>
             <div className="asset-empty-skeleton" aria-hidden="true">
               <span />
               <span />
@@ -277,54 +271,8 @@ function collectExpandableIds(nodes: AssetTreeNode[]): string[] {
   ]);
 }
 
-function summarizeAssets(elements: WorkspaceElement[]) {
-  const reviewed = elements.filter(isReviewed).length;
-  const accepted = elements.filter(isAccepted).length;
-  const needsReviewCount = elements.filter(needsReview).length;
-  return {
-    reviewed,
-    accepted,
-    needsReview: needsReviewCount,
-  };
-}
-
 function isActiveCandidate(element: WorkspaceElement): boolean {
   return element.mergedInto === null && element.mode !== "rejected" && element.status !== "rejected";
-}
-
-function isReviewed(element: WorkspaceElement): boolean {
-  return [
-    "accepted",
-    "rejected",
-    "exported",
-    "extract_ready",
-    "extracted",
-    "repair_pending",
-    "repair_complete",
-    "qa_failed",
-  ].includes(element.status);
-}
-
-function needsReview(element: WorkspaceElement): boolean {
-  return isActiveCandidate(element) && [
-    "model_detected",
-    "proposal",
-    "edited",
-    "child",
-    "merged",
-    "qa_failed",
-  ].includes(element.status);
-}
-
-function isAccepted(element: WorkspaceElement): boolean {
-  return [
-    "accepted",
-    "exported",
-    "extract_ready",
-    "extracted",
-    "repair_pending",
-    "repair_complete",
-  ].includes(element.status);
 }
 
 function formatConfidence(confidence: number | null | undefined): string {
@@ -350,32 +298,51 @@ function formatOriginLabel(element: WorkspaceElement): string {
   return "Workspace";
 }
 
-function formatStatusLabel(status: WorkspaceElement["status"]): string {
-  if (["accepted", "exported", "extract_ready", "extracted", "repair_complete"].includes(status)) {
-    return "Accepted";
+function formatAssetBadgeLabel(element: WorkspaceElement): string {
+  if (element.exportStatus === "ready" || element.exportStatus === "exported") {
+    return "Export ready";
   }
-  if (status === "rejected") {
+  if (element.segmentationStatus === "mask_accepted") {
+    return "Mask ready";
+  }
+  if (element.segmentationStatus === "mask_suggested") {
+    return "Mask draft";
+  }
+
+  if (element.status === "exported") {
+    return "Exported";
+  }
+  if (element.status === "repair_complete") {
+    return "Repair complete";
+  }
+  if (element.status === "extracted") {
+    return "Debug crop";
+  }
+  if (["accepted", "extract_ready"].includes(element.status)) {
+    return "Ready for mask";
+  }
+  if (element.status === "rejected") {
     return "Rejected";
   }
-  if (status === "edited") {
+  if (element.status === "edited") {
     return "Edited";
   }
-  if (status === "child") {
+  if (element.status === "child") {
     return "Child";
   }
-  if (status === "merged") {
+  if (element.status === "merged") {
     return "Merged";
   }
-  if (status === "split_parent") {
+  if (element.status === "split_parent") {
     return "Split source";
   }
-  if (status === "repair_pending") {
-    return "Repairing";
+  if (element.status === "repair_pending") {
+    return "Repair task";
   }
-  if (status === "qa_failed") {
-    return "Needs fix";
+  if (element.status === "qa_failed") {
+    return "Fix required";
   }
-  return "Needs review";
+  return "Detected";
 }
 
 function statusToneClass(status: WorkspaceElement["status"]): string {

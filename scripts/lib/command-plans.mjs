@@ -81,6 +81,15 @@ export function createDownloadModelPlan({
         "art_pipeline.model_runners.download_grounding_dino",
       ],
     },
+    {
+      label: "sam2-model",
+      command: python.command,
+      args: [
+        ...python.args,
+        "-m",
+        "art_pipeline.model_runners.download_sam2",
+      ],
+    },
   ];
 }
 

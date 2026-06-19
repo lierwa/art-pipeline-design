@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import { sam2EdgeArtifactUrls } from "../workspace";
-import type { Box, WorkspaceElement } from "../workspace";
+import { codexFinalArtifactUrls, sam2EdgeArtifactUrls } from "../workspace";
+import type { Box, SegmentationQuality, WorkspaceElement } from "../workspace";
 
 type SegmentMaskPatchRequest = {
   operation?: "replace" | "add" | "subtract";
@@ -18,8 +18,10 @@ type SegmentEdgeBoardProps = {
   workspaceRunId?: string | null;
   isSuggesting?: boolean;
   isAccepting?: boolean;
+  isGeneratingFinal?: boolean;
   onSuggestMask?: (elementId: string) => void;
   onAcceptMask?: (elementId: string) => void;
+  onGenerateFinal?: (elementId: string) => void;
   onPatchMask?: (elementId: string, patch: SegmentMaskPatchRequest) => void;
 };
 
@@ -29,8 +31,10 @@ export function SegmentEdgeBoard({
   workspaceRunId,
   isSuggesting = false,
   isAccepting = false,
+  isGeneratingFinal = false,
   onSuggestMask,
   onAcceptMask,
+  onGenerateFinal,
   onPatchMask,
 }: SegmentEdgeBoardProps) {
   const [maskRectDraft, setMaskRectDraft] = useState({
@@ -54,6 +58,12 @@ export function SegmentEdgeBoard({
     assetCacheKey,
     workspaceRunId,
   );
+  const codexFinalUrls = codexFinalArtifactUrls(
+    element,
+    assetCacheKey,
+    workspaceRunId,
+  );
+  const hasCodexFinal = element.sourceProvider === "codex_cli";
 
   return (
     <section className="segment-edge-board" aria-label={`${element.name} segment edge board`}>
@@ -78,6 +88,13 @@ export function SegmentEdgeBoard({
           >
             Accept mask
           </button>
+          <button
+            disabled={isGeneratingFinal}
+            onClick={() => onGenerateFinal?.(element.id)}
+            type="button"
+          >
+            {isGeneratingFinal ? "Generating final..." : "Generate final"}
+          </button>
         </div>
       </div>
       <div className="segment-edge-grid">
@@ -98,7 +115,16 @@ export function SegmentEdgeBoard({
           imageAlt={`${element.name} transparent sticker`}
           imageSrc={sam2EdgeUrls.transparentAssetUrl ?? undefined}
         />
+        {hasCodexFinal ? (
+          <PreviewFigure
+            caption="Codex final"
+            className="checkerboard-preview"
+            imageAlt={`${element.name} Codex final`}
+            imageSrc={codexFinalUrls.transparentAssetUrl ?? undefined}
+          />
+        ) : null}
       </div>
+      <SegmentQualityPanel quality={element.segmentationQuality} />
       <fieldset className="segment-manual-controls" aria-label="Manual mask edit">
         <legend>Manual mask edit</legend>
         <div className="segment-manual-grid">
@@ -142,6 +168,86 @@ export function SegmentEdgeBoard({
       </fieldset>
     </section>
   );
+}
+
+function SegmentQualityPanel({ quality }: { quality: SegmentationQuality | null }) {
+  if (!quality) {
+    return (
+      <fieldset className="segment-quality-panel" aria-label="SAM2 quality diagnostics">
+        <legend>SAM2 quality diagnostics</legend>
+        <p className="segment-quality-empty">Pending</p>
+      </fieldset>
+    );
+  }
+
+  const promptHitCount = Math.max(0, quality.supportPointCount - quality.missedSupportPointCount);
+
+  return (
+    <fieldset className="segment-quality-panel" aria-label="SAM2 quality diagnostics">
+      <legend>SAM2 quality diagnostics</legend>
+      <div className="segment-quality-grid">
+        <QualityMetric
+          label="Status"
+          tone={qualityTone(quality.qualityStatus)}
+          value={quality.qualityStatus}
+        />
+        <QualityMetric label="Profile" value={quality.selectedProfile} />
+        <QualityMetric label="Candidates" value={quality.candidateCount} />
+        <QualityMetric
+          label="Prompt hits"
+          tone={quality.missedSupportPointCount > 0 ? "fail" : undefined}
+          value={
+            quality.supportPointCount > 0
+              ? `${promptHitCount} / ${quality.supportPointCount}`
+              : "n/a"
+          }
+        />
+        <QualityMetric label="Holes filled" value={`${quality.filledHoleArea} px`} />
+        <QualityMetric label="Fragments removed" value={`${quality.removedDetachedArea} px`} />
+        <QualityMetric
+          label="Detached"
+          tone={quality.unsupportedDetachedArea > 0 ? "watch" : undefined}
+          value={`${quality.unsupportedDetachedArea} / ${quality.supportedDetachedArea} px`}
+        />
+        <QualityMetric
+          label="BBox side/bottom"
+          tone={quality.bboxLateralGrowthArea > 0 ? "watch" : undefined}
+          value={`${quality.bboxLateralGrowthArea} / ${quality.bboxBottomGrowthArea} px`}
+        />
+      </div>
+      {quality.qualityReasons.length > 0 ? (
+        <div className="segment-quality-reasons" aria-label="SAM2 quality reasons">
+          {quality.qualityReasons.map((reason) => (
+            <span key={reason}>{reason}</span>
+          ))}
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+function QualityMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number | string;
+  tone?: "pass" | "watch" | "fail";
+}) {
+  return (
+    <span className="segment-quality-metric" data-tone={tone}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+function qualityTone(status: SegmentationQuality["qualityStatus"]): "pass" | "watch" | "fail" {
+  if (status === "fail") {
+    return "fail";
+  }
+  return status === "warn" ? "watch" : "pass";
 }
 
 function NumberField({

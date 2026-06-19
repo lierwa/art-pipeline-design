@@ -13,31 +13,21 @@ export function ModelStatusStrip({
   isSaving,
   exportSummary,
 }: ModelStatusStripProps) {
-  const provider = resolveProvider(elements);
+  const modelChain = resolveModelChain(elements);
   const visibleElements = elements.filter((element) => element.mergedInto === null);
-  const needsReviewCount = visibleElements.filter(needsReview).length;
-  const acceptedCount = visibleElements.filter(isAccepted).length;
-  const reviewedCount = Math.max(visibleElements.length - needsReviewCount, 0);
+  const maskReadyCount = visibleElements.filter(hasAcceptedMask).length;
+  const exportReadyCount = visibleElements.filter(isExportReady).length;
+  const blockedCount = exportSummary?.blockedCount ?? visibleElements.filter(isBlocked).length;
   const warningCount = exportSummary?.warnings.length ?? visibleElements.filter((element) => element.status === "qa_failed").length;
-  const detectionCount = visibleElements.length;
+  const candidateCount = visibleElements.length;
 
   return (
     <footer className="model-status-strip">
-      <StatusMetric label="Model Provider" value={provider} />
-      <StatusMetric label="Detections" value={String(detectionCount)} detail="Total" />
-      <StatusMetric label="Reviewed" value={String(reviewedCount)} detail={`${percent(reviewedCount, detectionCount)}%`} />
-      <StatusMetric
-        label="Accepted"
-        value={String(acceptedCount)}
-        detail={`${percent(acceptedCount, reviewedCount)}% of reviewed`}
-        tone="success"
-      />
-      <StatusMetric
-        label="Needs Review"
-        value={String(needsReviewCount)}
-        detail={`${percent(needsReviewCount, detectionCount)}% of total`}
-        tone="warning"
-      />
+      <StatusMetric label="Model Chain" value={modelChain} />
+      <StatusMetric label="Candidates" value={String(candidateCount)} detail="from detector" />
+      <StatusMetric label="Masks Ready" value={String(maskReadyCount)} detail="SAM2 accepted" tone="success" />
+      <StatusMetric label="Export Ready" value={String(exportReadyCount)} detail="final assets" tone="success" />
+      <StatusMetric label="Blocked" value={String(blockedCount)} tone={blockedCount > 0 ? "warning" : undefined} />
       <StatusMetric label="Warnings" value={String(warningCount)} tone={warningCount > 0 ? "danger" : undefined} />
       <div className="status-message" aria-live="polite">
         {isSaving ? "Saving..." : status}
@@ -68,27 +58,19 @@ function StatusMetric({
   );
 }
 
-function percent(value: number, total: number): number {
-  if (total <= 0) {
-    return 0;
-  }
-  return Math.round((value / total) * 100);
+function resolveModelChain(elements: WorkspaceElement[]): string {
+  const detector = elements.find((element) => element.sourceProvider)?.sourceProvider ?? "GroundingDINO";
+  return `${detector} + SAM2`;
 }
 
-function resolveProvider(elements: WorkspaceElement[]): string {
-  return elements.find((element) => element.sourceProvider)?.sourceProvider ?? "Local workspace";
+function hasAcceptedMask(element: WorkspaceElement): boolean {
+  return element.segmentationStatus === "mask_accepted";
 }
 
-function needsReview(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected") {
-    return false;
-  }
-  return ["model_detected", "proposal", "edited", "child", "merged", "qa_failed"].includes(element.status);
+function isExportReady(element: WorkspaceElement): boolean {
+  return element.exportStatus === "ready" || element.exportStatus === "exported";
 }
 
-function isAccepted(element: WorkspaceElement): boolean {
-  if (element.mode === "rejected") {
-    return false;
-  }
-  return ["accepted", "extract_ready", "extracted", "repair_complete", "exported"].includes(element.status);
+function isBlocked(element: WorkspaceElement): boolean {
+  return element.exportStatus === "blocked" || element.status === "qa_failed";
 }

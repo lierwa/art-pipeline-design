@@ -300,7 +300,7 @@ describe("App sticker workflow wiring", () => {
     }
   });
 
-  it("keeps the app rail to Upload, Detect, Segment, Repair, Export", async () => {
+  it("keeps the app rail to Upload, Detect, Segment, Generate, Repair, Export", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/runs" && (!init || init.method === "GET")) {
         return jsonResponse({ detail: "legacy mode" }, 500);
@@ -317,7 +317,7 @@ describe("App sticker workflow wiring", () => {
       const rail = await screen.findByRole("navigation", { name: /pipeline stages/i });
       const stageNames = Array.from(rail.querySelectorAll(".stage-copy strong")).map((stage) => stage.textContent);
 
-      expect(stageNames).toEqual(["Upload", "Detect", "Segment", "Repair", "Export"]);
+      expect(stageNames).toEqual(["Upload", "Detect", "Segment", "Generate", "Repair", "Export"]);
       expect(within(rail).queryByText("Review")).not.toBeInTheDocument();
     } finally {
       restoreFetch();

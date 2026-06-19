@@ -9,14 +9,26 @@ from PIL import Image
 from PIL import ImageChops
 
 from art_pipeline.asset_outputs import element_output_dir
-from art_pipeline.elements import ElementRecord, WorkspaceState
+from art_pipeline.elements import CanvasBox, ElementRecord, SegmentationQuality, WorkspaceState
 from art_pipeline.extraction import compose_asset_from_source, crop_source_to_canvas
-from art_pipeline.mask_refine import normalize_mask
+from art_pipeline.mask_refine import normalize_mask, polish_mask_alpha
 from art_pipeline.parent_repair_contracts import (
     create_parent_removal_repair_contract,
     parent_removal_contract_covers_children,
 )
 from art_pipeline.repair_tasks import clear_repair_outputs
+from art_pipeline.segment_canvas import expanded_canvas_for_source_mask
+from art_pipeline.segment_quality import (
+    SEGMENTATION_QUALITY_FAILED_REASON,
+    SEGMENTATION_QUALITY_MISSING_REASON,
+    build_sam2_prompt,
+    build_sam2_prompt_candidates,
+    quality_metadata_for_candidate,
+    quality_metadata_for_mask,
+    repair_and_score_sam2_candidate,
+    segmentation_quality_block_reason,
+    select_best_sam2_candidate,
+)
 
 
 class Sam2MaskProvider(Protocol):
@@ -37,28 +49,26 @@ def suggest_sam2_edge_mask(
     if not _is_segmentable(element):
         raise ValueError(f"Element {element.id} is not segmentable.")
 
-    prompt = _build_sam2_prompt(element)
-    raw_mask = provider.detect(source_image, prompt)
-    if raw_mask is None:
-        raise RuntimeError("SAM2 provider did not return a mask.")
-
-    mask = _mask_to_canvas(source_image, element, raw_mask)
+    mask, prompt, quality, output_canvas = _detect_best_sam2_mask(source_image, element, provider)
     if mask.getbbox() is None:
         raise RuntimeError("SAM2 provider returned an empty mask.")
 
-    source_crop = crop_source_to_canvas(source_image, element)
-    asset = compose_asset_from_source(source_crop, mask)
+    output_element = element.model_copy(update={"canvas": output_canvas})
+    source_crop = crop_source_to_canvas(source_image, output_element)
+    asset = compose_asset_from_source(source_crop, polish_mask_alpha(mask, source_crop))
     paths = _write_sam2_edge_outputs(
         workspace_root,
-        element,
+        output_element,
         source_crop,
         mask,
         asset,
         prompt,
+        quality,
     )
-    updated = element.model_copy(
+    updated = output_element.model_copy(
         update={
             "segmentationStatus": "mask_suggested",
+            "segmentationQuality": SegmentationQuality.model_validate(quality),
             "mask": paths["maskPath"],
             "exportStatus": "not_ready",
         }
@@ -76,6 +86,12 @@ def accept_sam2_edge_mask(
     element = by_id[element_id]
     if not _has_sam2_suggestion(workspace_root, element):
         raise ValueError(f"Element {element.id} has no SAM2 mask suggestion to accept.")
+    quality_block_reason = segmentation_quality_block_reason(element)
+    if quality_block_reason == SEGMENTATION_QUALITY_MISSING_REASON:
+        raise ValueError(f"Element {element.id} has no segmentation quality report.")
+    if quality_block_reason == SEGMENTATION_QUALITY_FAILED_REASON:
+        reasons = ", ".join(element.segmentationQuality.qualityReasons) if element.segmentationQuality else "unknown"
+        raise ValueError(f"Element {element.id} segmentation quality failed: {reasons}.")
 
     accepted = element.model_copy(update={"segmentationStatus": "mask_accepted"})
     merged = [accepted if current.id == element.id else current for current in state.elements]
@@ -102,7 +118,7 @@ def patch_sam2_edge_mask(
 
     mask = _combine_manual_patch(workspace_root, element, patch_mask, operation)
     source_crop = crop_source_to_canvas(source_image, element)
-    asset = compose_asset_from_source(source_crop, mask)
+    asset = compose_asset_from_source(source_crop, polish_mask_alpha(mask))
     paths = _write_sam2_edge_outputs(
         workspace_root,
         element,
@@ -110,10 +126,12 @@ def patch_sam2_edge_mask(
         mask,
         asset,
         _build_manual_patch_prompt(element, operation),
+        quality_metadata_for_mask(mask, "manual_patch", 1),
     )
     updated = element.model_copy(
         update={
             "segmentationStatus": "mask_suggested",
+            "segmentationQuality": SegmentationQuality.model_validate(paths["quality"]),
             "mask": paths["maskPath"],
             "exportStatus": "not_ready",
         }
@@ -316,21 +334,45 @@ def _has_sam2_suggestion(workspace_root: Path, element: ElementRecord) -> bool:
     )
 
 
-def _build_sam2_prompt(element: ElementRecord) -> dict[str, Any]:
-    return {
-        "version": 1,
-        "stage": SAM2_EDGE_STAGE,
-        "elementId": element.id,
-        "label": element.label or element.name,
-        "bbox": element.bbox.model_dump(mode="json"),
-        "canvas": element.canvas.model_dump(mode="json") if element.canvas else None,
-        "assetRole": element.assetRole,
-    }
+def _detect_best_sam2_mask(
+    source_image: Image.Image,
+    element: ElementRecord,
+    provider: Sam2MaskProvider,
+) -> tuple[Image.Image, dict[str, Any], dict[str, Any], CanvasBox]:
+    candidates = []
+
+    for prompt in build_sam2_prompt_candidates(element, SAM2_EDGE_STAGE):
+        raw_mask = provider.detect(source_image, prompt)
+        if raw_mask is None:
+            continue
+        mask, output_canvas = _mask_to_canvas(source_image, element, raw_mask)
+        candidate_prompt = {
+            **prompt,
+            "canvas": output_canvas.model_dump(mode="json"),
+        }
+        candidates.append(
+            repair_and_score_sam2_candidate(
+                element.id,
+                candidate_prompt,
+                mask,
+            )
+        )
+
+    if not candidates:
+        raise RuntimeError("SAM2 provider did not return a mask.")
+
+    selected = select_best_sam2_candidate(candidates)
+    return (
+        selected.mask,
+        selected.prompt,
+        quality_metadata_for_candidate(selected, len(candidates)),
+        CanvasBox.model_validate(selected.prompt["canvas"]),
+    )
 
 
 def _build_manual_patch_prompt(element: ElementRecord, operation: str) -> dict[str, Any]:
     return {
-        **_build_sam2_prompt(element),
+        **build_sam2_prompt(element, SAM2_EDGE_STAGE),
         "manualEdit": {
             "operation": operation,
             "source": "human_mask_patch",
@@ -373,18 +415,26 @@ def _mask_to_canvas(
     source_image: Image.Image,
     element: ElementRecord,
     raw_mask: Image.Image,
-) -> Image.Image:
+) -> tuple[Image.Image, CanvasBox]:
     if element.canvas is None:
         raise ValueError(f"Element {element.id} canvas is required for segmentation.")
 
     mask = raw_mask.convert("L").point(lambda value: 255 if value > 0 else 0)
-    canvas_size = (element.canvas.w, element.canvas.h)
+    output_canvas = element.canvas
+    canvas_size = (output_canvas.w, output_canvas.h)
     if mask.size == canvas_size:
-        return normalize_mask(element.id, mask, canvas_size)
+        return normalize_mask(element.id, mask, canvas_size), output_canvas
     if mask.size == source_image.size:
-        canvas = element.canvas
-        cropped = mask.crop((canvas.x, canvas.y, canvas.x + canvas.w, canvas.y + canvas.h))
-        return normalize_mask(element.id, cropped, canvas_size)
+        output_canvas = expanded_canvas_for_source_mask(source_image, element, mask)
+        cropped = mask.crop(
+            (
+                output_canvas.x,
+                output_canvas.y,
+                output_canvas.x + output_canvas.w,
+                output_canvas.y + output_canvas.h,
+            )
+        )
+        return normalize_mask(element.id, cropped, (output_canvas.w, output_canvas.h)), output_canvas
     raise ValueError(
         f"SAM2 mask for element {element.id} must match source or canvas dimensions."
     )
@@ -397,6 +447,7 @@ def _write_sam2_edge_outputs(
     mask: Image.Image,
     asset: Image.Image,
     prompt: dict[str, Any],
+    quality: dict[str, Any],
 ) -> dict[str, Any]:
     paths = sam2_edge_paths(element.id)
     element_dir = element_output_dir(workspace_root, element.id, create=True)
@@ -418,6 +469,7 @@ def _write_sam2_edge_outputs(
         "sourcePixelsOnly": True,
         "paths": paths,
         "prompt": prompt,
+        "quality": quality,
     }
     (output_dir / SAM2_METADATA_FILENAME).write_text(
         json.dumps(metadata, indent=2),
@@ -426,6 +478,7 @@ def _write_sam2_edge_outputs(
     return {
         **paths,
         "stage": SAM2_EDGE_STAGE,
+        "quality": quality,
     }
 
 

@@ -58,6 +58,8 @@ function buildStages(
   const maskReadyCount = elements.filter(hasSegmentationReady).length;
   const segmentableCount = elements.filter(isSegmentableElement).length;
   const pendingMaskCount = Math.max(segmentableCount - maskReadyCount, 0);
+  const codexFinalCount = activeElements.filter(hasCodexFinalReady).length;
+  const pendingCodexFinalCount = Math.max(segmentableCount - codexFinalCount, 0);
   const repairNeededCount = activeElements.filter(needsRepair).length;
   const repairCompleteCount = activeElements.filter(isRepairComplete).length;
   const exportedCount =
@@ -67,18 +69,26 @@ function buildStages(
   const hasDetections = detectionCount > 0;
   const isDetectionComplete = hasDetections && pendingReviewCount === 0;
   const isSegmentComplete = isDetectionComplete && (segmentableCount === 0 || pendingMaskCount === 0);
-  const isRepairStageComplete = isSegmentComplete && (repairNeededCount === 0 || repairCompleteCount >= repairNeededCount);
+  const isGenerateComplete = isSegmentComplete && (segmentableCount === 0 || pendingCodexFinalCount === 0);
+  const isRepairStageComplete = isGenerateComplete && (repairNeededCount === 0 || repairCompleteCount >= repairNeededCount);
   const segmentDetail = !hasDetections
     ? "Await detections"
     : pendingReviewCount > 0
-      ? "Await accepted assets"
+      ? "Await asset decisions"
     : segmentableCount === 0
       ? "No segment masks needed"
       : pendingMaskCount > 0
-        ? `${pendingMaskCount} accepted asset${pendingMaskCount === 1 ? " needs" : "s need"} masks`
+        ? `${pendingMaskCount} asset${pendingMaskCount === 1 ? " needs" : "s need"} masks`
         : `${maskReadyCount} mask${maskReadyCount === 1 ? "" : "s"} ready`;
-  const repairDetail = !isSegmentComplete
+  const generateDetail = !isSegmentComplete
     ? "Await masks"
+    : segmentableCount === 0
+      ? "No final assets needed"
+      : pendingCodexFinalCount > 0
+        ? `${pendingCodexFinalCount} final${pendingCodexFinalCount === 1 ? "" : "s"} pending`
+        : `${codexFinalCount} final${codexFinalCount === 1 ? "" : "s"} generated`;
+  const repairDetail = !isGenerateComplete
+    ? "Await final assets"
     : repairNeededCount === 0
       ? "No repair gaps"
       : repairCompleteCount >= repairNeededCount
@@ -104,6 +114,11 @@ function buildStages(
       name: "Segment",
       detail: segmentDetail,
       isComplete: isSegmentComplete,
+    },
+    {
+      name: "Generate",
+      detail: generateDetail,
+      isComplete: isGenerateComplete,
     },
     {
       name: "Repair",
@@ -164,6 +179,12 @@ function isSegmentableElement(element: WorkspaceElement): boolean {
 function hasSegmentationReady(element: WorkspaceElement): boolean {
   // WHY: SAM2 suggest 与 bbox_alpha 都会产生 mask 文件，但只有 accept 后端状态才代表主路径贴纸可进入修复/导出。
   return isSegmentableElement(element) && element.segmentationStatus === "mask_accepted";
+}
+
+function hasCodexFinalReady(element: WorkspaceElement): boolean {
+  return isSegmentableElement(element)
+    && element.sourceProvider === "codex_cli"
+    && ["ready", "exported"].includes(element.exportStatus);
 }
 
 function needsRepair(element: WorkspaceElement): boolean {

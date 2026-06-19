@@ -57,6 +57,7 @@ RepairStatus = Literal[
 ]
 
 ExportStatus = Literal["not_ready", "ready", "exported", "blocked"]
+SegmentationQualityStatus = Literal["pass", "warn", "fail"]
 
 DEFAULT_WORKSPACE_VOCABULARY = [
     "cat",
@@ -109,6 +110,27 @@ class CandidateHistoryEntry(BaseModel):
     after: dict[str, Any]
 
 
+class SegmentationQuality(BaseModel):
+    selectedProfile: str
+    candidateCount: int
+    foregroundArea: int
+    detachedArea: int
+    supportedDetachedArea: int = 0
+    unsupportedDetachedArea: int = 0
+    bboxOutsideArea: int = 0
+    bboxLateralGrowthArea: int = 0
+    bboxTopGrowthArea: int = 0
+    bboxBottomGrowthArea: int = 0
+    filledHoleCount: int
+    filledHoleArea: int
+    removedDetachedCount: int = 0
+    removedDetachedArea: int = 0
+    supportPointCount: int = 0
+    missedSupportPointCount: int = 0
+    qualityStatus: SegmentationQualityStatus = "pass"
+    qualityReasons: list[str] = Field(default_factory=list)
+
+
 class ElementRecord(BaseModel):
     id: str
     name: str
@@ -118,6 +140,7 @@ class ElementRecord(BaseModel):
     assetRole: AssetRole = "sticker"
     removeFromParent: str | None = None
     segmentationStatus: SegmentationStatus = "not_started"
+    segmentationQuality: SegmentationQuality | None = None
     repairStatus: RepairStatus = "not_required"
     exportStatus: ExportStatus = "not_ready"
     bbox: BoundingBox

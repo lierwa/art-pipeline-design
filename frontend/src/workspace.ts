@@ -44,6 +44,29 @@ export type SegmentationStatus =
   | "mask_accepted"
   | "mask_rejected";
 
+export type SegmentationQualityStatus = "pass" | "warn" | "fail";
+
+export type SegmentationQuality = {
+  selectedProfile: string;
+  candidateCount: number;
+  foregroundArea: number;
+  detachedArea: number;
+  supportedDetachedArea: number;
+  unsupportedDetachedArea: number;
+  bboxOutsideArea: number;
+  bboxLateralGrowthArea: number;
+  bboxTopGrowthArea: number;
+  bboxBottomGrowthArea: number;
+  filledHoleCount: number;
+  filledHoleArea: number;
+  removedDetachedCount: number;
+  removedDetachedArea: number;
+  supportPointCount: number;
+  missedSupportPointCount: number;
+  qualityStatus: SegmentationQualityStatus;
+  qualityReasons: string[];
+};
+
 export type RepairStatus =
   | "not_required"
   | "required"
@@ -70,6 +93,7 @@ export type WorkspaceElement = {
   assetRole: AssetRole;
   removeFromParent: string | null;
   segmentationStatus: SegmentationStatus;
+  segmentationQuality: SegmentationQuality | null;
   repairStatus: RepairStatus;
   exportStatus: ExportStatus;
   bbox: Box;
@@ -336,6 +360,7 @@ export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState
       assetRole: element.assetRole ?? "sticker",
       removeFromParent: element.removeFromParent ?? null,
       segmentationStatus: element.segmentationStatus ?? "not_started",
+      segmentationQuality: normalizeSegmentationQuality(element.segmentationQuality),
       repairStatus: element.repairStatus ?? "not_required",
       exportStatus: element.exportStatus ?? "not_ready",
       thumbnail: element.thumbnail ?? null,
@@ -348,6 +373,40 @@ export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState
       mergedInto: element.mergedInto ?? null,
       exportParent: element.exportParent ?? false,
     })),
+  };
+}
+
+function normalizeSegmentationQuality(
+  quality: WorkspaceElement["segmentationQuality"],
+): SegmentationQuality | null {
+  if (!quality) {
+    return null;
+  }
+  return {
+    ...quality,
+    supportedDetachedArea: quality.supportedDetachedArea ?? 0,
+    unsupportedDetachedArea: quality.unsupportedDetachedArea ?? quality.detachedArea ?? 0,
+    bboxOutsideArea: quality.bboxOutsideArea ?? 0,
+    bboxLateralGrowthArea: quality.bboxLateralGrowthArea ?? 0,
+    bboxTopGrowthArea: quality.bboxTopGrowthArea ?? 0,
+    bboxBottomGrowthArea: quality.bboxBottomGrowthArea ?? 0,
+    supportPointCount: quality.supportPointCount ?? 0,
+    missedSupportPointCount: quality.missedSupportPointCount ?? 0,
+    qualityStatus: quality.qualityStatus ?? "pass",
+    qualityReasons: quality.qualityReasons ?? [],
+  };
+}
+
+export function codexFinalArtifactUrls(
+  element: WorkspaceElement,
+  cacheKey?: number,
+  runId?: string | null,
+): { sourceCropUrl: string | null; transparentAssetUrl: string | null } {
+  // WHY: Codex final 是后续导出的正式贴图；统一从这里投影 URL，避免 UI 多处硬编码 stage 路径。
+  const base = `elements/${element.id}/codex_final`;
+  return {
+    sourceCropUrl: workspaceAssetUrl(`${base}/source_crop.png`, cacheKey, runId),
+    transparentAssetUrl: workspaceAssetUrl(`${base}/transparent_asset.png`, cacheKey, runId),
   };
 }
 

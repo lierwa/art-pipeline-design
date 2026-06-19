@@ -24,6 +24,26 @@ const segmentElement: WorkspaceElement = {
   assetRole: "sticker",
   removeFromParent: null,
   segmentationStatus: "mask_suggested",
+  segmentationQuality: {
+    selectedProfile: "base",
+    candidateCount: 2,
+    foregroundArea: 26045,
+    detachedArea: 680,
+    supportedDetachedArea: 40,
+    unsupportedDetachedArea: 640,
+    bboxOutsideArea: 0,
+    bboxLateralGrowthArea: 0,
+    bboxTopGrowthArea: 0,
+    bboxBottomGrowthArea: 0,
+    filledHoleCount: 1,
+    filledHoleArea: 41,
+    removedDetachedCount: 1,
+    removedDetachedArea: 2,
+    supportPointCount: 5,
+    missedSupportPointCount: 1,
+    qualityStatus: "warn",
+    qualityReasons: ["detached_components_present"],
+  },
   repairStatus: "not_required",
   exportStatus: "not_ready",
   notes: "",
@@ -42,9 +62,10 @@ const source = {
 };
 
 describe("segment workbench building blocks", () => {
-  it("renders source crop, SAM2 edge mask, transparent sticker, and accept mask controls", () => {
+  it("renders source crop, SAM2 edge mask, transparent sticker, and final generation controls", () => {
     const suggestMask = vi.fn();
     const acceptMask = vi.fn();
+    const generateFinal = vi.fn();
 
     render(
       <SegmentEdgeBoard
@@ -53,6 +74,7 @@ describe("segment workbench building blocks", () => {
         workspaceRunId="run_segment_001"
         onSuggestMask={suggestMask}
         onAcceptMask={acceptMask}
+        onGenerateFinal={generateFinal}
       />,
     );
 
@@ -71,9 +93,32 @@ describe("segment workbench building blocks", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /suggest mask/i }));
     fireEvent.click(screen.getByRole("button", { name: /accept mask/i }));
+    fireEvent.click(screen.getByRole("button", { name: /generate final/i }));
 
     expect(suggestMask).toHaveBeenCalledTimes(1);
     expect(acceptMask).toHaveBeenCalledTimes(1);
+    expect(generateFinal).toHaveBeenCalledWith("element_001");
+  });
+
+  it("renders a Codex final preview after generation completes", () => {
+    render(
+      <SegmentEdgeBoard
+        element={{
+          ...segmentElement,
+          sourceProvider: "codex_cli",
+          status: "repair_complete",
+          repairStatus: "repair_complete",
+          exportStatus: "ready",
+        }}
+        assetCacheKey={7}
+        workspaceRunId="run_segment_001"
+      />,
+    );
+
+    expect(screen.getByRole("img", { name: /cabinet codex final/i })).toHaveAttribute(
+      "src",
+      "/api/workspace/assets/elements/element_001/codex_final/transparent_asset.png?cache=7&runId=run_segment_001",
+    );
   });
 
   it("renders manual rectangle mask controls and emits patch payloads", () => {
@@ -105,7 +150,27 @@ describe("segment workbench building blocks", () => {
     });
   });
 
-  it("renders Upload, Detect, Segment, Repair, Export and no Review stage", () => {
+  it("renders SAM2 quality diagnostics next to mask review controls", () => {
+    render(
+      <SegmentEdgeBoard
+        element={segmentElement}
+        assetCacheKey={7}
+        workspaceRunId="run_segment_001"
+      />,
+    );
+
+    const quality = screen.getByRole("group", { name: /sam2 quality diagnostics/i });
+    expect(within(quality).getByText("base")).toBeInTheDocument();
+    expect(within(quality).getByText("2")).toBeInTheDocument();
+    expect(within(quality).getByText("41 px")).toBeInTheDocument();
+    expect(within(quality).getByText("2 px")).toBeInTheDocument();
+    expect(within(quality).getByText("640 / 40 px")).toBeInTheDocument();
+    expect(within(quality).getByText("4 / 5")).toBeInTheDocument();
+    expect(within(quality).getByText("warn")).toBeInTheDocument();
+    expect(within(quality).getByText("detached_components_present")).toBeInTheDocument();
+  });
+
+  it("renders Upload, Detect, Segment, Generate, Repair, Export and no Review stage", () => {
     render(
       <PipelineRail
         source={source}
@@ -117,7 +182,7 @@ describe("segment workbench building blocks", () => {
     const rail = screen.getByRole("navigation", { name: /pipeline stages/i });
     const stageNames = Array.from(rail.querySelectorAll(".stage-copy strong")).map((stage) => stage.textContent);
 
-    expect(stageNames).toEqual(["Upload", "Detect", "Segment", "Repair", "Export"]);
+    expect(stageNames).toEqual(["Upload", "Detect", "Segment", "Generate", "Repair", "Export"]);
     expect(within(rail).queryByText("Review")).not.toBeInTheDocument();
   });
 
@@ -141,6 +206,7 @@ describe("segment workbench building blocks", () => {
     expect(within(rail).queryByText(/no segment masks needed/i)).not.toBeInTheDocument();
     expect(pipelineStage(rail, "Detect")).toHaveClass("is-active");
     expect(pipelineStage(rail, "Segment")).toHaveClass("is-pending");
+    expect(pipelineStage(rail, "Generate")).toHaveClass("is-pending");
     expect(pipelineStage(rail, "Repair")).toHaveClass("is-pending");
     expect(pipelineStage(rail, "Export")).toHaveClass("is-pending");
   });
@@ -186,9 +252,10 @@ describe("segment workbench building blocks", () => {
 
     const rail = screen.getByRole("navigation", { name: /pipeline stages/i });
     expect(within(rail).queryByText(/mask ready/i)).not.toBeInTheDocument();
-    expect(within(rail).getByText(/1 accepted asset needs masks/i)).toBeInTheDocument();
+    expect(within(rail).getByText(/1 asset needs masks/i)).toBeInTheDocument();
     expect(within(rail).getByText(/await masks/i)).toBeInTheDocument();
     expect(pipelineStage(rail, "Segment")).toHaveClass("is-active");
+    expect(pipelineStage(rail, "Generate")).toHaveClass("is-pending");
     expect(pipelineStage(rail, "Repair")).toHaveClass("is-pending");
   });
 
@@ -210,12 +277,13 @@ describe("segment workbench building blocks", () => {
 
     const rail = screen.getByRole("navigation", { name: /pipeline stages/i });
     expect(within(rail).queryByText(/mask ready/i)).not.toBeInTheDocument();
-    expect(within(rail).getByText(/1 accepted asset needs masks/i)).toBeInTheDocument();
+    expect(within(rail).getByText(/1 asset needs masks/i)).toBeInTheDocument();
     expect(pipelineStage(rail, "Segment")).toHaveClass("is-active");
+    expect(pipelineStage(rail, "Generate")).toHaveClass("is-pending");
     expect(pipelineStage(rail, "Repair")).toHaveClass("is-pending");
   });
 
-  it("advances Segment only after an exportable role accepts its segmentation mask", () => {
+  it("moves to Generate after an exportable role accepts its segmentation mask", () => {
     const acceptedMaskElement: WorkspaceElement = {
       ...segmentElement,
       segmentationStatus: "mask_accepted",
@@ -232,6 +300,32 @@ describe("segment workbench building blocks", () => {
     const rail = screen.getByRole("navigation", { name: /pipeline stages/i });
     expect(within(rail).getByText(/1 mask ready/i)).toBeInTheDocument();
     expect(pipelineStage(rail, "Segment")).toHaveClass("is-done");
+    expect(pipelineStage(rail, "Generate")).toHaveClass("is-active");
+    expect(pipelineStage(rail, "Repair")).toHaveClass("is-pending");
+    expect(pipelineStage(rail, "Export")).toHaveClass("is-pending");
+  });
+
+  it("advances Generate after Codex final output is ready", () => {
+    const generatedElement: WorkspaceElement = {
+      ...segmentElement,
+      status: "repair_complete",
+      segmentationStatus: "mask_accepted",
+      repairStatus: "repair_complete",
+      exportStatus: "ready",
+      sourceProvider: "codex_cli",
+    };
+
+    render(
+      <PipelineRail
+        source={source}
+        elements={[generatedElement]}
+        exportSummary={null}
+      />,
+    );
+
+    const rail = screen.getByRole("navigation", { name: /pipeline stages/i });
+    expect(within(rail).getByText(/1 final generated/i)).toBeInTheDocument();
+    expect(pipelineStage(rail, "Generate")).toHaveClass("is-done");
     expect(pipelineStage(rail, "Repair")).toHaveClass("is-done");
     expect(pipelineStage(rail, "Export")).toHaveClass("is-active");
   });

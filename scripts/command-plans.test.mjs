@@ -128,7 +128,7 @@ test("createDevPlan can explicitly start the demo provider", () => {
   assert.equal(plan[0].env.ART_PIPELINE_DETECTION_PROVIDER, "demo");
 });
 
-test("createDownloadModelPlan downloads the formal GroundingDINO model", () => {
+test("createDownloadModelPlan downloads the formal detection and segmentation models", () => {
   assert.deepEqual(
     createDownloadModelPlan({
       pythonCommand: { command: "python3", args: [] },
@@ -138,6 +138,11 @@ test("createDownloadModelPlan downloads the formal GroundingDINO model", () => {
         label: "grounding-dino-model",
         command: "python3",
         args: ["-m", "art_pipeline.model_runners.download_grounding_dino"],
+      },
+      {
+        label: "sam2-model",
+        command: "python3",
+        args: ["-m", "art_pipeline.model_runners.download_sam2"],
       },
     ],
   );

@@ -68,6 +68,65 @@ def test_exported_sticker_asset_has_opaque_outline_outside_original_mask(
         assert mask.getpixel((3, 3)) == 255
 
 
+def test_final_export_blocks_accepted_sam2_asset_without_quality_report(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=SmallMaskProvider()))
+    _upload_state(client, [_sticker_element()])
+    assert client.post("/api/workspace/elements/element_001/segment/suggest").status_code == 200
+    state_response = client.get("/api/workspace/state")
+    assert state_response.status_code == 200
+    state = state_response.json()
+    state["elements"][0].pop("segmentationQuality", None)
+    state["elements"][0]["segmentationStatus"] = "mask_accepted"
+    state["elements"][0]["exportStatus"] = "ready"
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 0
+    assert body["blockedElements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "reason": "segmentation_quality_missing",
+        }
+    ]
+    assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
+
+
+def test_final_export_blocks_failed_segmentation_quality_report(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=SmallMaskProvider()))
+    _upload_state(client, [_sticker_element()])
+    assert client.post("/api/workspace/elements/element_001/segment/suggest").status_code == 200
+    state_response = client.get("/api/workspace/state")
+    assert state_response.status_code == 200
+    state = state_response.json()
+    quality = state["elements"][0]["segmentationQuality"]
+    quality["qualityStatus"] = "fail"
+    quality["qualityReasons"] = ["empty_foreground"]
+    state["elements"][0]["segmentationStatus"] = "mask_accepted"
+    state["elements"][0]["exportStatus"] = "ready"
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post("/api/workspace/export")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["exportableCount"] == 0
+    assert body["blockedElements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "reason": "segmentation_quality_failed",
+        }
+    ]
+
+
 def test_manifest_and_level_include_sticker_pipeline_metadata(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path / "workspace", sam2_provider=SmallMaskProvider()))
     _upload_state(

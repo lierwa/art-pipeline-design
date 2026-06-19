@@ -230,6 +230,8 @@ def _segmentation_provider(planned_export: PlannedExport) -> str | None:
 
 
 def _repair_provider(planned_export: PlannedExport) -> str | None:
+    if "/codex_final/" in planned_export.source_asset_path:
+        return "codex_cli"
     if "/repair/" in planned_export.source_asset_path:
         return "repair"
     return None

@@ -2792,6 +2792,18 @@ def _promote_visible_element_to_sam2_accepted(client: TestClient, tmp_path: Path
     for element in state["elements"]:
         if element["id"] == "element_001":
             element["segmentationStatus"] = "mask_accepted"
+            element["segmentationQuality"] = {
+                "selectedProfile": "fixture",
+                "candidateCount": 1,
+                "foregroundArea": 4,
+                "detachedArea": 0,
+                "filledHoleCount": 0,
+                "filledHoleArea": 0,
+                "removedDetachedCount": 0,
+                "removedDetachedArea": 0,
+                "supportPointCount": 0,
+                "missedSupportPointCount": 0,
+            }
             element["mask"] = "elements/element_001/sam2_edge/mask.png"
             element["exportStatus"] = "ready"
     assert client.put("/api/workspace/state", json=state).status_code == 200

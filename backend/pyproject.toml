@@ -21,10 +21,11 @@ dev = [
 ]
 model = [
   "accelerate>=0.33",
+  "numpy>=1.26",
   "safetensors>=0.4",
   "torch>=2.2",
   "torchvision>=0.17",
-  "transformers>=4.45",
+  "transformers>=4.56",
 ]
 
 [tool.pytest.ini_options]

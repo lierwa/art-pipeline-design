@@ -665,6 +665,46 @@ describe("App", () => {
     }
   });
 
+  it("keeps Codex final assets visible in the stage workbench after generation", async () => {
+    const codexFinalState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          id: "element_codex_cat",
+          name: "cat",
+          label: "cat",
+          status: "repair_complete",
+          sourceProvider: "codex_cli",
+          sourcePrompt: "$imagegen repair cat",
+          mask: "elements/element_codex_cat/mask.png",
+          segmentationStatus: "mask_suggested",
+          repairStatus: "repair_complete",
+          exportStatus: "ready",
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(codexFinalState);
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const stageDrawer = await screen.findByRole("dialog", { name: /segment/i });
+      expect(within(stageDrawer).getByText(/stage workbench/i)).toBeInTheDocument();
+      expect(within(stageDrawer).getByRole("img", { name: /cat codex final/i })).toHaveAttribute(
+        "src",
+        expect.stringContaining("/api/workspace/assets/elements/element_codex_cat/codex_final/transparent_asset.png"),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("declares shared UI libraries for icons, tooltips, and resizable panes", async () => {
     // The app tsconfig omits Node typings, but this regression reads package metadata in Vitest.
     // @ts-expect-error Test-only Node import without widening app compiler types.
@@ -693,7 +733,7 @@ describe("App", () => {
     // @ts-expect-error Test-only Node import without widening app compiler types.
     const { fileURLToPath } = await import("node:url");
     const stylesheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "styles.css"), "utf8");
-    const desktopMinimumWidth = 228 + 520 + 392;
+    const desktopMinimumWidth = 72 + 720 + 300;
     const responsiveShellRules = stylesheet.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([\s\S]*)\n\}/);
 
     expect(responsiveShellRules).not.toBeNull();
@@ -709,7 +749,7 @@ describe("App", () => {
 
     expect(stylesheet).toMatch(/\.top-app-bar\s*\{[\s\S]*grid-template-columns:\s*228px\s+minmax\(200px,\s*260px\)\s+minmax\(0,\s*1fr\);/);
     expect(stylesheet).toMatch(/\.source-control\s*\{[\s\S]*cursor:\s*pointer;/);
-    expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\)\s+auto;/);
+    expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto;/);
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.panel\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\);/);
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.inspector-panel\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
     expect(stylesheet).toMatch(/\.asset-tree-panel\s*\{[\s\S]*min-height:\s*0;[\s\S]*grid-template-rows:\s*auto\s+auto\s+auto\s+minmax\(0,\s*1fr\);/);
@@ -724,11 +764,31 @@ describe("App", () => {
     expect(stylesheet).toMatch(/\.canvas-panel\s*\{[\s\S]*overscroll-behavior:\s*contain;[\s\S]*touch-action:\s*none;/);
     expect(stylesheet).toMatch(/\.canvas-panel\s*>\s*\.canvas-header\s*\{[\s\S]*position:\s*absolute;[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
     expect(stylesheet).toMatch(/\.canvas-stage\s*\{[\s\S]*align-items:\s*flex-start;[\s\S]*overscroll-behavior:\s*contain;[\s\S]*touch-action:\s*none;/);
-    expect(stylesheet).toMatch(/\.canvas-artboard\s*\{[\s\S]*width:\s*min\(100%,\s*calc\(\(100vh - 100px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
+    expect(stylesheet).toMatch(/\.canvas-artboard\s*\{[\s\S]*width:\s*min\(100%,\s*calc\(\(100vh - 250px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
+    expect(stylesheet).toMatch(/\.canvas-workspace\.has-stage-drawer\s+\.canvas-artboard\s*\{[\s\S]*width:\s*min\(100%,\s*calc\(\(100vh - 500px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
     expect(stylesheet).toMatch(/\.workbench-panel-resize-handle\s*\{/);
     expect(stylesheet).toMatch(/\.canvas-pan-viewport\s*\{[\s\S]*transform:/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-workspace\s*>\s*\.canvas-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-artboard\s*\{[\s\S]*width:\s*min\(calc\(100vw - 1\.5rem\),\s*calc\(\(100vh - 260px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
+  });
+
+  it("prioritizes the canvas in the desktop workbench layout", async () => {
+    // The app tsconfig omits Node typings, but this regression reads authored CSS in Vitest.
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { readFileSync } = await import("node:fs");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { dirname, resolve } = await import("node:path");
+    // @ts-expect-error Test-only Node import without widening app compiler types.
+    const { fileURLToPath } = await import("node:url");
+    const stylesheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "styles.css"), "utf8");
+
+    expect(stylesheet).toMatch(/\.app-shell\s*\{[\s\S]*grid-template-rows:\s*56px\s+minmax\(0,\s*1fr\)\s+44px;/);
+    expect(stylesheet).toMatch(/\.pipeline-stage\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+    expect(stylesheet).toMatch(/\.workbench-panel-rail\s+\.stage-copy\s+span\s*\{[\s\S]*clip:\s*rect\(0,\s*0,\s*0,\s*0\);/);
+    expect(stylesheet).toMatch(/\.detection-vocabulary-chips\s*\{[\s\S]*flex-wrap:\s*nowrap;[\s\S]*overflow-x:\s*auto;/);
+    expect(stylesheet).toMatch(/\.floating-stage-drawer\s*\{[\s\S]*position:\s*relative;[\s\S]*height:\s*min\(var\(--stage-drawer-height,\s*220px\),\s*240px\);/);
+    expect(stylesheet).toMatch(/\.workspace-preview-panels\s*\{[\s\S]*display:\s*none;/);
+    expect(stylesheet).toMatch(/\.model-status-strip\s*\{[\s\S]*min-height:\s*44px;/);
   });
 
   it("renders pipeline rail with stage progress", async () => {
@@ -756,7 +816,7 @@ describe("App", () => {
       expect(within(pipelineRail).getByText("Export")).toBeInTheDocument();
       expect(within(pipelineRail).queryByText("Review")).not.toBeInTheDocument();
       expect(within(pipelineRail).getByText(/2 candidates/i)).toBeInTheDocument();
-      expect(within(pipelineRail).getByText(/await accepted assets/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/await asset decisions/i)).toBeInTheDocument();
       expect(within(pipelineRail).getByText(/await masks/i)).toBeInTheDocument();
       // WHY: 未审核候选还没有分割/导出路径结论，rail 不能把部分已审核资产当作整体进入 Segment。
       expect(pipelineStage(pipelineRail, "Detect")).toHaveClass("is-active");
@@ -786,7 +846,7 @@ describe("App", () => {
       expect(pipelineStage(pipelineRail, "Segment")).toHaveClass("is-active");
       expect(pipelineStage(pipelineRail, "Repair")).toHaveClass("is-pending");
       expect(pipelineStage(pipelineRail, "Export")).toHaveClass("is-pending");
-      expect(within(pipelineRail).getByText(/1 accepted asset needs masks/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/1 asset needs masks/i)).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -852,15 +912,18 @@ describe("App", () => {
     try {
       render(<App />);
 
-      const providerLabel = await screen.findByText("Model Provider");
+      const providerLabel = await screen.findByText("Model Chain");
       const statusStrip = providerLabel.closest("footer");
       expect(statusStrip).not.toBeNull();
       const metrics = within(statusStrip as HTMLElement);
 
-      expect(metrics.getByText("Total")).toBeInTheDocument();
-      expect(metrics.getByText("50%")).toBeInTheDocument();
-      expect(metrics.getByText("100% of reviewed")).toBeInTheDocument();
-      expect(metrics.getByText("50% of total")).toBeInTheDocument();
+      expect(metrics.getByText("test_provider + SAM2")).toBeInTheDocument();
+      expect(metrics.getByText("Candidates")).toBeInTheDocument();
+      expect(metrics.getByText("from detector")).toBeInTheDocument();
+      expect(metrics.getByText("Masks Ready")).toBeInTheDocument();
+      expect(metrics.getByText("SAM2 accepted")).toBeInTheDocument();
+      expect(metrics.getByText("Export Ready")).toBeInTheDocument();
+      expect(metrics.getByText("final assets")).toBeInTheDocument();
     } finally {
       restoreFetch();
     }
@@ -1071,6 +1134,9 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
+      await waitFor(() => {
+        expect(within(screen.getByRole("toolbar", { name: /canvas tools/i })).getByText("80%")).toBeInTheDocument();
+      });
 
       const canvasArea = screen.getByTestId("canvas-area");
       const gestureStart = createGestureEvent("gesturestart", 1);
@@ -1551,7 +1617,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByAltText("cabinet thumbnail");
 
-      await user.click(screen.getByRole("button", { name: /complete review/i }));
+      await user.click(screen.getByRole("button", { name: /use detected assets/i }));
 
       await waitFor(() => {
         expect(savedStates[0]?.elements[0].status).toBe("accepted");
@@ -2038,7 +2104,7 @@ describe("App", () => {
         expect.objectContaining({ method: "POST" }),
       );
       expect(await screen.findByAltText("cabinet thumbnail")).toBeInTheDocument();
-      expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Detected").length).toBeGreaterThan(0);
       expect(screen.getByTestId("overlay-label-element_010")).toHaveTextContent("cabinet");
     } finally {
       restoreFetch();
@@ -2412,7 +2478,7 @@ describe("App", () => {
         expect.objectContaining({ method: "PATCH" }),
       );
       expect(patchRequest).toEqual({ visible: false });
-      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Ready for mask").length).toBeGreaterThan(0);
       expect(screen.getByRole("button", { name: /^extract$/i })).not.toBeDisabled();
     } finally {
       restoreFetch();
@@ -3025,14 +3091,14 @@ describe("App", () => {
 
       await user.click(undoButton);
       expect(await screen.findAllByText(/undone\./i)).toHaveLength(2);
-      expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Detected").length).toBeGreaterThan(0);
       expect(redoButton).toBeEnabled();
 
       fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
       await waitFor(() => {
         expect(screen.getAllByText(/redone\./i)).toHaveLength(2);
       });
-      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Ready for mask").length).toBeGreaterThan(0);
 
       expect(savedStates).toEqual([
         persistedWorkspaceState(acceptedState),
@@ -3276,7 +3342,7 @@ describe("App", () => {
         }),
       );
       expect(await screen.findAllByText(/mask replaced\./i)).toHaveLength(2);
-      expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("Ready for mask").length).toBeGreaterThan(0);
     } finally {
       restoreFetch();
     }
