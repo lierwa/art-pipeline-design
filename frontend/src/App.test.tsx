@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 
 import { App } from "./App";
+import { normalizeWorkspaceState, type WorkspaceState } from "./workspace";
 
 const loadedState = {
   source: {
@@ -415,6 +416,19 @@ const extractedState = {
   ],
 };
 
+const exportReadyState = {
+  source: loadedState.source,
+  elements: [
+    {
+      ...loadedState.elements[0],
+      status: "extracted",
+      mask: "elements/element_001/mask.png",
+      segmentationStatus: "mask_accepted",
+      exportStatus: "ready",
+    },
+  ],
+};
+
 const exportSummary = {
   exportableCount: 1,
   blockedCount: 1,
@@ -497,6 +511,11 @@ function installFetchMock(handler: (input: RequestInfo | URL, init?: RequestInit
   };
 }
 
+function persistedWorkspaceState(state: unknown): WorkspaceState {
+  // WHY: 持久化契约断言复用 workspace normalizer，避免测试 fixture 变成第二套默认字段来源。
+  return normalizeWorkspaceState(state as WorkspaceState);
+}
+
 function setCanvasRect(surface: HTMLElement) {
   vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
     x: 0,
@@ -547,6 +566,14 @@ function openAssetContextMenu(point: { x: number; y: number } = { x: 100, y: 120
 
 function assetSelectButton(name: RegExp) {
   return screen.getByRole("button", { name });
+}
+
+function pipelineStage(pipelineRail: HTMLElement, name: string) {
+  const stage = within(pipelineRail).getByText(name).closest("li");
+  if (!stage) {
+    throw new Error(`Pipeline stage ${name} did not render as a list item.`);
+  }
+  return stage;
 }
 
 function toggleAssetSelection(name: RegExp) {
@@ -724,20 +751,24 @@ describe("App", () => {
       const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
       expect(within(pipelineRail).getByText("Upload")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Detect")).toBeInTheDocument();
-      expect(within(pipelineRail).getByText("Review")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Segment")).toBeInTheDocument();
+      expect(within(pipelineRail).getByText("Repair")).toBeInTheDocument();
       expect(within(pipelineRail).getByText("Export")).toBeInTheDocument();
+      expect(within(pipelineRail).queryByText("Review")).not.toBeInTheDocument();
       expect(within(pipelineRail).getByText(/2 candidates/i)).toBeInTheDocument();
-      expect(within(pipelineRail).getByText(/1 of 2 reviewed/i)).toBeInTheDocument();
-      expect(within(pipelineRail).getByText(/finish review first/i)).toBeInTheDocument();
-      expect(within(pipelineRail).getByText("Review").closest("li")).toHaveClass("is-active");
-      expect(within(pipelineRail).getByText("Segment").closest("li")).toHaveClass("is-pending");
+      expect(within(pipelineRail).getByText(/await accepted assets/i)).toBeInTheDocument();
+      expect(within(pipelineRail).getByText(/await masks/i)).toBeInTheDocument();
+      // WHY: 未审核候选还没有分割/导出路径结论，rail 不能把部分已审核资产当作整体进入 Segment。
+      expect(pipelineStage(pipelineRail, "Detect")).toHaveClass("is-active");
+      expect(pipelineStage(pipelineRail, "Segment")).toHaveClass("is-pending");
+      expect(pipelineStage(pipelineRail, "Repair")).toHaveClass("is-pending");
+      expect(pipelineStage(pipelineRail, "Export")).toHaveClass("is-pending");
     } finally {
       restoreFetch();
     }
   });
 
-  it("activates segmentation only after review is complete and assets are accepted", async () => {
+  it("activates segmentation once assets are accepted", async () => {
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(loadedState);
@@ -750,8 +781,11 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       const pipelineRail = screen.getByRole("navigation", { name: /pipeline stages/i });
-      expect(within(pipelineRail).getByText("Review").closest("li")).toHaveClass("is-done");
-      expect(within(pipelineRail).getByText("Segment").closest("li")).toHaveClass("is-active");
+      expect(within(pipelineRail).queryByText("Review")).not.toBeInTheDocument();
+      expect(pipelineStage(pipelineRail, "Detect")).toHaveClass("is-done");
+      expect(pipelineStage(pipelineRail, "Segment")).toHaveClass("is-active");
+      expect(pipelineStage(pipelineRail, "Repair")).toHaveClass("is-pending");
+      expect(pipelineStage(pipelineRail, "Export")).toHaveClass("is-pending");
       expect(within(pipelineRail).getByText(/1 accepted asset needs masks/i)).toBeInTheDocument();
     } finally {
       restoreFetch();
@@ -1478,7 +1512,9 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByTestId("overlay-label-element_001"));
+      // WHY: overlay label 依赖画布坐标投影完成，完整套件并行运行时需要等待真实可点击标签出现。
+      const overlayLabel = await screen.findByTestId("overlay-label-element_001");
+      await user.click(overlayLabel);
       const inlineName = await screen.findByLabelText(/rename region 1/i);
       fireEvent.change(inlineName, { target: { value: "Main tub" } });
       fireEvent.blur(inlineName);
@@ -1486,7 +1522,9 @@ describe("App", () => {
       await waitFor(() => {
         expect(patchRequest).toEqual({ label: "Main tub" });
       });
-      expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Main tub");
+      await waitFor(() => {
+        expect(screen.getByTestId("overlay-label-element_001")).toHaveTextContent("Main tub");
+      });
     } finally {
       restoreFetch();
     }
@@ -1590,7 +1628,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      setCanvasRect(screen.getByTestId("canvas-artboard"));
+      setCanvasRect(await screen.findByTestId("canvas-artboard"));
       const surface = screen.getByTestId("canvas-drawing-surface");
       fireEvent.mouseDown(surface, { clientX: 270, clientY: 130, shiftKey: true, button: 0 });
 
@@ -1615,7 +1653,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      setCanvasRect(screen.getByTestId("canvas-artboard"));
+      setCanvasRect(await screen.findByTestId("canvas-artboard"));
       const surface = screen.getByTestId("canvas-drawing-surface");
       fireEvent.mouseDown(surface, { clientX: 250, clientY: 250, shiftKey: true, button: 0 });
 
@@ -1727,7 +1765,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const artboard = screen.getByTestId("canvas-artboard");
+      const artboard = await screen.findByTestId("canvas-artboard");
       const stage = screen.getByTestId("canvas-area").querySelector(".canvas-stage");
       const viewport = screen.getByTestId("canvas-area").querySelector<HTMLElement>(".canvas-pan-viewport");
       if (!stage || !viewport) {
@@ -1804,7 +1842,8 @@ describe("App", () => {
 
       const assetTree = await screen.findByRole("tree", { name: /asset tree/i });
       const parentItem = within(assetTree).getByRole("treeitem", { name: /cabinet/i });
-      expect(within(parentItem).getByRole("treeitem", { name: /plant/i })).toBeInTheDocument();
+      // WHY: 父子展开由 AssetTreePanel 的元素树 effect 收敛，测试应等待业务可见状态而不是依赖前序测试残留。
+      expect(await within(parentItem).findByRole("treeitem", { name: /plant/i })).toBeInTheDocument();
       expect(screen.queryByText("old towel")).not.toBeInTheDocument();
     } finally {
       restoreFetch();
@@ -2074,7 +2113,7 @@ describe("App", () => {
       }
 
       if (input === "/api/workspace/state" && init?.method === "PUT") {
-        expect(init.body).toBe(JSON.stringify(rejectedState));
+        expect(init.body).toBe(JSON.stringify(persistedWorkspaceState(rejectedState)));
         return jsonResponse(rejectedState);
       }
 
@@ -2084,6 +2123,8 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByAltText("cabinet thumbnail");
+      // WHY: 新布局中资产面板可早于 sourceUrl effect 驱动画布提交，拒绝行为仍应从 canvas menu 覆盖。
+      await screen.findByTestId("canvas-artboard");
 
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /^reject$/i }));
@@ -2239,6 +2280,7 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
+      await screen.findByTestId("canvas-artboard");
 
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /add child/i }));
@@ -2377,6 +2419,90 @@ describe("App", () => {
     }
   });
 
+  it("lets the real inspector switch to removable child before choosing a parent", async () => {
+    const user = userEvent.setup();
+    const cabinetElement = {
+      ...loadedState.elements[0],
+      id: "element_001",
+      name: "Cabinet",
+      label: "Cabinet",
+      assetRole: "parent",
+      removeFromParent: null,
+    };
+    const stickerElement = {
+      ...loadedState.elements[0],
+      id: "element_002",
+      name: "Sticker",
+      label: "Sticker",
+      assetRole: "sticker",
+      removeFromParent: null,
+      bbox: { x: 40, y: 20, w: 16, h: 18 },
+      canvas: { x: 36, y: 18, w: 24, h: 24 },
+      layer: 2,
+      thumbnail: "elements/element_002/thumb.png",
+    };
+    const initialState = {
+      source: loadedState.source,
+      elements: [cabinetElement, stickerElement],
+    };
+    const pendingChildElement = {
+      ...stickerElement,
+      assetRole: "removable_child",
+      removeFromParent: null,
+    };
+    const finalChildElement = {
+      ...pendingChildElement,
+      removeFromParent: "element_001",
+    };
+    const patchRequests: unknown[] = [];
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(initialState);
+      }
+
+      if (input === "/api/workspace/elements/element_002" && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        patchRequests.push(body);
+        const element = body.removeFromParent === "element_001"
+          ? finalChildElement
+          : pendingChildElement;
+
+        return jsonResponse({
+          element,
+          state: {
+            source: loadedState.source,
+            elements: [cabinetElement, element],
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+      await screen.findByText(/original\.png - 120 x 90/i);
+      await user.click(screen.getByRole("button", { name: /select sticker$/i }));
+
+      await user.selectOptions(screen.getByRole("combobox", { name: /asset role/i }), "removable_child");
+      expect(await screen.findByRole("combobox", { name: /remove from parent/i })).toBeInTheDocument();
+      expect(patchRequests[0]).toEqual({
+        assetRole: "removable_child",
+        removeFromParent: null,
+      });
+
+      await user.selectOptions(screen.getByRole("combobox", { name: /remove from parent/i }), "element_001");
+      await waitFor(() => {
+        expect(patchRequests[1]).toEqual({
+          assetRole: "removable_child",
+          removeFromParent: "element_001",
+        });
+      });
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("saves bbox-only candidate edits with PATCH", async () => {
     const user = userEvent.setup();
     const patchedElement = {
@@ -2459,7 +2585,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
       fireEvent.change(bboxWidthField, { target: { value: "34" } });
       fireEvent.change(screen.getByLabelText(/element notes/i), { target: { value: "Needs legacy review" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
@@ -2496,7 +2622,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
       fireEvent.change(bboxWidthField, { target: { value: "0" } });
       await user.click(screen.getByRole("button", { name: /save element/i }));
 
@@ -2605,7 +2731,7 @@ describe("App", () => {
       await screen.findByText(/original\.png - 120 x 90/i);
 
       toggleAssetSelection(/select region 2/i);
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
       await user.clear(bboxWidthField);
       await user.type(bboxWidthField, "34");
 
@@ -2885,6 +3011,7 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByAltText("cabinet thumbnail");
+      await screen.findByTestId("canvas-artboard");
 
       const contextMenu = openAssetContextMenu();
       await user.click(within(contextMenu).getByRole("menuitem", { name: /^accept$/i }));
@@ -2908,9 +3035,9 @@ describe("App", () => {
       expect(screen.getAllByText("Accepted").length).toBeGreaterThan(0);
 
       expect(savedStates).toEqual([
-        acceptedState,
-        detectedState,
-        acceptedState,
+        persistedWorkspaceState(acceptedState),
+        persistedWorkspaceState(detectedState),
+        persistedWorkspaceState(acceptedState),
       ]);
     } finally {
       restoreFetch();
@@ -2938,7 +3065,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const descriptionField = screen.getByLabelText(/split selected element into/i);
+      const descriptionField = await screen.findByLabelText(/split selected element into/i);
       fireEvent.change(descriptionField, { target: { value: "frame and glass" } });
       await user.click(screen.getByRole("button", { name: /create split request/i }));
 
@@ -3029,7 +3156,7 @@ describe("App", () => {
     const user = userEvent.setup();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(extractedState);
+        return jsonResponse(exportReadyState);
       }
 
       if (input === "/api/workspace/export" && init?.method === "POST") {
@@ -3070,7 +3197,7 @@ describe("App", () => {
     let exportCalls = 0;
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(extractedState);
+        return jsonResponse(exportReadyState);
       }
 
       if (input === "/api/workspace/export" && init?.method === "POST") {
@@ -3169,7 +3296,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      const bboxWidthField = screen.getByLabelText(/bbox width/i);
+      const bboxWidthField = await screen.findByLabelText(/bbox width/i);
       await user.clear(bboxWidthField);
       await user.type(bboxWidthField, "31");
 
@@ -3403,7 +3530,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      expect(screen.getByRole("button", { name: /draw missing mask/i })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /draw missing mask/i })).toBeInTheDocument();
       expect(screen.getByText(/preview preserve mask/i)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /create codex repair task/i })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /validate repair output/i })).toBeInTheDocument();

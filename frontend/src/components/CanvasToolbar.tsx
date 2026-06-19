@@ -3,6 +3,7 @@ import { ReactNode } from "react";
 import {
   BoxSelect,
   Combine,
+  Crosshair,
   Hand,
   Images,
   Maximize2,
@@ -25,6 +26,7 @@ type CanvasToolbarProps = {
   tool: CanvasTool;
   overlays: OverlayState;
   hasSource: boolean;
+  canClickDetect?: boolean;
   hasSelection: boolean;
   canSplit: boolean;
   canMerge: boolean;
@@ -48,6 +50,7 @@ export function CanvasToolbar({
   tool,
   overlays,
   hasSource,
+  canClickDetect = false,
   hasSelection,
   canSplit,
   canMerge,
@@ -98,6 +101,15 @@ export function CanvasToolbar({
             isActive={tool === "draw"}
             disabled={!hasSource}
             onClick={() => onSelectTool("draw")}
+          />
+          <IconButton
+            label="Click detect"
+            aria-label="Click detect"
+            icon={<Crosshair size={16} strokeWidth={2.2} />}
+            aria-pressed={tool === "click-detect"}
+            isActive={tool === "click-detect"}
+            disabled={!hasSource || !canClickDetect}
+            onClick={() => onSelectTool("click-detect")}
           />
           <IconButton
             label="Pan canvas (R / Space)"

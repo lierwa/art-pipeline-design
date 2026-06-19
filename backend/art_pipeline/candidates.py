@@ -18,6 +18,7 @@ from art_pipeline.thumbnails import write_thumbnail
 
 CandidateStatus = Literal[
     "model_detected",
+    "click_detected",
     "edited",
     "child",
     "merged",

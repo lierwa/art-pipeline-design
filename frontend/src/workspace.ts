@@ -14,6 +14,7 @@ export type Box = {
 
 export type ElementStatus =
   | "model_detected"
+  | "click_detected"
   | "edited"
   | "child"
   | "merged"
@@ -34,6 +35,25 @@ export type ElementMode =
   | "completed_by_codex"
   | "rejected";
 
+export type AssetRole = "sticker" | "parent" | "removable_child" | "embedded_keep" | "skip";
+
+export type SegmentationStatus =
+  | "not_started"
+  | "mask_suggested"
+  | "mask_editing"
+  | "mask_accepted"
+  | "mask_rejected";
+
+export type RepairStatus =
+  | "not_required"
+  | "required"
+  | "task_created"
+  | "redraw_pending"
+  | "repair_complete"
+  | "qa_failed";
+
+export type ExportStatus = "not_ready" | "ready" | "exported" | "blocked";
+
 export type CandidateHistoryEntry = {
   kind: string;
   at: string;
@@ -47,6 +67,11 @@ export type WorkspaceElement = {
   label: string | null;
   status: ElementStatus;
   mode: ElementMode;
+  assetRole: AssetRole;
+  removeFromParent: string | null;
+  segmentationStatus: SegmentationStatus;
+  repairStatus: RepairStatus;
+  exportStatus: ExportStatus;
   bbox: Box;
   canvas: Box;
   layer: number;
@@ -67,6 +92,7 @@ export type WorkspaceElement = {
 export type WorkspaceState = {
   source: SourceMetadata | null;
   elements: WorkspaceElement[];
+  detectionVocabulary: string[];
 };
 
 export type WorkspaceRunSummary = {
@@ -197,7 +223,7 @@ export type ExportSummary = {
   blockedElements: BlockedExportElement[];
 };
 
-export type CanvasTool = "select" | "draw" | "split" | "missing-mask";
+export type CanvasTool = "select" | "draw" | "split" | "missing-mask" | "click-detect";
 
 export type DraftRegion = {
   bbox: Box;
@@ -214,6 +240,7 @@ export type SelectedElementIds = string[];
 export const EMPTY_STATE: WorkspaceState = {
   source: null,
   elements: [],
+  detectionVocabulary: [],
 };
 
 export const DEFAULT_OVERLAYS: OverlayState = {
@@ -262,6 +289,20 @@ export function assetIncompleteUrl(
   return appendWorkspaceQuery(url, { cacheKey, runId });
 }
 
+export function sam2EdgeArtifactUrls(
+  element: WorkspaceElement,
+  cacheKey?: number,
+  runId?: string | null,
+): { sourceCropUrl: string | null; maskUrl: string | null; transparentAssetUrl: string | null } {
+  // WHY: backend SAM2 输出集中在 sam2_edge stage；UI 只从这里投影 URL，避免组件继续拼 legacy 文件名。
+  const base = `elements/${element.id}/sam2_edge`;
+  return {
+    sourceCropUrl: workspaceAssetUrl(`${base}/source_crop.png`, cacheKey, runId),
+    maskUrl: workspaceAssetUrl(`${base}/mask.png`, cacheKey, runId),
+    transparentAssetUrl: workspaceAssetUrl(`${base}/transparent_asset.png`, cacheKey, runId),
+  };
+}
+
 export function missingMaskUrl(
   element: WorkspaceElement,
   cacheKey?: number,
@@ -284,6 +325,7 @@ export function repairAssetUrl(
 export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState {
   return {
     source: payload.source,
+    detectionVocabulary: payload.detectionVocabulary ?? [],
     elements: payload.elements.map((element) => ({
       ...element,
       label: element.label ?? null,
@@ -291,6 +333,11 @@ export function normalizeWorkspaceState(payload: WorkspaceState): WorkspaceState
       notes: element.notes ?? "",
       mode: element.mode ?? "visible_only",
       status: element.status ?? "proposal",
+      assetRole: element.assetRole ?? "sticker",
+      removeFromParent: element.removeFromParent ?? null,
+      segmentationStatus: element.segmentationStatus ?? "not_started",
+      repairStatus: element.repairStatus ?? "not_required",
+      exportStatus: element.exportStatus ?? "not_ready",
       thumbnail: element.thumbnail ?? null,
       mask: element.mask ?? null,
       parentId: element.parentId ?? null,

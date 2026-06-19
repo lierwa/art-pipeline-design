@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 CandidateElementStatus = Literal[
     "model_detected",
+    "click_detected",
     "edited",
     "child",
     "merged",
@@ -34,6 +35,47 @@ ElementMode = Literal[
     "needs_completion",
     "completed_by_codex",
     "rejected",
+]
+
+AssetRole = Literal["sticker", "parent", "removable_child", "embedded_keep", "skip"]
+
+SegmentationStatus = Literal[
+    "not_started",
+    "mask_suggested",
+    "mask_editing",
+    "mask_accepted",
+    "mask_rejected",
+]
+
+RepairStatus = Literal[
+    "not_required",
+    "required",
+    "task_created",
+    "redraw_pending",
+    "repair_complete",
+    "qa_failed",
+]
+
+ExportStatus = Literal["not_ready", "ready", "exported", "blocked"]
+
+DEFAULT_WORKSPACE_VOCABULARY = [
+    "cat",
+    "bathtub",
+    "toilet",
+    "sink",
+    "bathroom cabinet",
+    "mirror",
+    "window",
+    "curtain",
+    "towel",
+    "basket",
+    "stool",
+    "bottle",
+    "plant",
+    "shelf",
+    "rug",
+    "bucket",
+    "basin",
 ]
 
 ELEMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -73,6 +115,11 @@ class ElementRecord(BaseModel):
     label: str | None = None
     status: ElementStatus = "model_detected"
     mode: ElementMode = "visible_only"
+    assetRole: AssetRole = "sticker"
+    removeFromParent: str | None = None
+    segmentationStatus: SegmentationStatus = "not_started"
+    repairStatus: RepairStatus = "not_required"
+    exportStatus: ExportStatus = "not_ready"
     bbox: BoundingBox
     canvas: CanvasBox | None = None
     layer: int = 0
@@ -104,6 +151,9 @@ class ElementRecord(BaseModel):
 class WorkspaceState(BaseModel):
     source: SourceMetadata | None = None
     elements: list[ElementRecord] = Field(default_factory=list)
+    detectionVocabulary: list[str] = Field(
+        default_factory=lambda: DEFAULT_WORKSPACE_VOCABULARY.copy()
+    )
 
 
 def next_element_id(existing_elements: list[ElementRecord], start: int = 1) -> str:

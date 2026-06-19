@@ -1,5 +1,6 @@
 import {
   assetIncompleteUrl,
+  AssetRole,
   ElementEditorDraft,
   ElementMode,
   missingMaskUrl,
@@ -13,6 +14,7 @@ import {
 
 type InspectorPanelProps = {
   selectedElement: WorkspaceElement | null;
+  elements: WorkspaceElement[];
   draft: ElementEditorDraft | null;
   workspaceRunId: string | null;
   splitRequestDescription: string;
@@ -21,6 +23,10 @@ type InspectorPanelProps = {
   hasMissingMaskPreview: boolean;
   hasRepairPackage: boolean;
   onDraftChange: (draft: ElementEditorDraft) => void;
+  onPatchElementRole: (
+    elementId: string,
+    patch: { assetRole: AssetRole; removeFromParent?: string | null },
+  ) => void;
   onSplitRequestDescriptionChange: (value: string) => void;
   onMissingMaskDraftChange: (draft: MissingMaskDraft) => void;
   onSaveElement: () => void;
@@ -39,8 +45,17 @@ type InspectorPanelProps = {
   assetCacheKey: number;
 };
 
+const ASSET_ROLE_OPTIONS: Array<{ value: AssetRole; label: string }> = [
+  { value: "sticker", label: "Sticker" },
+  { value: "parent", label: "Parent" },
+  { value: "removable_child", label: "Removable child" },
+  { value: "embedded_keep", label: "Embedded keep" },
+  { value: "skip", label: "Skip" },
+];
+
 export function InspectorPanel({
   selectedElement,
+  elements,
   draft,
   workspaceRunId,
   splitRequestDescription,
@@ -49,6 +64,7 @@ export function InspectorPanel({
   hasMissingMaskPreview,
   hasRepairPackage,
   onDraftChange,
+  onPatchElementRole,
   onSplitRequestDescriptionChange,
   onMissingMaskDraftChange,
   onSaveElement,
@@ -80,6 +96,9 @@ export function InspectorPanel({
     || selectedElement.mode !== "needs_completion"
     || hasUnsavedGeometryChanges
     || isRepairing;
+  const parentCandidates = selectedElement
+    ? elements.filter((element) => element.id !== selectedElement.id && element.assetRole === "parent")
+    : [];
 
   return (
     <aside className="panel inspector-panel">
@@ -127,6 +146,52 @@ export function InspectorPanel({
                 <option value="rejected">rejected</option>
               </select>
             </label>
+            <label className="field-group">
+              <span>Asset role</span>
+              <select
+                aria-label="Asset role"
+                value={selectedElement.assetRole}
+                onChange={(event) => {
+                  const assetRole = event.target.value as AssetRole;
+                  onPatchElementRole(selectedElement.id, {
+                    assetRole,
+                    // WHY: 修复/导出只在 removable_child 上消费父元素引用；
+                    // 切到其他角色时前端同步清空，避免 UI 与后端单一事实短暂分叉。
+                    removeFromParent: assetRole === "removable_child"
+                      ? selectedElement.removeFromParent
+                      : null,
+                  });
+                }}
+              >
+                {ASSET_ROLE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedElement.assetRole === "removable_child" ? (
+              <label className="field-group">
+                <span>Remove from parent</span>
+                <select
+                  aria-label="Remove from parent"
+                  value={selectedElement.removeFromParent ?? ""}
+                  onChange={(event) =>
+                    onPatchElementRole(selectedElement.id, {
+                      assetRole: "removable_child",
+                      removeFromParent: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">No parent</option>
+                  {parentCandidates.map((element) => (
+                    <option key={element.id} value={element.id}>
+                      {element.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <label className="field-group">
               <span>Element layer</span>
               <input

@@ -10,6 +10,7 @@ from PIL import Image
 import art_pipeline.api as workspace_api
 import art_pipeline.exporter as workspace_exporter
 from art_pipeline.api import create_app
+from art_pipeline.elements import DEFAULT_WORKSPACE_VOCABULARY
 
 
 @pytest.fixture()
@@ -110,7 +111,13 @@ def test_upload_run_creates_processing_record_without_restoring_legacy_state(
 
     legacy_state_response = client.get("/api/workspace/state")
     assert legacy_state_response.status_code == 200
-    assert legacy_state_response.json() == {"source": None, "elements": []}
+    legacy_state = legacy_state_response.json()
+    # WHY: legacy endpoint 仍代表“未恢复 run 状态”，但空 workspace 也要暴露检测默认词表。
+    assert legacy_state == {
+        "source": None,
+        "elements": [],
+        "detectionVocabulary": DEFAULT_WORKSPACE_VOCABULARY,
+    }
 
     scoped_state_response = client.get(f"/api/workspace/state?runId={run['id']}")
     assert scoped_state_response.status_code == 200
@@ -1160,6 +1167,8 @@ def test_put_state_geometry_change_clears_stale_repair_artifacts(
     validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
     assert validate_response.status_code == 200
     assert validate_response.json()["state"]["elements"][0]["mode"] == "completed_by_codex"
+    assert validate_response.json()["state"]["elements"][0]["repairStatus"] == "repair_complete"
+    assert validate_response.json()["state"]["elements"][0]["exportStatus"] == "ready"
 
     next_state = validate_response.json()["state"]
     next_state["elements"][0]["bbox"] = {"x": 4, "y": 2, "w": 1, "h": 2}
@@ -1170,6 +1179,8 @@ def test_put_state_geometry_change_clears_stale_repair_artifacts(
     assert element["status"] == "extract_ready"
     assert element["mode"] == "needs_completion"
     assert element["mask"] is None
+    assert element["repairStatus"] == "required"
+    assert element["exportStatus"] == "blocked"
     assert not (element_dir / "missing_mask.png").exists()
     assert not repair_dir.exists()
 
@@ -1723,6 +1734,10 @@ def test_clear_mask_clears_stale_repair_artifacts_and_resets_repair_state(
 ) -> None:
     element_dir = _prepare_repair_package(client, tmp_path)
     repair_dir = element_dir / "repair"
+    validate_response = _validate_repair_package_with_missing_pixel(client, repair_dir)
+    repaired_element = validate_response.json()["state"]["elements"][0]
+    assert repaired_element["repairStatus"] == "repair_complete"
+    assert repaired_element["exportStatus"] == "ready"
     assert (element_dir / "missing_mask.png").exists()
     assert repair_dir.exists()
 
@@ -1733,6 +1748,8 @@ def test_clear_mask_clears_stale_repair_artifacts_and_resets_repair_state(
     assert element["status"] == "extract_ready"
     assert element["mode"] == "needs_completion"
     assert element["mask"] is None
+    assert element["repairStatus"] == "required"
+    assert element["exportStatus"] == "blocked"
     assert not (element_dir / "missing_mask.png").exists()
     assert not repair_dir.exists()
 
@@ -1830,6 +1847,36 @@ def test_create_repair_task_writes_required_canvas_aligned_files(
     assert "Do not redraw the whole object." in prompt
     assert "Output completed_asset.png with the same size as incomplete_asset.png." in prompt
     assert "Write repair_report.json." in prompt
+
+
+def test_missing_mask_update_invalidates_completed_repair_state(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    element_dir = _prepare_repair_package(client, tmp_path)
+    repair_dir = element_dir / "repair"
+    validate_response = _validate_repair_package_with_missing_pixel(client, repair_dir)
+    repaired_element = validate_response.json()["state"]["elements"][0]
+    assert repaired_element["repairStatus"] == "repair_complete"
+    assert repaired_element["exportStatus"] == "ready"
+
+    response = client.post(
+        "/api/workspace/elements/element_001/repair/missing-mask",
+        json={
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 1, "y": 1, "w": 1, "h": 1},
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    element = response.json()["state"]["elements"][0]
+    assert element["status"] == "extracted"
+    assert element["mode"] == "needs_completion"
+    assert element["repairStatus"] == "required"
+    assert element["exportStatus"] == "blocked"
 
 
 def test_repair_metadata_reports_files_and_latest_qa(
@@ -2116,6 +2163,8 @@ def test_repair_qa_fails_for_wrong_size_completed_asset(
     assert body["qa"]["status"] == "fail"
     assert "completed_asset_wrong_dimensions" in body["qa"]["reasons"]
     assert body["state"]["elements"][0]["status"] == "qa_failed"
+    assert body["state"]["elements"][0]["repairStatus"] == "qa_failed"
+    assert body["state"]["elements"][0]["exportStatus"] == "blocked"
 
 
 def test_repair_qa_fails_for_completed_asset_without_alpha(
@@ -2288,25 +2337,33 @@ def test_export_writes_visible_assets_and_blocks_incomplete_completion(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["exportableCount"] == 1
-    assert body["blockedCount"] == 1
-    assert body["exportedElements"][0]["elementId"] == "element_001"
-    assert body["exportedElements"][0]["assetPath"] == "export/assets/element_001.png"
-    assert body["exportedElements"][0]["maskPath"] == "export/masks/element_001.png"
+    assert body["exportableCount"] == 0
+    assert body["blockedCount"] == 3
+    assert body["exportedElements"] == []
     assert body["blockedElements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "reason": "mask_not_accepted",
+        },
         {
             "elementId": "element_002",
             "name": "Towel Gap",
             "reason": "needs_completion_without_valid_repair",
-        }
+        },
+        {
+            "elementId": "element_004",
+            "name": "Rejected",
+            "reason": "rejected",
+        },
     ]
     assert "element_003 skipped because split_parent elements are not exported by default." in body["warnings"]
     assert "element_004 skipped because rejected elements are not exported." in body["warnings"]
     assert "element_005 skipped because proposals must be accepted before export." in body["warnings"]
 
     export_root = tmp_path / "workspace" / "export"
-    assert (export_root / "assets" / "element_001.png").exists()
-    assert (export_root / "masks" / "element_001.png").exists()
+    assert not (export_root / "assets" / "element_001.png").exists()
+    assert not (export_root / "masks" / "element_001.png").exists()
     assert not (export_root / "assets" / "element_002.png").exists()
     assert (export_root / "manifest.json").exists()
     assert (export_root / "level.json").exists()
@@ -2321,33 +2378,17 @@ def test_export_writes_visible_assets_and_blocks_incomplete_completion(
         "width": 8,
         "height": 6,
     }
-    assert manifest["elements"][0]["id"] == "element_001"
-    assert manifest["elements"][0]["sourceAssetPath"] == "elements/element_001/asset_incomplete.png"
-    assert manifest["elements"][0]["assetPath"] == "export/assets/element_001.png"
-    assert manifest["elements"][0]["maskPath"] == "export/masks/element_001.png"
-    assert manifest["elements"][0]["bbox"] == {"x": 3, "y": 2, "w": 2, "h": 2}
-    assert manifest["elements"][0]["canvas"] == {"x": 1, "y": 1, "w": 5, "h": 4}
+    assert manifest["elements"] == []
 
     level = workspace_api.json.loads((export_root / "level.json").read_text(encoding="utf-8"))
-    assert level["placements"] == [
-        {
-            "elementId": "element_001",
-            "name": "Cup",
-            "assetPath": "export/assets/element_001.png",
-            "maskPath": "export/masks/element_001.png",
-            "layer": 2,
-            "bbox": {"x": 3, "y": 2, "w": 2, "h": 2},
-            "canvas": {"x": 1, "y": 1, "w": 5, "h": 4},
-            "parentId": None,
-        }
-    ]
+    assert level["placements"] == []
 
     qa_report = workspace_api.json.loads((export_root / "qa_report.json").read_text(encoding="utf-8"))
     assert qa_report["blockedElements"] == body["blockedElements"]
     assert qa_report["warnings"] == body["warnings"]
 
 
-def test_export_can_explicitly_override_unrepaired_completion_with_warning(
+def test_export_blocks_unrepaired_completion_even_with_legacy_override(
     client: TestClient,
     tmp_path: Path,
 ) -> None:
@@ -2360,17 +2401,18 @@ def test_export_can_explicitly_override_unrepaired_completion_with_warning(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["exportableCount"] == 1
-    assert body["blockedCount"] == 0
-    assert body["exportedElements"][0]["elementId"] == "element_001"
-    assert body["exportedElements"][0]["sourceAssetPath"] == "elements/element_001/asset_incomplete.png"
-    assert body["exportedElements"][0]["warnings"] == [
-        "needs_completion exported from asset_incomplete.png by explicit override."
+    assert body["exportableCount"] == 0
+    assert body["blockedCount"] == 1
+    assert body["exportedElements"] == []
+    assert body["blockedElements"] == [
+        {
+            "elementId": "element_001",
+            "name": "Cup",
+            "reason": "needs_completion_without_valid_repair",
+        }
     ]
-    assert body["warnings"] == [
-        "element_001 needs_completion exported from asset_incomplete.png by explicit override."
-    ]
-    assert (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
+    assert body["warnings"] == []
+    assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
 
 
 def test_export_blocks_accepted_candidates_without_masks(
@@ -2417,7 +2459,7 @@ def test_export_blocks_accepted_candidates_without_masks(
     assert body["exportableCount"] == 0
     assert body["blockedCount"] == 1
     assert body["exportedElements"] == []
-    assert body["blockedElements"][0]["reason"] == "accepted_asset_missing_mask"
+    assert body["blockedElements"][0]["reason"] == "mask_not_accepted"
     assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
 
 
@@ -2439,7 +2481,7 @@ def test_export_blocks_visible_asset_when_source_mask_file_is_missing(
         {
             "elementId": "element_001",
             "name": "Cup",
-            "reason": "accepted_asset_missing_mask",
+            "reason": "mask_not_accepted",
         }
     ]
     assert body["warnings"] == []
@@ -2512,7 +2554,7 @@ def test_export_blocks_asset_without_source_mask_or_alpha_channel(
         {
             "elementId": "element_001",
             "name": "RGB Asset",
-            "reason": "accepted_asset_missing_mask",
+            "reason": "mask_not_accepted",
         }
     ]
     assert not (tmp_path / "workspace" / "export" / "assets" / "element_001.png").exists()
@@ -2594,6 +2636,7 @@ def test_failed_export_preserves_previous_export_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _prepare_completion_element(client, tmp_path, mode="visible_only")
+    _promote_visible_element_to_sam2_accepted(client, tmp_path)
     export_dir = tmp_path / "workspace" / "export"
     export_dir.mkdir(parents=True, exist_ok=True)
     marker_path = export_dir / "manifest.json"
@@ -2627,6 +2670,9 @@ def test_export_uses_completed_asset_after_repair_qa_pass(
     (repair_dir / "repair_report.json").write_text('{"summary":"filled missing pixel"}', encoding="utf-8")
     validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
     assert validate_response.status_code == 200
+    element = validate_response.json()["state"]["elements"][0]
+    assert element["repairStatus"] == "repair_complete"
+    assert element["exportStatus"] == "ready"
 
     response = client.post("/api/workspace/export")
 
@@ -2711,6 +2757,44 @@ def _prepare_repair_package(
     task_response = client.post("/api/workspace/elements/element_001/repair/task")
     assert task_response.status_code == 200
     return element_dir
+
+
+def _validate_repair_package_with_missing_pixel(
+    client: TestClient,
+    repair_dir: Path,
+):
+    with Image.open(repair_dir / "incomplete_asset.png") as incomplete:
+        completed = incomplete.convert("RGBA")
+    completed.putpixel((2, 1), (250, 120, 10, 255))
+    completed.save(repair_dir / "completed_asset.png", format="PNG")
+    (repair_dir / "repair_report.json").write_text(
+        '{"summary":"filled missing pixel"}',
+        encoding="utf-8",
+    )
+    validate_response = client.post("/api/workspace/elements/element_001/repair/validate")
+    assert validate_response.status_code == 200
+    assert validate_response.json()["qa"]["status"] == "pass"
+    return validate_response
+
+
+def _promote_visible_element_to_sam2_accepted(client: TestClient, tmp_path: Path) -> None:
+    element_dir = tmp_path / "workspace" / "elements" / "element_001"
+    sam2_dir = element_dir / "sam2_edge"
+    sam2_dir.mkdir(parents=True, exist_ok=True)
+    with Image.open(element_dir / "source_crop.png") as source_crop:
+        source_crop.save(sam2_dir / "source_crop.png", format="PNG")
+    with Image.open(element_dir / "mask.png") as mask:
+        mask.save(sam2_dir / "mask.png", format="PNG")
+    with Image.open(element_dir / "asset_incomplete.png") as asset:
+        asset.save(sam2_dir / "transparent_asset.png", format="PNG")
+
+    state = client.get("/api/workspace/state").json()
+    for element in state["elements"]:
+        if element["id"] == "element_001":
+            element["segmentationStatus"] = "mask_accepted"
+            element["mask"] = "elements/element_001/sam2_edge/mask.png"
+            element["exportStatus"] = "ready"
+    assert client.put("/api/workspace/state", json=state).status_code == 200
 
 
 def _prepare_completion_element(

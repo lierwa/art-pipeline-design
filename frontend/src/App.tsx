@@ -5,9 +5,12 @@ import { CanvasToolbar } from "./components/CanvasToolbar";
 import { CanvasStage } from "./components/CanvasStage";
 import { AssetContextMenu } from "./components/AssetContextMenu";
 import { AssetTreePanel } from "./components/AssetTreePanel";
+import { DetectionVocabularyPanel } from "./components/DetectionVocabularyPanel";
+import { FloatingStageDrawer } from "./components/FloatingStageDrawer";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { ModelStatusStrip } from "./components/ModelStatusStrip";
 import { PipelineRail } from "./components/PipelineRail";
+import { SegmentEdgeBoard } from "./components/SegmentEdgeBoard";
 import { TopAppBar } from "./components/TopAppBar";
 import "./styles.css";
 import {
@@ -22,6 +25,7 @@ import {
 } from "./operationHistory";
 import {
   assetIncompleteUrl,
+  AssetRole,
   Box,
   buildSourceUrl,
   CanvasTool,
@@ -66,6 +70,8 @@ type PatchWorkspaceElementRequest = {
   bbox?: Box;
   label?: string;
   visible?: boolean;
+  assetRole?: AssetRole;
+  removeFromParent?: string | null;
 };
 
 type ChildWorkspaceElementRequest = {
@@ -86,6 +92,31 @@ type SplitElementResponse = {
 type SplitRequestResponse = {
   requestId: string;
   path: string;
+};
+
+type ClickDetectResponse = {
+  element: WorkspaceElement;
+  state: WorkspaceState;
+};
+
+type SegmentSuggestResponse = {
+  element: WorkspaceElement;
+  segmentation: Record<string, unknown>;
+  state: WorkspaceState;
+};
+
+type SegmentAcceptResponse = {
+  element: WorkspaceElement;
+  state: WorkspaceState;
+};
+
+type SegmentMaskPatchRequest = {
+  operation?: "replace" | "add" | "subtract";
+  shape: {
+    type: "rectangle";
+    coordinateSpace: "canvas";
+    bbox: Box;
+  };
 };
 
 type ExtractWorkspaceResponse = {
@@ -227,6 +258,95 @@ export async function mergeWorkspaceElements(
   );
 }
 
+export async function saveDetectionVocabulary(
+  labels: string[],
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<WorkspaceState> {
+  return requestJson<WorkspaceState>(
+    fetcher,
+    workspaceApiUrl("/api/workspace/detection-vocabulary", runId),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(labels),
+    },
+    "Could not save detection vocabulary.",
+  );
+}
+
+export async function clickDetectWorkspace(
+  point: { x: number; y: number },
+  label: string,
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<ClickDetectResponse> {
+  return requestJson<ClickDetectResponse>(
+    fetcher,
+    workspaceApiUrl("/api/workspace/click-detect", runId),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        x: point.x,
+        y: point.y,
+        label,
+      }),
+    },
+    "Click detection failed.",
+  );
+}
+
+export async function suggestElementSegment(
+  elementId: string,
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<SegmentSuggestResponse> {
+  return requestJson<SegmentSuggestResponse>(
+    fetcher,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}/segment/suggest`, runId),
+    { method: "POST" },
+    "Could not suggest segment mask.",
+  );
+}
+
+export async function acceptElementSegment(
+  elementId: string,
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<SegmentAcceptResponse> {
+  return requestJson<SegmentAcceptResponse>(
+    fetcher,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}/segment/accept`, runId),
+    { method: "POST" },
+    "Could not accept segment mask.",
+  );
+}
+
+export async function patchElementSegmentMask(
+  elementId: string,
+  patch: SegmentMaskPatchRequest,
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<SegmentSuggestResponse> {
+  return requestJson<SegmentSuggestResponse>(
+    fetcher,
+    workspaceApiUrl(`/api/workspace/elements/${elementId}/segment/mask`, runId),
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(patch),
+    },
+    "Could not update segment mask.",
+  );
+}
+
 async function requestJson<T>(
   fetcher: Fetcher,
   input: RequestInfo | URL,
@@ -256,6 +376,7 @@ export function App() {
   const [isAnnotating, setIsAnnotating] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSavingState, setIsSavingState] = useState(false);
+  const [isSavingVocabulary, setIsSavingVocabulary] = useState(false);
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
   const [assetCacheKey, setAssetCacheKey] = useState(0);
   const [tool, setTool] = useState<CanvasTool>("select");
@@ -274,6 +395,8 @@ export function App() {
   const [repairQaReport, setRepairQaReport] = useState<RepairQaReport | null>(null);
   const [repairMetadataByElementId, setRepairMetadataByElementId] = useState<Record<string, RepairMetadata>>({});
   const [isRepairing, setIsRepairing] = useState(false);
+  const [suggestingSegmentElementId, setSuggestingSegmentElementId] = useState<string | null>(null);
+  const [acceptingSegmentElementId, setAcceptingSegmentElementId] = useState<string | null>(null);
   const [exportSummary, setExportSummary] = useState<ExportSummary | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [assetContextMenu, setAssetContextMenu] = useState<AssetContextMenuState | null>(null);
@@ -370,6 +493,11 @@ export function App() {
       ? selectedReviewElement
       : null;
   }, [selectedReviewElement]);
+  const selectedSegmentElement = useMemo(() => {
+    return selectedElement && isSegmentableWorkbenchElement(selectedElement)
+      ? selectedElement
+      : null;
+  }, [selectedElement]);
 
   const canvasOverlayElements = useMemo(() => {
     if (!selectedElement || !elementDraft) {
@@ -1174,6 +1302,120 @@ export function App() {
       );
     } finally {
       setIsAnnotating(false);
+    }
+  }
+
+  async function handleSaveDetectionVocabulary(labels: string[]) {
+    if (!workspace.source || isSavingVocabulary) {
+      return;
+    }
+
+    setIsSavingVocabulary(true);
+    setStatus("Saving detection vocabulary...");
+    setError(null);
+
+    try {
+      const nextState = normalizeWorkspaceState(await saveDetectionVocabulary(labels, activeRunId));
+      // WHY: 检测词表与 workspace state 同源保存，避免 prompt chips 与后端检测过滤规则出现两个权威来源。
+      applyWorkspaceMutation(nextState, "Detection vocabulary saved.", selectedElementId);
+      void refreshWorkspaceRuns();
+    } catch (saveError) {
+      setStatus("Detection vocabulary save failed.");
+      setError(
+        saveError instanceof Error ? saveError.message : "Could not save detection vocabulary.",
+      );
+    } finally {
+      setIsSavingVocabulary(false);
+    }
+  }
+
+  async function handleClickDetectPoint(point: { x: number; y: number }) {
+    if (!workspace.source || isAnnotating) {
+      return;
+    }
+
+    const label = buildClickDetectLabel(selectedElement, workspace.detectionVocabulary);
+    setIsAnnotating(true);
+    setStatus("Running click detection...");
+    setError(null);
+
+    try {
+      const payload = await clickDetectWorkspace(point, label, activeRunId);
+      applyWorkspaceMutation(payload.state, "Click-detected asset added.", payload.element.id);
+      setTool("select");
+      void refreshWorkspaceRuns();
+    } catch (detectError) {
+      setStatus("Click detection failed.");
+      setError(detectError instanceof Error ? detectError.message : "Click detection failed.");
+    } finally {
+      setIsAnnotating(false);
+    }
+  }
+
+  async function handleSuggestSegmentMask(elementId: string) {
+    if (suggestingSegmentElementId || !workspace.elements.some((element) => element.id === elementId)) {
+      return;
+    }
+
+    setSuggestingSegmentElementId(elementId);
+    setStatus("Suggesting segment mask...");
+    setError(null);
+
+    try {
+      const payload = await suggestElementSegment(elementId, activeRunId);
+      clearLocalRepairMetadata([elementId]);
+      applyWorkspaceMutation(payload.state, "Mask suggestion ready.", payload.element.id);
+      void refreshWorkspaceRuns();
+    } catch (segmentError) {
+      setStatus("Segment suggestion failed.");
+      setError(segmentError instanceof Error ? segmentError.message : "Could not suggest segment mask.");
+    } finally {
+      setSuggestingSegmentElementId(null);
+    }
+  }
+
+  async function handleAcceptSegmentMask(elementId: string) {
+    if (acceptingSegmentElementId || !workspace.elements.some((element) => element.id === elementId)) {
+      return;
+    }
+
+    setAcceptingSegmentElementId(elementId);
+    setStatus("Accepting segment mask...");
+    setError(null);
+
+    try {
+      const payload = await acceptElementSegment(elementId, activeRunId);
+      clearLocalRepairMetadata([elementId]);
+      applyWorkspaceMutation(payload.state, "Mask accepted.", payload.element.id);
+      void refreshWorkspaceRuns();
+    } catch (segmentError) {
+      setStatus("Segment accept failed.");
+      setError(segmentError instanceof Error ? segmentError.message : "Could not accept segment mask.");
+    } finally {
+      setAcceptingSegmentElementId(null);
+    }
+  }
+
+  async function handlePatchSegmentMask(elementId: string, patch: SegmentMaskPatchRequest) {
+    if (suggestingSegmentElementId || !workspace.elements.some((element) => element.id === elementId)) {
+      return;
+    }
+
+    setSuggestingSegmentElementId(elementId);
+    setStatus("Updating segment mask...");
+    setError(null);
+
+    try {
+      const payload = await patchElementSegmentMask(elementId, patch, activeRunId);
+      clearLocalRepairMetadata([elementId]);
+      applyWorkspaceMutation(payload.state, "Mask edit applied.", payload.element.id);
+      setAssetCacheKey((current) => current + 1);
+      void refreshWorkspaceRuns();
+    } catch (segmentError) {
+      setStatus("Mask edit failed.");
+      setError(segmentError instanceof Error ? segmentError.message : "Could not update segment mask.");
+    } finally {
+      setSuggestingSegmentElementId(null);
     }
   }
 
@@ -2009,6 +2251,25 @@ export function App() {
     }
   }
 
+  async function handlePatchElementRole(
+    elementId: string,
+    patchRequest: Pick<PatchWorkspaceElementRequest, "assetRole" | "removeFromParent">,
+  ) {
+    setIsSavingState(true);
+    setError(null);
+
+    try {
+      const payload = await patchWorkspaceElement(elementId, patchRequest, activeRunId);
+      applyWorkspaceMutation(payload.state, "Element role updated.", payload.element.id);
+      void refreshWorkspaceRuns();
+    } catch (saveError) {
+      setStatus("State save failed.");
+      setError(saveError instanceof Error ? saveError.message : "Could not save element role.");
+    } finally {
+      setIsSavingState(false);
+    }
+  }
+
   async function handleCreateElement(nameOverride?: string) {
     if (!workspace.source || !draftRegion) {
       return;
@@ -2369,6 +2630,7 @@ export function App() {
             tool={tool}
             overlays={overlays}
             hasSource={workspace.source !== null}
+            canClickDetect={workspace.source !== null && !isAnnotating}
             hasSelection={selectedElement !== null}
             canSplit={selectedElement !== null}
             canMerge={canMergeSelectedElements}
@@ -2433,7 +2695,22 @@ export function App() {
             onCancelBoxEdit={handleCancelBoxEdit}
             onClearDrafts={clearDrafts}
             onApplySplit={() => void handleApplySplit()}
+            onClickDetectPoint={(point) => void handleClickDetectPoint(point)}
           />
+          {selectedSegmentElement ? (
+            <FloatingStageDrawer title="Segment">
+              <SegmentEdgeBoard
+                element={selectedSegmentElement}
+                assetCacheKey={assetCacheKey}
+                workspaceRunId={activeRunId}
+                isSuggesting={suggestingSegmentElementId === selectedSegmentElement.id}
+                isAccepting={acceptingSegmentElementId === selectedSegmentElement.id}
+                onSuggestMask={(elementId) => void handleSuggestSegmentMask(elementId)}
+                onAcceptMask={(elementId) => void handleAcceptSegmentMask(elementId)}
+                onPatchMask={(elementId, patch) => void handlePatchSegmentMask(elementId, patch)}
+              />
+            </FloatingStageDrawer>
+          ) : null}
           <div className="canvas-operation-row">
             <button
               type="button"
@@ -2497,6 +2774,14 @@ export function App() {
 
           <Panel className="workbench-panel workbench-panel-review" defaultSize="27%" minSize="20%" maxSize="40%">
             <section className="right-review-panel" aria-label="Review panel">
+          {workspace.source ? (
+            <DetectionVocabularyPanel
+              labels={workspace.detectionVocabulary}
+              disabled={isSavingVocabulary || isAnnotating}
+              onSave={(labels) => void handleSaveDetectionVocabulary(labels)}
+            />
+          ) : null}
+
           <AssetTreePanel
             elements={visibleElements}
             selectedElementId={selectedElementId}
@@ -2513,6 +2798,7 @@ export function App() {
 
           <InspectorPanel
             selectedElement={selectedElement}
+            elements={workspace.elements}
             draft={elementDraft}
             workspaceRunId={activeRunId}
             splitRequestDescription={splitRequestDescription}
@@ -2521,6 +2807,7 @@ export function App() {
             hasMissingMaskPreview={selectedHasMissingMask}
             hasRepairPackage={selectedHasRepairPackage}
             onDraftChange={setElementDraft}
+            onPatchElementRole={(elementId, patch) => void handlePatchElementRole(elementId, patch)}
             onSplitRequestDescriptionChange={setSplitRequestDescription}
             onMissingMaskDraftChange={setMissingMaskDraft}
             onSaveElement={() => void handleSaveElement()}
@@ -2683,6 +2970,32 @@ function canBatchExtractElement(element: WorkspaceElement): boolean {
   return ["accepted", "extract_ready"].includes(element.status);
 }
 
+function isSegmentableWorkbenchElement(element: WorkspaceElement): boolean {
+  if (!isActionableElement(element)) {
+    return false;
+  }
+
+  return [
+    "accepted",
+    "extract_ready",
+  ].includes(element.status);
+}
+
+function buildClickDetectLabel(
+  selectedElement: WorkspaceElement | null,
+  vocabulary: string[],
+): string {
+  const selectedLabel = selectedElement
+    ? (selectedElement.label ?? selectedElement.name).trim()
+    : "";
+  if (selectedLabel) {
+    return selectedLabel;
+  }
+
+  // WHY: click-detect 后端要求 label；优先复用当前词表，避免 UI 在没有选择时发散出另一套临时类别协议。
+  return vocabulary.find((label) => label.trim().length > 0)?.trim() ?? "Sticker";
+}
+
 function isDisplayableElement(element: WorkspaceElement): boolean {
   return element.mergedInto === null;
 }
@@ -2702,6 +3015,7 @@ function isActiveCandidate(element: WorkspaceElement): boolean {
 function needsElementReview(element: WorkspaceElement): boolean {
   return isActionableElement(element) && [
     "model_detected",
+    "click_detected",
     "proposal",
     "edited",
     "child",
@@ -2722,7 +3036,7 @@ function isAcceptedStatus(status: WorkspaceElement["status"]): boolean {
 }
 
 function canRejectStatus(status: WorkspaceElement["status"]): boolean {
-  return ["proposal", "model_detected", "edited", "child", "merged"].includes(status);
+  return ["proposal", "model_detected", "click_detected", "edited", "child", "merged"].includes(status);
 }
 
 function buildDefaultMergeLabel(
@@ -2778,7 +3092,23 @@ function isExportReadyElement(element: WorkspaceElement): boolean {
   if (!isActionableElement(element)) {
     return false;
   }
-  return Boolean(element.mask) || ["extracted", "repair_complete", "exported"].includes(element.status);
+  // WHY: 导出资格必须以分割确认和后端 gate 为准；suggested mask 与 legacy bbox_alpha 只是预览/调试资产。
+  return (
+    element.segmentationStatus === "mask_accepted"
+    && isRepairGateSatisfied(element)
+    && isBackendExportGateSatisfied(element)
+  );
+}
+
+function isRepairGateSatisfied(element: WorkspaceElement): boolean {
+  if (element.repairStatus === "not_required") {
+    return element.mode !== "needs_completion";
+  }
+  return element.repairStatus === "repair_complete";
+}
+
+function isBackendExportGateSatisfied(element: WorkspaceElement): boolean {
+  return element.exportStatus === "ready" || element.exportStatus === "exported";
 }
 
 function hasRepairPackage(element: WorkspaceElement): boolean {
@@ -2983,7 +3313,7 @@ function ExportPanel({
             <span>Level: {summary.paths.level}</span>
           </>
         ) : (
-          <span>Run export after extraction or repair validation.</span>
+          <span>Run export after mask acceptance and repair validation.</span>
         )}
       </div>
       <div className="export-panel-details">

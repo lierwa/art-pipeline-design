@@ -972,7 +972,93 @@ button:disabled {
   transform: rotate(42deg);
 }
 
+.floating-stage-drawer {
+  position: absolute;
+  bottom: 0.85rem;
+  left: clamp(0.85rem, 4vw, 2.8rem);
+  right: clamp(0.85rem, 4vw, 2.8rem);
+  z-index: 35;
+  height: min(var(--stage-drawer-height, 360px), calc(100% - 1.7rem));
+  max-height: calc(100% - 1.7rem);
+  min-width: 0;
+  min-height: min(240px, calc(100% - 1.7rem));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid #334257;
+  border-radius: 8px;
+  background: rgba(13, 20, 30, 0.96);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.floating-stage-drawer-resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  height: 12px;
+  cursor: ns-resize;
+  outline: 0;
+}
+
+.floating-stage-drawer-resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 0.85rem;
+  right: 0.85rem;
+  top: 5px;
+  height: 2px;
+  border-radius: 999px;
+  background: #405066;
+}
+
+.floating-stage-drawer-resize-handle:hover::before,
+.floating-stage-drawer-resize-handle:focus-visible::before {
+  background: #74a8ff;
+}
+
+.floating-stage-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding: 0.82rem 0.9rem;
+  border-bottom: 1px solid #263449;
+  background: rgba(17, 27, 40, 0.96);
+}
+
+.floating-stage-drawer-header span,
+.segment-edge-board-header span {
+  display: block;
+  color: #8ea1bb;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.floating-stage-drawer-header h2,
+.segment-edge-board-header h3 {
+  margin: 0.12rem 0 0;
+  color: #f4f8ff;
+  font-size: 0.98rem;
+  font-weight: 750;
+}
+
+.floating-stage-drawer-actions,
+.segment-edge-board-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.floating-stage-drawer-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.85rem;
+}
+
 .canvas-workspace {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -985,7 +1071,7 @@ button:disabled {
   position: relative;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   border-left: 1px solid #202b39;
   overflow: hidden;
 }
@@ -998,6 +1084,94 @@ button:disabled {
 
 .right-review-panel .asset-tree-panel {
   grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.detection-vocabulary-panel {
+  grid-template-rows: auto auto;
+  border-bottom: 1px solid #202b39;
+}
+
+.detection-vocabulary-body {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.72rem 0.85rem;
+}
+
+.detection-vocabulary-chips {
+  min-height: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.36rem;
+}
+
+.detection-vocabulary-chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0.18rem 0.44rem;
+  border: 1px solid #2f4d7f;
+  border-radius: 4px;
+  background: rgba(39, 117, 255, 0.12);
+  color: #b9d4ff;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.detection-vocabulary-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detection-vocabulary-chip button {
+  width: 1rem;
+  height: 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(185, 212, 255, 0.14);
+  color: #dbe9ff;
+  cursor: pointer;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.detection-vocabulary-chip button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.detection-vocabulary-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: end;
+}
+
+.detection-vocabulary-form label {
+  min-width: 0;
+  display: grid;
+  gap: 0.28rem;
+  color: #aebbd0;
+  font-size: 0.76rem;
+}
+
+.detection-vocabulary-form input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 0.62rem;
+  border: 1px solid #2f3749;
+  border-radius: 6px;
+  background: #0c121b;
+  color: #f4f8ff;
+}
+
+.detection-vocabulary-form input:focus {
+  border-color: #2f80ff;
+  outline: 2px solid rgba(47, 128, 255, 0.22);
 }
 
 .right-review-panel .panel > .panel-body {
@@ -2228,6 +2402,111 @@ button.overlay-label:focus-visible {
   background: transparent;
 }
 
+.segment-edge-board {
+  min-width: 0;
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid #34415a;
+  border-radius: 8px;
+  background: #101722;
+}
+
+.segment-edge-board-empty {
+  min-height: 180px;
+  align-content: center;
+  border-style: dashed;
+}
+
+.segment-edge-board-empty p {
+  margin: 0;
+  color: #9da7ba;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.segment-edge-board-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.segment-edge-board-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.segment-edge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.72rem;
+}
+
+.segment-edge-preview {
+  min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.segment-edge-preview img,
+.segment-edge-preview-placeholder {
+  width: 100%;
+  height: 128px;
+  object-fit: contain;
+  border: 1px solid #2f3749;
+  border-radius: 6px;
+  background: #0d1117;
+}
+
+.segment-edge-preview[data-tone="mask"] img {
+  background:
+    radial-gradient(circle at 36% 34%, rgba(23, 198, 212, 0.18), transparent 31%),
+    #071018;
+}
+
+.segment-edge-preview-placeholder {
+  display: grid;
+  place-items: center;
+  color: #7f8aa0;
+  font-size: 0.8rem;
+}
+
+.segment-edge-preview figcaption {
+  color: #c7d0df;
+  font-size: 0.82rem;
+}
+
+.segment-manual-controls {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid #2f3749;
+  border-radius: 8px;
+}
+
+.segment-manual-controls legend {
+  padding: 0 0.35rem;
+  color: #c7d0df;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.segment-manual-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(72px, 1fr));
+  gap: 0.55rem;
+}
+
+.segment-manual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .inspector-extraction {
   display: grid;
   gap: 0.85rem;
@@ -2605,6 +2884,7 @@ button.overlay-label:focus-visible {
   .model-status-strip,
   .extraction-preview,
   .extraction-preview-grid,
+  .segment-edge-grid,
   .repair-comparison,
   .repair-comparison-grid,
   .export-panel,

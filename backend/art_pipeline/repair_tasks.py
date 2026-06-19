@@ -29,6 +29,8 @@ REPAIR_RELATIVE_PATHS = {
     "repairPromptPath": "repair_prompt.md",
 }
 
+PARENT_REMOVAL_CONTRACT_FILENAME = "repair_contract.json"
+
 REPAIR_PACKAGE_FILES = tuple(REPAIR_RELATIVE_PATHS.values())
 REPAIR_AUTHORITY_FILENAME = "repair_authority.json"
 
@@ -169,6 +171,11 @@ def read_repair_metadata(workspace_root: Path, element: ElementRecord) -> dict[s
         "guideOverlay": repair_dir / "guide_overlay.png",
         "repairPrompt": repair_dir / "repair_prompt.md",
     }
+    parent_removal_files = {
+        "contextCrop": repair_dir / "context_crop.png",
+        "removeMask": repair_dir / "remove_mask.png",
+        "repairContract": repair_dir / PARENT_REMOVAL_CONTRACT_FILENAME,
+    }
     completed_asset_path = repair_dir / "completed_asset.png"
     repair_report_path = repair_dir / "repair_report.json"
     qa_report_path = repair_dir / "qa_report.json"
@@ -185,6 +192,7 @@ def read_repair_metadata(workspace_root: Path, element: ElementRecord) -> dict[s
         "qaReport": qa_report_path.exists(),
         "changedPixelsOverlay": changed_pixels_overlay_path.exists(),
         **{key: path.exists() for key, path in package_files.items()},
+        **{key: path.exists() for key, path in parent_removal_files.items()},
     }
     paths = {
         "missingMaskPath": missing_mask_relative_path(element.id) if files["missingMask"] else None,
@@ -259,7 +267,7 @@ def create_repair_task_package(
         build_repair_prompt(element),
         encoding="utf-8",
     )
-    _write_repair_authority(
+    write_repair_authority(
         workspace_root,
         element,
         incomplete_asset,
@@ -270,7 +278,7 @@ def create_repair_task_package(
     return repair_relative_paths(element.id)
 
 
-def _write_repair_authority(
+def write_repair_authority(
     workspace_root: Path,
     element: ElementRecord,
     incomplete_asset: Image.Image,

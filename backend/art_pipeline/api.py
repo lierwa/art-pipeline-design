@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Literal, Protocol
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -35,13 +35,14 @@ from art_pipeline.candidates import (
     mark_candidate_merged,
     merge_candidates,
 )
+from art_pipeline.click_detect import candidate_from_click_mask
 from art_pipeline.detection import (
-    DEFAULT_ASSET_VOCABULARY,
     DetectionProvider,
     DetectionProviderNotConfigured,
     DetectionResult,
 )
 from art_pipeline.elements import (
+    AssetRole,
     BoundingBox,
     CanvasBox,
     ElementRecord,
@@ -53,6 +54,7 @@ from art_pipeline.elements import (
 from art_pipeline.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.mask_refine import ReplaceMaskRequest, create_mask_from_shape
 from art_pipeline.masks import expand_bbox
+from art_pipeline.parent_repair_contracts import parent_removal_contract_covers_children
 from art_pipeline.qa import validate_repair_output
 from art_pipeline.repair_tasks import (
     MissingMaskRequest,
@@ -67,7 +69,14 @@ from art_pipeline.segmentation import (
     SegmentationUnavailableError,
     extract_with_strategy,
 )
+from art_pipeline.segment_assets import (
+    accept_sam2_edge_mask,
+    patch_sam2_edge_mask,
+    recompute_sticker_statuses,
+    suggest_sam2_edge_mask,
+)
 from art_pipeline.thumbnails import write_thumbnail
+from art_pipeline.vocabulary import normalize_detection_vocabulary
 
 
 ASSET_MEDIA_TYPES = {
@@ -77,8 +86,6 @@ ASSET_MEDIA_TYPES = {
     ".webp": "image/webp",
 }
 
-# Some providers return "cabinet" for the "bathroom cabinet" prompt.
-DETECTION_FILTER_VOCABULARY = [*DEFAULT_ASSET_VOCABULARY, "cabinet"]
 DETECTION_PROVIDER_ENV = "ART_PIPELINE_DETECTION_PROVIDER"
 GROUNDING_DINO_MODEL_ENV = "ART_PIPELINE_GROUNDING_DINO_MODEL"
 RUN_ID_PATTERN = re.compile(r"^run_[A-Za-z0-9_-]+$")
@@ -88,6 +95,12 @@ class PatchElementRequest(BaseModel):
     bbox: BoundingBox | None = None
     label: str | None = None
     visible: bool | None = None
+    assetRole: AssetRole | None = None
+    removeFromParent: str | None = None
+
+
+class SegmentMaskPatchRequest(ReplaceMaskRequest):
+    operation: Literal["replace", "add", "subtract"] = "replace"
 
 
 class ChildElementRequest(BaseModel):
@@ -110,9 +123,25 @@ class WorkspaceRunSummary(BaseModel):
     elementCount: int
 
 
+class ClickDetectRequest(BaseModel):
+    x: int
+    y: int
+    label: str = "untitled"
+
+
+class Sam2ClickProvider(Protocol):
+    def detect(
+        self,
+        image: Image.Image,
+        prompt: dict[str, Any],
+    ) -> Image.Image:
+        raise NotImplementedError
+
+
 def create_app(
     workspace_root: Path | None = None,
     detection_provider: DetectionProvider | None = None,
+    sam2_provider: Sam2ClickProvider | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Art Pipeline Workbench API")
     app.state.workspace_root = (workspace_root or Path("workspace")).resolve()
@@ -126,6 +155,7 @@ def create_app(
     app.state.detection_provider = detection_provider
     app.state.detection_provider_factory = detection_provider_factory
     app.state.detection_provider_config_error = detection_provider_config_error
+    app.state.sam2_provider = sam2_provider
 
     @app.get("/api/workspace/source")
     def get_source(runId: str | None = None) -> FileResponse:
@@ -269,6 +299,26 @@ def create_app(
         _write_state(root, state)
         return state
 
+    @app.post("/api/workspace/detection-vocabulary")
+    def post_detection_vocabulary(
+        vocabulary: list[str],
+        runId: str | None = None,
+    ) -> WorkspaceState:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        try:
+            normalized = normalize_detection_vocabulary(vocabulary)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        next_state = WorkspaceState(
+            source=state.source,
+            elements=state.elements,
+            detectionVocabulary=normalized,
+        )
+        _write_state(root, next_state)
+        return next_state
+
     @app.post("/api/workspace/elements")
     def post_element(request: ManualElementCreateRequest, runId: str | None = None) -> dict:
         root = _resolve_workspace_root(app.state.workspace_root, runId)
@@ -280,10 +330,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[*state.elements, created],
-        )
+        next_state = _replace_workspace_elements(state, [*state.elements, created])
         _write_state(root, next_state)
         return {
             "element": created.model_dump(mode="json"),
@@ -322,9 +369,10 @@ def create_app(
                 visible=visible,
                 history_kind="manual_edit",
             )
-            next_state = WorkspaceState(
-                source=state.source,
-                elements=[
+            updated = _apply_element_role_patch(state, updated, request)
+            next_state = _replace_workspace_elements(
+                state,
+                [
                     updated if current.id == element_id else current
                     for current in state.elements
                 ],
@@ -342,14 +390,25 @@ def create_app(
                         )
                     }
                 )
-                next_state = WorkspaceState(
-                    source=state.source,
-                    elements=[
+                next_state = _replace_workspace_elements(
+                    state,
+                    [
                         updated if current.id == element_id else current
                         for current in state.elements
                     ],
                 )
             next_state = _invalidate_geometry_changes(root, state, next_state)
+            if (
+                "assetRole" in request.model_fields_set
+                or "removeFromParent" in request.model_fields_set
+            ) and _source_path(root).exists():
+                # WHY: 角色/父关系是 repair/export 状态的输入；用户可能先验收 mask 再补父子语义，
+                # 所以这里复用 Segment accept 的父物体 contract 计算，避免另写一套状态推导。
+                next_state = recompute_sticker_statuses(
+                    root,
+                    _require_source_image(root),
+                    next_state,
+                )
             validate_workspace_state_geometry(next_state)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -382,10 +441,7 @@ def create_app(
                 label,
                 request.bbox,
             )
-            next_state = WorkspaceState(
-                source=state.source,
-                elements=[*state.elements, child],
-            )
+            next_state = _replace_workspace_elements(state, [*state.elements, child])
             validate_workspace_state_geometry(next_state)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -422,9 +478,9 @@ def create_app(
                 label,
             )
             merged_source_ids = {element.id for element in selected}
-            next_state = WorkspaceState(
-                source=state.source,
-                elements=[
+            next_state = _replace_workspace_elements(
+                state,
+                [
                     mark_candidate_merged(element, merged.id)
                     if element.id in merged_source_ids
                     else element
@@ -463,10 +519,7 @@ def create_app(
                 continue
             updated_elements.append(element)
 
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[*updated_elements, *children],
-        )
+        next_state = _replace_workspace_elements(state, [*updated_elements, *children])
         _write_state(root, next_state)
         return {
             "children": [child.model_dump(mode="json") for child in children],
@@ -527,9 +580,9 @@ def create_app(
         }
         for element_id in mask_paths:
             clear_repair_outputs(root, element_id)
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(
                     update={
                         "status": "extracted",
@@ -547,6 +600,104 @@ def create_app(
             "state": next_state.model_dump(mode="json"),
         }
 
+    @app.post("/api/workspace/elements/{element_id:path}/segment/suggest")
+    def post_segment_suggest(element_id: str, runId: str | None = None) -> dict:
+        provider = app.state.sam2_provider
+        if provider is None:
+            raise HTTPException(status_code=503, detail="SAM2 provider is not configured.")
+
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        element = _get_element(state, element_id)
+        try:
+            updated, segmentation = suggest_sam2_edge_mask(
+                root,
+                source_image,
+                element,
+                provider,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        next_state = _replace_workspace_elements(
+            state,
+            [
+                updated if current.id == element_id else current
+                for current in state.elements
+            ],
+        )
+        _write_state(root, next_state)
+        return {
+            "element": updated.model_dump(mode="json"),
+            "segmentation": segmentation,
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/elements/{element_id:path}/segment/accept")
+    def post_segment_accept(element_id: str, runId: str | None = None) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        _get_element(state, element_id)
+        try:
+            next_state, accepted = accept_sam2_edge_mask(
+                root,
+                source_image,
+                state,
+                element_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        _write_state(root, next_state)
+        return {
+            "element": accepted.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
+    @app.patch("/api/workspace/elements/{element_id:path}/segment/mask")
+    def patch_segment_mask(
+        element_id: str,
+        request: SegmentMaskPatchRequest,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        source_image = _require_source_image(root)
+        element = _get_element(state, element_id)
+        try:
+            patch_mask = create_mask_from_shape(element, request.shape)
+            updated, segmentation = patch_sam2_edge_mask(
+                root,
+                source_image,
+                element,
+                patch_mask,
+                request.operation,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        next_state = _replace_workspace_elements(
+            state,
+            [
+                updated if current.id == element_id else current
+                for current in state.elements
+            ],
+        )
+        # WHY: 手工编辑 child mask 会让父物体已有 repair 包失去依据；复用同一套
+        # sticker 状态推导，避免旧 completed_asset 在 child 重新验收前进入 final export。
+        next_state = recompute_sticker_statuses(root, source_image, next_state)
+        updated = _get_element(next_state, element_id)
+        _write_state(root, next_state)
+        return {
+            "element": updated.model_dump(mode="json"),
+            "segmentation": segmentation,
+            "state": next_state.model_dump(mode="json"),
+        }
+
     @app.post("/api/workspace/export")
     def post_export(
         request: ExportWorkspaceRequest | None = None,
@@ -554,13 +705,11 @@ def create_app(
     ) -> dict:
         root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
-        export_request = request or ExportWorkspaceRequest()
+        # WHY: 旧客户端可能仍发送 allowIncompleteVisibleOnly；final export 已把该字段降级为
+        # API 兼容输入，导出核心不再接收会改变准入规则的 debug override。
+        _ = request or ExportWorkspaceRequest()
         try:
-            return export_workspace(
-                root,
-                state,
-                allow_incomplete_visible_only=export_request.allowIncompleteVisibleOnly,
-            )
+            return export_workspace(root, state)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -584,14 +733,16 @@ def create_app(
         clear_stale_asset_outputs(root, element.id)
         clear_repair_outputs(root, element.id)
         mask_path = write_mask_output(root, element, mask)
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(
                     update={
                         "status": "extract_ready",
                         "mode": _reset_repair_mode(element),
                         "mask": mask_path,
+                        "segmentationStatus": "not_started",
+                        **_repair_artifact_invalidation_update(element),
                     }
                 )
                 if element.id == element_id
@@ -613,14 +764,16 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(
                     update={
                         "status": _status_after_extraction_invalidation(element),
                         "mode": _reset_repair_mode(element),
                         "mask": None,
+                        "segmentationStatus": "not_started",
+                        **_repair_artifact_invalidation_update(element),
                     }
                 )
                 if element.id == element_id
@@ -642,17 +795,19 @@ def create_app(
         element = _get_element(state, element_id)
 
         try:
-            missing_mask_path = write_missing_mask_from_shape(root, element, request.shape)
+            repair_element = element.model_copy(update={"mode": _reset_repair_mode(element)})
+            missing_mask_path = write_missing_mask_from_shape(root, repair_element, request.shape)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(
                     update={
                         "status": _status_after_repair_package_invalidation(element),
                         "mode": _reset_repair_mode(element),
+                        **_repair_artifact_invalidation_update(element),
                     }
                 )
                 if element.id == element_id
@@ -687,9 +842,9 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(update={"status": "repair_pending"})
                 if element.id == element_id
                 else element
@@ -721,18 +876,11 @@ def create_app(
             )
 
         qa_report = validate_repair_output(root, element)
-        next_state = WorkspaceState(
-            source=state.source,
-            elements=[
+        next_state = _replace_workspace_elements(
+            state,
+            [
                 element.model_copy(
-                    update={
-                        "status": "qa_failed"
-                        if qa_report["status"] == "fail"
-                        else "repair_complete",
-                        "mode": element.mode
-                        if qa_report["status"] == "fail"
-                        else "completed_by_codex",
-                    }
+                    update=_repair_validation_state_update(root, state, element, qa_report)
                 )
                 if element.id == element_id
                 else element
@@ -757,6 +905,57 @@ def create_app(
             ),
         )
 
+    @app.post("/api/workspace/click-detect")
+    def click_detect_workspace(
+        request: ClickDetectRequest,
+        runId: str | None = None,
+    ) -> dict:
+        provider = app.state.sam2_provider
+        if provider is None:
+            raise HTTPException(status_code=503, detail="SAM2 provider is not configured.")
+
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        if state.source is None:
+            raise HTTPException(status_code=400, detail="Upload a source image before click detection.")
+
+        try:
+            label = _normalize_label(request.label)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        source_image = _require_source_image(root)
+        prompt = {
+            "coordinateSpace": "source",
+            "points": [{"x": request.x, "y": request.y, "label": "positive"}],
+        }
+        try:
+            mask = provider.detect(source_image, prompt)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"SAM2 provider failed: {exc}",
+            ) from exc
+
+        try:
+            element = candidate_from_click_mask(
+                root,
+                state.elements,
+                source_image,
+                label,
+                mask,
+            )
+            next_state = _replace_workspace_elements(state, [*state.elements, element])
+            validate_workspace_state_geometry(next_state)
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        _write_state(root, next_state)
+        return {
+            "element": element.model_dump(mode="json"),
+            "state": next_state.model_dump(mode="json"),
+        }
+
     @app.post("/api/workspace/detect")
     def detect_workspace(runId: str | None = None) -> WorkspaceState:
         provider = _get_detection_provider(app)
@@ -773,11 +972,12 @@ def create_app(
             raise HTTPException(status_code=400, detail="Upload a source image before detection.")
 
         source_image = _require_source_image(root)
+        vocabulary = state.detectionVocabulary
         try:
             raw_results = provider.detect(
                 source_image,
-                DEFAULT_ASSET_VOCABULARY,
-                ". ".join(DEFAULT_ASSET_VOCABULARY),
+                vocabulary,
+                ". ".join(vocabulary),
             )
         except Exception as exc:
             raise HTTPException(
@@ -790,7 +990,7 @@ def create_app(
             DetectionResult.model_validate(item)
             for item in filter_detection_results(
                 [result.model_dump(mode="json") for result in results],
-                DETECTION_FILTER_VOCABULARY,
+                _detection_filter_vocabulary(vocabulary),
             )
         ]
         _clear_generated_workspace_outputs(root)
@@ -800,7 +1000,7 @@ def create_app(
             provider.name,
             filtered_results,
         )
-        next_state = WorkspaceState(source=state.source, elements=generated)
+        next_state = _replace_workspace_elements(state, generated)
         _write_state(root, next_state)
         return next_state
 
@@ -825,6 +1025,15 @@ def _get_detection_provider(app: FastAPI) -> DetectionProvider | None:
     app.state.detection_provider = provider
     app.state.detection_provider_config_error = None
     return provider
+
+
+def _detection_filter_vocabulary(vocabulary: list[str]) -> list[str]:
+    labels = list(vocabulary)
+    # WHY: Grounding DINO 等开源检测模型常把 "bathroom cabinet" 回传成 "cabinet"；
+    # 仅当当前词表包含原始短语时追加别名，避免自定义词表被默认别名放宽。
+    if "bathroom cabinet" in labels and "cabinet" not in labels:
+        labels.append("cabinet")
+    return labels
 
 
 def _detection_provider_factory_from_env() -> Callable[[], DetectionProvider] | None:
@@ -1015,6 +1224,18 @@ def _read_state(workspace_root: Path) -> WorkspaceState:
     return WorkspaceState.model_validate_json(state_path.read_text(encoding="utf-8"))
 
 
+def _replace_workspace_elements(
+    state: WorkspaceState,
+    elements: list[ElementRecord],
+) -> WorkspaceState:
+    # WHY: 多数接口只改变元素集合；词表属于工作区级配置，必须随状态重建一起保留。
+    return WorkspaceState(
+        source=state.source,
+        elements=elements,
+        detectionVocabulary=state.detectionVocabulary,
+    )
+
+
 def _source_path(workspace_root: Path) -> Path:
     return workspace_root / "source" / "original.png"
 
@@ -1142,6 +1363,74 @@ def _get_element(state: WorkspaceState, element_id: str) -> ElementRecord:
     raise HTTPException(status_code=404, detail="Element not found.")
 
 
+def _apply_element_role_patch(
+    state: WorkspaceState,
+    element: ElementRecord,
+    request: PatchElementRequest,
+) -> ElementRecord:
+    if (
+        "assetRole" not in request.model_fields_set
+        and "removeFromParent" not in request.model_fields_set
+    ):
+        return element
+
+    asset_role = (
+        request.assetRole
+        if "assetRole" in request.model_fields_set
+        else element.assetRole
+    )
+    if asset_role is None:
+        raise ValueError("Asset role must not be null.")
+
+    remove_from_parent = (
+        request.removeFromParent
+        if "removeFromParent" in request.model_fields_set
+        else element.removeFromParent
+    )
+
+    if asset_role != "removable_child":
+        # WHY: 修复/导出阶段只会对可摘除子物体读取父物体引用；其他角色保留该值
+        # 会让后续流水线误以为需要从父图中做扣除，所以在角色切换时统一收敛为单一事实。
+        remove_from_parent = None
+    elif remove_from_parent is None:
+        # WHY: 角色切换与父物体选择是 UI 的两步动作；None 表示“待选择父物体”，
+        # 不会被修复/导出当作已有父关系消费，但允许 Inspector 进入父物体选择状态。
+        pass
+    elif remove_from_parent == "":
+        # WHY: 空字符串既不是合法父关系，也不是明确的 pending 状态；持久化它会让
+        # 后续修复/导出边界无法区分“未选择”和“坏引用”，所以在 API 边界拒绝。
+        raise ValueError("removeFromParent must reference an existing parent element.")
+    else:
+        _validate_remove_from_parent_target(state, element.id, remove_from_parent)
+
+    return element.model_copy(
+        update={
+            "assetRole": asset_role,
+            "removeFromParent": remove_from_parent,
+        }
+    )
+
+
+def _validate_remove_from_parent_target(
+    state: WorkspaceState,
+    element_id: str,
+    parent_id: str,
+) -> None:
+    try:
+        validate_element_id(parent_id)
+    except ValueError as exc:
+        raise ValueError("removeFromParent must reference an existing parent element.") from exc
+
+    if parent_id == element_id:
+        raise ValueError("removeFromParent must reference an existing parent element.")
+
+    parent = next((element for element in state.elements if element.id == parent_id), None)
+    if parent is None:
+        raise ValueError("removeFromParent must reference an existing parent element.")
+    if parent.assetRole != "parent":
+        raise ValueError("removeFromParent must reference an element with parent role.")
+
+
 def _select_extraction_targets(
     state: WorkspaceState,
     element_ids: list[str] | None,
@@ -1189,6 +1478,55 @@ def _is_repair_workflow_element(element: ElementRecord) -> bool:
     return element.mode in {"needs_completion", "completed_by_codex"}
 
 
+def _repair_validation_state_update(
+    workspace_root: Path,
+    state: WorkspaceState,
+    element: ElementRecord,
+    qa_report: dict[str, Any],
+) -> dict[str, str]:
+    if qa_report["status"] == "fail":
+        return {
+            "status": "qa_failed",
+            "mode": element.mode,
+            "repairStatus": "qa_failed",
+            "exportStatus": "blocked",
+        }
+
+    if _repair_contract_is_fresh(workspace_root, state, element):
+        return {
+            "status": "repair_complete",
+            "mode": "completed_by_codex",
+            "repairStatus": "repair_complete",
+            "exportStatus": "ready",
+        }
+
+    # WHY: QA pass 只证明 completed_asset 可用；parent removal 还必须匹配当前 child mask/canvas，
+    # 否则同一 child id 重新分割后会导出旧修复结果。
+    return {
+        "status": "repair_pending",
+        "mode": "needs_completion",
+        "repairStatus": "task_created",
+        "exportStatus": "blocked",
+    }
+
+
+def _repair_contract_is_fresh(
+    workspace_root: Path,
+    state: WorkspaceState,
+    element: ElementRecord,
+) -> bool:
+    if element.assetRole != "parent":
+        return True
+    children = [
+        child
+        for child in state.elements
+        if child.assetRole == "removable_child"
+        and child.removeFromParent == element.id
+        and child.segmentationStatus == "mask_accepted"
+    ]
+    return not children or parent_removal_contract_covers_children(workspace_root, element, children)
+
+
 def _status_after_geometry_invalidation(element: ElementRecord) -> str:
     return (
         "extract_ready"
@@ -1221,6 +1559,23 @@ def _status_after_repair_package_invalidation(element: ElementRecord) -> str:
     )
 
 
+def _repair_artifact_invalidation_update(element: ElementRecord) -> dict[str, str]:
+    should_reset_repair = (
+        element.repairStatus in {"task_created", "redraw_pending", "repair_complete", "qa_failed"}
+        or element.exportStatus in {"ready", "exported", "blocked"}
+        or element.mode == "completed_by_codex"
+    )
+    if not should_reset_repair:
+        return {}
+
+    # WHY: 清除 mask/geometry/missing-mask 会删除 repair 文件；新旧状态必须一起失效，
+    # 否则前端会把已经不存在的 repair 输出显示为可导出。
+    return {
+        "repairStatus": "required" if _is_repair_workflow_element(element) else "not_required",
+        "exportStatus": "blocked",
+    }
+
+
 def _reset_repair_mode(element: ElementRecord) -> str:
     return "needs_completion" if element.mode == "completed_by_codex" else element.mode
 
@@ -1246,11 +1601,13 @@ def _invalidate_geometry_changes(
                     "status": _status_after_geometry_invalidation(element),
                     "mode": _reset_repair_mode(element),
                     "mask": None,
+                    "segmentationStatus": "not_started",
+                    **_repair_artifact_invalidation_update(element),
                 }
             )
         )
 
-    return WorkspaceState(source=next_state.source, elements=next_elements)
+    return _replace_workspace_elements(next_state, next_elements)
 
 
 def _element_geometry_changed(previous: ElementRecord, current: ElementRecord) -> bool:

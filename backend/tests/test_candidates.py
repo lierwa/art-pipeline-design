@@ -17,6 +17,7 @@ def test_candidate_status_remains_candidate_only() -> None:
     statuses = set(get_args(CandidateStatus))
 
     assert "model_detected" in statuses
+    assert "click_detected" in statuses
     assert "edited" in statuses
     assert "exported" in statuses
     assert "proposal" not in statuses

@@ -58,6 +58,7 @@ type CanvasStageProps = {
   onCancelBoxEdit: () => void;
   onClearDrafts: () => void;
   onApplySplit: () => void;
+  onClickDetectPoint?: (point: { x: number; y: number }) => void;
 };
 
 type PointerDraft = {
@@ -147,6 +148,7 @@ export function CanvasStage({
   onCancelBoxEdit,
   onClearDrafts,
   onApplySplit,
+  onClickDetectPoint,
 }: CanvasStageProps) {
   const canvasPanelRef = useRef<HTMLElement | null>(null);
   const pointerDraftRef = useRef<PointerDraft | null>(null);
@@ -174,6 +176,10 @@ export function CanvasStage({
 
   function beginDraw(event: DrawingEvent) {
     if (!source || tool === "select") {
+      return;
+    }
+    if (tool === "click-detect") {
+      onClickDetectPoint?.(eventPointToImage(event, source));
       return;
     }
     if (tool === "missing-mask" && !canDrawMissingMask) {

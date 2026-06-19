@@ -5,25 +5,10 @@ from typing import Any, Protocol
 from PIL import Image
 from pydantic import BaseModel, Field, model_validator
 
-from art_pipeline.elements import BoundingBox
+from art_pipeline.elements import BoundingBox, DEFAULT_WORKSPACE_VOCABULARY
 
 
-DEFAULT_ASSET_VOCABULARY = [
-    "cat",
-    "bathtub",
-    "sink",
-    "bathroom cabinet",
-    "mirror",
-    "window",
-    "curtain",
-    "towel",
-    "basket",
-    "stool",
-    "bottle",
-    "plant",
-    "shelf",
-    "rug",
-]
+DEFAULT_ASSET_VOCABULARY = DEFAULT_WORKSPACE_VOCABULARY.copy()
 
 
 class DetectionProviderNotConfigured(RuntimeError):
