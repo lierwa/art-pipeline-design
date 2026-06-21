@@ -16,5 +16,30 @@ def test_workspace_and_element_defaults_support_sticker_flow() -> None:
     assert element.exportStatus == "not_ready"
 
 
+def test_default_detection_vocabulary_uses_core_demo_objects_only() -> None:
+    state = WorkspaceState.model_validate({"source": None, "elements": []})
+    assert state.detectionVocabulary == [
+        "cat",
+        "bathtub",
+        "toilet",
+        "sink",
+        "bathroom cabinet",
+        "mirror",
+        "window",
+        "curtain",
+        "towel",
+        "basket",
+        "stool",
+        "bottle",
+        "plant",
+        "shelf",
+        "rug",
+        "bucket",
+        "basin",
+    ]
+    assert "cat collar" not in state.detectionVocabulary
+    assert "floor tile" not in state.detectionVocabulary
+
+
 def test_detection_vocabulary_normalization() -> None:
     assert normalize_detection_vocabulary([" Cat ", "cat", "water   bucket"]) == ["cat", "water bucket"]

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +140,98 @@ def test_segment_suggest_prompts_sam2_with_positive_support_points(tmp_path: Pat
         *bottom_prompt["points"],
         {"x": 5, "y": 5, "label": "positive"},
     ]
+
+
+def test_segment_suggest_all_masks_every_segmentable_asset(tmp_path: Path) -> None:
+    first_mask = Image.new("L", (12, 10), 0)
+    ImageDraw.Draw(first_mask).rectangle((3, 2, 8, 7), fill=255)
+    second_mask = Image.new("L", (12, 10), 0)
+    ImageDraw.Draw(second_mask).rectangle((1, 1, 4, 4), fill=255)
+    provider = SequenceSam2Provider([first_mask, second_mask])
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"].append(
+        {
+            **state["elements"][0],
+            "id": "element_002",
+            "name": "Second sticker",
+            "bbox": {"x": 1, "y": 1, "w": 3, "h": 3},
+            "canvas": {"x": 0, "y": 0, "w": 6, "h": 5},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+            "exportStatus": "not_ready",
+        }
+    )
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post("/api/workspace/segment/suggest")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["elementId"] for item in body["segmentations"]] == [
+        "element_001",
+        "element_002",
+    ]
+    assert {item["prompt"]["elementId"] for item in provider.prompts} == {
+        "element_001",
+        "element_002",
+    }
+    next_elements = body["state"]["elements"]
+    assert [element["segmentationStatus"] for element in next_elements] == [
+        "mask_suggested",
+        "mask_suggested",
+    ]
+    assert all(element["mask"].endswith("/sam2_edge/mask.png") for element in next_elements)
+
+
+def test_segment_suggest_subtracts_child_masks_from_parent_mask(tmp_path: Path) -> None:
+    parent_mask = Image.new("L", (12, 10), 0)
+    ImageDraw.Draw(parent_mask).rectangle((2, 1, 9, 6), fill=255)
+    provider = FakeSam2Provider(parent_mask)
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"] = [
+        {
+            **state["elements"][0],
+            "id": "parent",
+            "name": "wall cabinet",
+            "assetRole": "parent",
+            "bbox": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+        {
+            **state["elements"][0],
+            "id": "child",
+            "name": "plant + bottle",
+            "assetRole": "removable_child",
+            "parentId": "parent",
+            "removeFromParent": "parent",
+            "bbox": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "canvas": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "mask": "elements/child/sam2_edge/mask.png",
+            "segmentationStatus": "mask_suggested",
+            "segmentationQuality": None,
+        },
+    ]
+    child_dir = tmp_path / "workspace" / "elements" / "child" / "sam2_edge"
+    child_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("L", (3, 2), 255).save(child_dir / "mask.png", format="PNG")
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post("/api/workspace/elements/parent/segment/suggest")
+
+    assert response.status_code == 200
+    stage_dir = tmp_path / "workspace" / "elements" / "parent" / "sam2_edge"
+    with Image.open(stage_dir / "mask.png") as written_mask:
+        assert written_mask.getpixel((2, 1)) == 255
+        assert written_mask.getpixel((4, 3)) == 0
+        assert written_mask.getpixel((8, 6)) == 255
 
 
 def test_segment_suggest_expands_canvas_when_raw_mask_exceeds_canvas(tmp_path: Path) -> None:
@@ -352,6 +446,125 @@ def test_segment_mask_patch_replaces_sam2_edge_artifacts_but_keeps_suggestion_pe
     assert accept_response.status_code == 200
     assert accept_response.json()["element"]["segmentationStatus"] == "mask_accepted"
 
+
+def test_segment_mask_patch_magic_wand_subtracts_only_similar_connected_region(
+    tmp_path: Path,
+) -> None:
+    provider_mask = Image.new("L", (8, 6), 255)
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FakeSam2Provider(provider_mask)))
+    _upload_scene_and_state(client)
+    assert client.post("/api/workspace/elements/element_001/segment/suggest").status_code == 200
+
+    response = client.patch(
+        "/api/workspace/elements/element_001/segment/mask",
+        json={
+            "operation": "subtract",
+            "shape": {
+                "type": "magic_wand",
+                "coordinateSpace": "canvas",
+                "seed": {"x": 1, "y": 1},
+                "tolerance": 0,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    stage_dir = tmp_path / "workspace" / "elements" / "element_001" / "sam2_edge"
+    with Image.open(stage_dir / "mask.png") as written_mask:
+        assert written_mask.getpixel((1, 1)) == 0
+        assert written_mask.getpixel((6, 5)) == 0
+        assert written_mask.getpixel((0, 0)) == 255
+        assert written_mask.getpixel((7, 5)) == 255
+
+
+def test_segment_mask_patch_mask_delta_replaces_and_cleans_small_fragments(
+    tmp_path: Path,
+) -> None:
+    provider_mask = Image.new("L", (8, 6), 255)
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FakeSam2Provider(provider_mask)))
+    _upload_scene_and_state(client)
+    assert client.post("/api/workspace/elements/element_001/segment/suggest").status_code == 200
+    delta = Image.new("L", (8, 6), 0)
+    draw = ImageDraw.Draw(delta)
+    draw.rectangle((2, 1, 5, 4), fill=255)
+    draw.point((7, 5), fill=255)
+
+    response = client.patch(
+        "/api/workspace/elements/element_001/segment/mask",
+        json={
+            "operation": "replace",
+            "shape": {
+                "type": "mask_delta",
+                "coordinateSpace": "canvas",
+                "maskData": _mask_data_url(delta),
+                "cleanupMinArea": 3,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    stage_dir = tmp_path / "workspace" / "elements" / "element_001" / "sam2_edge"
+    with Image.open(stage_dir / "mask.png") as written_mask:
+        assert written_mask.getpixel((2, 1)) == 255
+        assert written_mask.getpixel((5, 4)) == 255
+        assert written_mask.getpixel((7, 5)) == 0
+
+
+def test_segment_mask_patch_mask_delta_adds_and_subtracts_from_current_mask(
+    tmp_path: Path,
+) -> None:
+    provider_mask = Image.new("L", (8, 6), 0)
+    ImageDraw.Draw(provider_mask).rectangle((2, 1, 5, 4), fill=255)
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FakeSam2Provider(provider_mask)))
+    _upload_scene_and_state(client)
+    assert client.post("/api/workspace/elements/element_001/segment/suggest").status_code == 200
+
+    subtract_delta = Image.new("L", (8, 6), 0)
+    ImageDraw.Draw(subtract_delta).rectangle((3, 2, 4, 3), fill=255)
+    subtract_response = client.patch(
+        "/api/workspace/elements/element_001/segment/mask",
+        json={
+            "operation": "subtract",
+            "shape": {
+                "type": "mask_delta",
+                "coordinateSpace": "canvas",
+                "maskData": _mask_data_url(subtract_delta),
+            },
+        },
+    )
+    assert subtract_response.status_code == 200
+
+    add_delta = Image.new("L", (8, 6), 0)
+    ImageDraw.Draw(add_delta).rectangle((0, 0, 1, 1), fill=255)
+    add_response = client.patch(
+        "/api/workspace/elements/element_001/segment/mask",
+        json={
+            "operation": "add",
+            "shape": {
+                "type": "mask_delta",
+                "coordinateSpace": "canvas",
+                "maskData": _mask_data_url(add_delta),
+            },
+        },
+    )
+
+    assert add_response.status_code == 200
+    stage_dir = tmp_path / "workspace" / "elements" / "element_001" / "sam2_edge"
+    with Image.open(stage_dir / "mask.png") as written_mask:
+        assert written_mask.getpixel((0, 0)) == 255
+        assert written_mask.getpixel((1, 1)) == 255
+        assert written_mask.getpixel((3, 2)) == 0
+        assert written_mask.getpixel((4, 3)) == 0
+        assert written_mask.getpixel((2, 1)) == 255
+
+
 def _soft_alpha_pixel_count(mask: Image.Image) -> int:
     histogram = mask.convert("L").histogram()
     return sum(histogram[1:255])
+
+
+def _mask_data_url(mask: Image.Image) -> str:
+    buffer = BytesIO()
+    mask.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"

@@ -139,6 +139,37 @@ def test_role_patch_after_masks_accept_creates_parent_removal_repair_contract(
     assert (tmp_path / "workspace" / "elements" / "parent_001" / "repair" / "repair_contract.json").exists()
 
 
+def test_parent_relationship_patch_after_masks_accept_creates_parent_removal_repair_contract(
+    tmp_path: Path,
+) -> None:
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FullMaskProvider()))
+    _upload_state(
+        client,
+        [
+            _element("parent_001", "Cabinet", bbox={"x": 2, "y": 2, "w": 8, "h": 6}, canvas={"x": 1, "y": 1, "w": 10, "h": 8}),
+            _element("child_001", "Sticker", bbox={"x": 4, "y": 3, "w": 3, "h": 2}, canvas={"x": 4, "y": 3, "w": 3, "h": 2}, layer=2),
+        ],
+    )
+    _suggest_accept(client, "parent_001")
+    _suggest_accept(client, "child_001")
+
+    response = client.patch(
+        "/api/workspace/elements/child_001/parent",
+        json={"parentId": "parent_001"},
+    )
+
+    assert response.status_code == 200
+    by_id = {element["id"]: element for element in response.json()["state"]["elements"]}
+    assert by_id["parent_001"]["assetRole"] == "parent"
+    assert by_id["child_001"]["assetRole"] == "removable_child"
+    assert by_id["child_001"]["parentId"] == "parent_001"
+    assert by_id["child_001"]["removeFromParent"] == "parent_001"
+    assert by_id["parent_001"]["repairStatus"] == "task_created"
+    assert by_id["parent_001"]["exportStatus"] == "blocked"
+    assert by_id["child_001"]["exportStatus"] == "ready"
+    assert (tmp_path / "workspace" / "elements" / "parent_001" / "repair" / "repair_contract.json").exists()
+
+
 def test_role_patch_moving_child_away_recomputes_previous_parent_repair_state(
     tmp_path: Path,
 ) -> None:

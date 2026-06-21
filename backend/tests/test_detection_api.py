@@ -29,6 +29,42 @@ def test_detect_fails_when_no_provider_is_configured(tmp_path: Path) -> None:
     assert response.json()["detail"] == "Detection provider is not configured."
 
 
+def test_detect_uses_demo_provider_by_default(tmp_path: Path) -> None:
+    app = create_app(workspace_root=tmp_path / "workspace")
+    client = TestClient(app)
+    upload = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post("/api/workspace/detect")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {element["label"] for element in body["elements"]} >= {"bathtub", "cat"}
+    assert all(element["sourceProvider"] == "demo" for element in body["elements"])
+
+
+def test_detect_uses_demo_provider_when_env_provider_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ART_PIPELINE_DETECTION_PROVIDER", "")
+    app = create_app(workspace_root=tmp_path / "workspace")
+    client = TestClient(app)
+    upload = client.post(
+        "/api/workspace/source",
+        files={"file": ("scene.png", make_synthetic_scene_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    response = client.post("/api/workspace/detect")
+
+    assert response.status_code == 200
+    assert {element["label"] for element in response.json()["elements"]} >= {"bathtub", "cat"}
+
+
 def test_detect_lazily_configures_grounding_dino_provider_from_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

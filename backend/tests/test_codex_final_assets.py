@@ -146,6 +146,60 @@ def test_codex_final_generate_requires_cutout_reference(tmp_path: Path) -> None:
     assert provider.requests == []
 
 
+def test_codex_parent_generation_inpaints_parent_without_removed_children(tmp_path: Path) -> None:
+    provider = FakeCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    _write_parent_child_sam2_references(workspace_root)
+
+    response = client.post(
+        "/api/workspace/elements/parent_001/codex-final/generate",
+        json={"promptHint": "keep the same front-facing shelf angle"},
+    )
+
+    assert response.status_code == 200
+    request = provider.requests[0]
+    prompt = getattr(request, "prompt")
+    assert "parent asset with removable child objects" in prompt
+    assert "Removed child objects: bottle, plant" in prompt
+    assert "Do not regenerate the removed child objects" in prompt
+    assert "Inpaint and complete only the parent structure" in prompt
+    assert "User prompt hint, subordinate to the rules above: keep the same front-facing shelf angle" in prompt
+    relative_inputs = [
+        str(Path(path).relative_to(workspace_root)).replace("\\", "/")
+        for path in getattr(request, "image_paths")
+    ]
+    assert "elements/child_001/sam2_edge/mask.png" in relative_inputs
+    assert "elements/child_002/sam2_edge/mask.png" in relative_inputs
+
+    body = response.json()
+    assert body["element"]["generationProfile"] == "parent_inpaint_without_children"
+    assert body["element"]["sourcePromptHint"] == "keep the same front-facing shelf angle"
+    assert body["generation"]["generationProfile"] == "parent_inpaint_without_children"
+    assert [child["name"] for child in body["generation"]["removedChildren"]] == ["bottle", "plant"]
+    metadata = json.loads(
+        (workspace_root / "elements" / "parent_001" / "codex_final" / "generation.json").read_text(encoding="utf-8")
+    )
+    assert metadata["generationProfile"] == "parent_inpaint_without_children"
+    assert metadata["promptHint"] == "keep the same front-facing shelf angle"
+
+
+def test_codex_child_generation_uses_standalone_profile(tmp_path: Path) -> None:
+    provider = FakeCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    _write_parent_child_sam2_references(workspace_root)
+
+    response = client.post("/api/workspace/elements/child_001/codex-final/generate")
+
+    assert response.status_code == 200
+    prompt = getattr(provider.requests[0], "prompt")
+    assert "removable child asset" in prompt
+    assert "Generate only this child object as a standalone sticker" in prompt
+    assert "Do not include its parent container" in prompt
+    assert response.json()["element"]["generationProfile"] == "child_standalone"
+
+
 def _write_accepted_sam2_reference(workspace_root: Path) -> None:
     stage_dir = workspace_root / "elements" / "element_001" / "sam2_edge"
     stage_dir.mkdir(parents=True, exist_ok=True)
@@ -191,3 +245,70 @@ def _write_accepted_sam2_reference(workspace_root: Path) -> None:
         ],
     }
     (workspace_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _write_parent_child_sam2_references(workspace_root: Path) -> None:
+    for element_id, color in [
+        ("parent_001", (180, 110, 40, 255)),
+        ("child_001", (230, 90, 120, 255)),
+        ("child_002", (90, 190, 80, 255)),
+    ]:
+        stage_dir = workspace_root / "elements" / element_id / "sam2_edge"
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        source_crop = Image.new("RGBA", (10, 10), color)
+        source_crop.save(stage_dir / "source_crop.png", format="PNG")
+        cutout = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+        for x in range(2, 8):
+            for y in range(2, 8):
+                cutout.putpixel((x, y), color)
+        cutout.save(stage_dir / "transparent_asset.png", format="PNG")
+        cutout.getchannel("A").save(stage_dir / "mask.png", format="PNG")
+
+    state = {
+        "source": {
+            "filename": "original.png",
+            "path": "source/original.png",
+            "width": 32,
+            "height": 32,
+        },
+        "elements": [
+            _sam2_state_element("parent_001", "wall cabinet", "parent", None, {"x": 3, "y": 2, "w": 20, "h": 20}),
+            _sam2_state_element("child_001", "bottle", "removable_child", "parent_001", {"x": 9, "y": 8, "w": 4, "h": 6}),
+            _sam2_state_element("child_002", "plant", "removable_child", "parent_001", {"x": 14, "y": 5, "w": 5, "h": 5}),
+        ],
+    }
+    (workspace_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+def _sam2_state_element(
+    element_id: str,
+    name: str,
+    asset_role: str,
+    remove_from_parent: str | None,
+    bbox: dict[str, int],
+) -> dict:
+    return {
+        "id": element_id,
+        "name": name,
+        "label": name,
+        "status": "accepted",
+        "mode": "needs_completion",
+        "assetRole": asset_role,
+        "removeFromParent": remove_from_parent,
+        "bbox": bbox,
+        "canvas": {"x": max(0, bbox["x"] - 1), "y": max(0, bbox["y"] - 1), "w": bbox["w"] + 2, "h": bbox["h"] + 2},
+        "layer": 1,
+        "visible": True,
+        "segmentationStatus": "mask_accepted",
+        "segmentationQuality": {
+            "selectedProfile": "fixture",
+            "candidateCount": 1,
+            "foregroundArea": 36,
+            "detachedArea": 0,
+            "filledHoleCount": 0,
+            "filledHoleArea": 0,
+            "qualityStatus": "pass",
+            "qualityReasons": [],
+        },
+        "mask": f"elements/{element_id}/sam2_edge/mask.png",
+    }

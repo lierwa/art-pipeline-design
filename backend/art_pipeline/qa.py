@@ -8,7 +8,7 @@ from PIL import Image
 
 from art_pipeline.asset_outputs import element_output_dir
 from art_pipeline.elements import ElementRecord
-from art_pipeline.repair_tasks import (
+from art_pipeline.repair.tasks import (
     create_preserve_mask,
     fingerprint_image,
     repair_authority_path,

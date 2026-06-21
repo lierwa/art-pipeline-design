@@ -8,9 +8,9 @@ from typing import Any, Protocol
 
 from PIL import Image
 
-from art_pipeline.elements import ElementRecord, WorkspaceState
-from art_pipeline.export_files import resolve_workspace_path
-from art_pipeline.segment_assets import sam2_edge_paths
+from art_pipeline.elements import ElementRecord, GenerationProfile, WorkspaceState
+from art_pipeline.exporting.files import resolve_workspace_path
+from art_pipeline.segment.assets import sam2_edge_paths
 
 
 CODEX_FINAL_STAGE = "codex_final"
@@ -29,6 +29,18 @@ class CodexAssetRequest:
     output_path: Path
     work_dir: Path
     prompt: str
+
+
+@dataclass(frozen=True)
+class RemovedChildContext:
+    element_id: str
+    name: str
+    mask_path: str
+    bbox: dict[str, int]
+    canvas: dict[str, int]
+
+
+CodexPromptHint = str | None
 
 
 class CodexAssetProvider(Protocol):
@@ -60,9 +72,11 @@ def generate_codex_final_asset(
     state: WorkspaceState,
     element_id: str,
     provider: CodexAssetProvider,
-    prompt_override: str | None = None,
+    prompt_hint: CodexPromptHint = None,
 ) -> tuple[WorkspaceState, ElementRecord, dict[str, Any]]:
     element = _find_element(state, element_id)
+    removed_children = _removed_child_contexts(workspace_root, state, element)
+    generation_profile = _generation_profile(element, removed_children)
     reference_asset_path = sam2_edge_paths(element.id)["assetPath"]
     source_crop_path = sam2_edge_paths(element.id)["sourceCropPath"]
     mask_path = sam2_edge_paths(element.id)["maskPath"]
@@ -85,7 +99,9 @@ def generate_codex_final_asset(
     if output_file.exists():
         # WHY: 语义补全会反复重跑问题元素；先清掉旧 job 输出，避免 CLI 未写新图时误用 stale PNG。
         output_file.unlink()
-    prompt = prompt_override or _default_codex_prompt(element)
+    prompt = _default_codex_prompt(element, generation_profile, removed_children, prompt_hint)
+    extra_image_paths = _existing_removed_child_masks(workspace_root, removed_children)
+    image_paths = (source_crop_file, reference_asset_file, mask_file, *extra_image_paths)
 
     request = CodexAssetRequest(
         element_id=element.id,
@@ -93,7 +109,7 @@ def generate_codex_final_asset(
         reference_image_path=reference_asset_file,
         source_crop_path=source_crop_file,
         mask_path=mask_file,
-        image_paths=(source_crop_file, reference_asset_file, mask_file),
+        image_paths=image_paths,
         output_path=output_file,
         work_dir=work_dir,
         prompt=prompt,
@@ -108,8 +124,16 @@ def generate_codex_final_asset(
         "referenceAssetPath": reference_asset_path,
         "sourceCropPath": source_crop_path,
         "maskPath": mask_path,
-        "inputImagePaths": [source_crop_path, reference_asset_path, mask_path],
+        "inputImagePaths": [
+            source_crop_path,
+            reference_asset_path,
+            mask_path,
+            *[child.mask_path for child in removed_children],
+        ],
         "assetPath": paths["assetPath"],
+        "generationProfile": generation_profile,
+        "removedChildren": [_removed_child_metadata(child) for child in removed_children],
+        "promptHint": _normalize_prompt_hint(prompt_hint),
         "prompt": prompt,
     }
     metadata_file = resolve_workspace_path(workspace_root, paths["metadataPath"])
@@ -122,6 +146,8 @@ def generate_codex_final_asset(
             "exportStatus": "ready",
             "sourceProvider": provider.name,
             "sourcePrompt": prompt,
+            "sourcePromptHint": _normalize_prompt_hint(prompt_hint),
+            "generationProfile": generation_profile,
         }
     )
     next_state = WorkspaceState(
@@ -133,31 +159,134 @@ def generate_codex_final_asset(
         **paths,
         "provider": provider.name,
         "referenceAssetPath": reference_asset_path,
-        "inputImagePaths": [source_crop_path, reference_asset_path, mask_path],
+        "inputImagePaths": metadata["inputImagePaths"],
+        "generationProfile": generation_profile,
+        "removedChildren": metadata["removedChildren"],
+        "promptHint": metadata["promptHint"],
         "prompt": prompt,
     }
     return next_state, updated, generation
 
 
-def _default_codex_prompt(element: ElementRecord) -> str:
+def _default_codex_prompt(
+    element: ElementRecord,
+    profile: GenerationProfile,
+    removed_children: list[RemovedChildContext],
+    prompt_hint: CodexPromptHint,
+) -> str:
     label = element.label or element.name
-    return "\n".join(
-        [
-            "$imagegen",
-            "Use the attached images as diagnostic context for semantic completion: source crop first, transparent cutout second, mask third.",
-            "Create one production-ready transparent PNG game sticker from the subject, not a literal copy of the cutout artifacts.",
-            f"Subject: {label}.",
-            "The transparent cutout may be clipped, occluded, or contaminated by nearby objects.",
-            "Keep the same object identity, pose, cute isometric/cartoon material style, and approximate canvas framing.",
-            "Infer and complete the whole canonical subject when edges, corners, caps, legs, or bottoms are missing.",
-            "If the subject touches a crop, cutout, or mask boundary, synthesize plausible hidden surfaces so the asset reads as physically complete.",
-            "Prefer a complete self-contained sticker over strict copying of the damaged silhouette.",
-            "Do not preserve truncated cut lines, flat sliced sides, missing caps, missing bases, or accidental holes.",
-            "Remove unrelated neighboring object fragments that are not part of the subject label.",
-            "Remove all cutout artifacts: no ragged alpha edge, no black speckles, no interior holes, no checkerboard, no shadow background.",
-            "Output must be a clean transparent-background PNG saved exactly as final_asset.png in the current working directory.",
+    lines = [
+        "$imagegen",
+        "Use the attached images as diagnostic context for semantic completion: source crop first, transparent cutout second, mask third.",
+        "Create one production-ready transparent PNG game sticker from the subject, not a literal copy of the cutout artifacts.",
+        f"Subject: {label}.",
+        *_profile_prompt_lines(profile, removed_children),
+        "Keep the same object identity, pose, cute isometric/cartoon material style, and approximate canvas framing.",
+        "Infer and complete the whole canonical subject when edges, corners, caps, legs, or bottoms are missing.",
+        "If the subject touches a crop, cutout, or mask boundary, synthesize plausible hidden surfaces so the asset reads as physically complete.",
+        "Prefer a complete self-contained sticker over strict copying of the damaged silhouette.",
+        "Do not preserve truncated cut lines, flat sliced sides, missing caps, missing bases, or accidental holes.",
+        "Remove unrelated neighboring object fragments that are not part of the subject label.",
+        "Remove all cutout artifacts: no ragged alpha edge, no black speckles, no interior holes, no checkerboard, no shadow background.",
+    ]
+    hint = _normalize_prompt_hint(prompt_hint)
+    if hint:
+        # WHY: 用户提示只能补充审美/角度细节；profile 约束是父子语义的系统事实，不能被覆盖。
+        lines.append(f"User prompt hint, subordinate to the rules above: {hint}")
+    lines.append("Output must be a clean transparent-background PNG saved exactly as final_asset.png in the current working directory.")
+    return "\n".join(lines)
+
+
+def _profile_prompt_lines(
+    profile: GenerationProfile,
+    removed_children: list[RemovedChildContext],
+) -> list[str]:
+    if profile == "child_standalone":
+        return [
+            "This is a removable child asset. Generate only this child object as a standalone sticker.",
+            "Do not include its parent container, shelf, cabinet, wall, floor, or nearby support surface unless it is part of the child itself.",
         ]
-    )
+    if profile == "parent_inpaint_without_children":
+        child_names = ", ".join(child.name for child in removed_children)
+        return [
+            "This is a parent asset with removable child objects already cut away from its mask.",
+            f"Removed child objects: {child_names}.",
+            "The dark holes or missing silhouettes inside the parent indicate removed child occupancy, not damaged subject parts.",
+            "Do not regenerate the removed child objects. Do not draw them back into the final asset.",
+            "Inpaint and complete only the parent structure: shelves, cabinet panels, edges, interior surfaces, walls, wood grain, and supporting geometry.",
+        ]
+    return [
+        "The transparent cutout may be clipped, occluded, or contaminated by nearby objects.",
+        "Complete the selected subject itself, while excluding objects that are not part of the subject label.",
+    ]
+
+
+def _generation_profile(
+    element: ElementRecord,
+    removed_children: list[RemovedChildContext],
+) -> GenerationProfile:
+    if element.assetRole == "removable_child":
+        return "child_standalone"
+    if element.assetRole == "parent" and removed_children:
+        return "parent_inpaint_without_children"
+    return "sticker_completion"
+
+
+def _removed_child_contexts(
+    workspace_root: Path,
+    state: WorkspaceState,
+    parent: ElementRecord,
+) -> list[RemovedChildContext]:
+    if parent.assetRole != "parent":
+        return []
+    children = [
+        child
+        for child in state.elements
+        if child.assetRole == "removable_child"
+        and child.removeFromParent == parent.id
+        and child.mergedInto is None
+        and child.status != "rejected"
+        and child.mode != "rejected"
+    ]
+    return [
+        RemovedChildContext(
+            element_id=child.id,
+            name=child.label or child.name,
+            mask_path=sam2_edge_paths(child.id)["maskPath"],
+            bbox=child.bbox.model_dump(mode="json"),
+            canvas=child.canvas.model_dump(mode="json"),
+        )
+        for child in children
+        if resolve_workspace_path(workspace_root, sam2_edge_paths(child.id)["maskPath"]).exists()
+    ]
+
+
+def _existing_removed_child_masks(
+    workspace_root: Path,
+    removed_children: list[RemovedChildContext],
+) -> tuple[Path, ...]:
+    paths = [
+        resolve_workspace_path(workspace_root, child.mask_path)
+        for child in removed_children
+    ]
+    return tuple(path for path in paths if path.exists())
+
+
+def _removed_child_metadata(child: RemovedChildContext) -> dict[str, Any]:
+    return {
+        "elementId": child.element_id,
+        "name": child.name,
+        "maskPath": child.mask_path,
+        "bbox": child.bbox,
+        "canvas": child.canvas,
+    }
+
+
+def _normalize_prompt_hint(prompt_hint: CodexPromptHint) -> str | None:
+    if prompt_hint is None:
+        return None
+    normalized = prompt_hint.strip()
+    return normalized or None
 
 
 def _write_normalized_final_asset(source_file: Path, target_file: Path, reference_file: Path) -> None:

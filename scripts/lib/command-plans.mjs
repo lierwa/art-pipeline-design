@@ -104,7 +104,13 @@ export function createDevPlan({
   const detectionProvider =
     useDemoProvider
       ? "demo"
+      // WHY: 常规 demo 流程应优先走真实 Grounding DINO；只有显式 --demo 或 env=demo 才使用硬编码检测。
       : env.ART_PIPELINE_DETECTION_PROVIDER?.trim() || "grounding_dino";
+  const sam2Provider = env.ART_PIPELINE_SAM2_PROVIDER?.trim() || "transformers";
+  // WHY: uvicorn 默认 8000 很容易被本机旧后端或其他 Python 服务占用；
+  // dev 脚本显式绑定一个可配置端口，并同步注入 Vite 代理，避免前后端端口漂移。
+  const backendPort = env.ART_PIPELINE_BACKEND_PORT?.trim() || "8766";
+  const apiProxyTarget = env.ART_PIPELINE_API_PROXY?.trim() || `http://${host}:${backendPort}`;
   const frontendPort = env.ART_PIPELINE_FRONTEND_PORT?.trim() || "5176";
 
   return [
@@ -119,9 +125,15 @@ export function createDevPlan({
         "--reload",
         "--app-dir",
         "backend",
+        "--host",
+        host,
+        "--port",
+        backendPort,
       ],
       env: {
         ART_PIPELINE_DETECTION_PROVIDER: detectionProvider,
+        // WHY: Segment 是正常流程的一环；dev 启动时不注入 SAM2 会让用户在面板里点 Suggest mask 后才发现链路断掉。
+        ART_PIPELINE_SAM2_PROVIDER: sam2Provider,
       },
     },
     {
@@ -139,6 +151,9 @@ export function createDevPlan({
         "--port",
         frontendPort,
       ],
+      env: {
+        ART_PIPELINE_API_PROXY: apiProxyTarget,
+      },
     },
   ];
 }

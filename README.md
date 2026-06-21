@@ -22,7 +22,7 @@ Start the backend and frontend together:
 npm run dev
 ```
 
-Open the URL Vite prints, usually `http://127.0.0.1:5176`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the real GroundingDINO provider.
+Open the URL Vite prints, usually `http://127.0.0.1:5176`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the lightweight demo provider so the sample scene can run without model downloads.
 
 Install and cache the real GroundingDINO model before first use:
 
@@ -36,6 +36,8 @@ For a no-model local demo run:
 ```bash
 npm run dev:demo
 ```
+
+For real GroundingDINO detection, install/cache the model dependencies above and set `ART_PIPELINE_DETECTION_PROVIDER=grounding_dino` before running `npm run dev`.
 
 ## Start The Backend
 
@@ -57,7 +59,7 @@ Run the FastAPI server from the repository root:
 uvicorn art_pipeline.api:app --reload --app-dir backend
 ```
 
-The API uses `workspace/` as its default workspace root. Detection is disabled unless a provider is configured. For real GroundingDINO-style detection:
+The API uses `workspace/` as its default workspace root and starts with the lightweight demo detector unless another provider is configured. For real GroundingDINO-style detection:
 
 ```powershell
 $env:ART_PIPELINE_DETECTION_PROVIDER = "grounding_dino"
@@ -117,7 +119,7 @@ Run **Segment Edge QA** before export. Assets that fail edge QA should be correc
 
 The legacy auto-CV route is retired; `/api/workspace/auto-annotate` returns `410 Gone`.
 
-The standalone API does not fall back automatically. If `ART_PIPELINE_DETECTION_PROVIDER` is not set, `/api/workspace/detect` returns a clear configuration error instead of fabricating candidates. `npm run dev` sets `grounding_dino` by default, while `npm run dev:demo` opts into the lightweight demo provider. If the provider fails, the error is surfaced and existing review state is preserved. If the provider returns no usable results after filtering, the workspace remains empty for review.
+The standalone API defaults to the lightweight demo provider. Set `ART_PIPELINE_DETECTION_PROVIDER=grounding_dino` for real model detection, or pass `detection_provider=None` in tests to verify the explicit disabled-provider path. If the provider fails, the error is surfaced and existing review state is preserved. If the provider returns no usable results after filtering, the workspace remains empty for review.
 
 The approved UI reference for this model-backed workflow is:
 

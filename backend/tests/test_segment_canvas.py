@@ -3,7 +3,7 @@ from __future__ import annotations
 from PIL import Image, ImageDraw
 
 from art_pipeline.elements import ElementRecord
-from art_pipeline.segment_canvas import expanded_canvas_for_source_mask
+from art_pipeline.segment.canvas import expanded_canvas_for_source_mask
 
 
 def test_expanded_canvas_is_stable_across_repeated_suggestions() -> None:
