@@ -57,6 +57,11 @@ RepairStatus = Literal[
 ]
 
 ExportStatus = Literal["not_ready", "ready", "exported", "blocked"]
+GenerationProfile = Literal[
+    "sticker_completion",
+    "child_standalone",
+    "parent_inpaint_without_children",
+]
 SegmentationQualityStatus = Literal["pass", "warn", "fail"]
 
 DEFAULT_WORKSPACE_VOCABULARY = [
@@ -77,6 +82,95 @@ DEFAULT_WORKSPACE_VOCABULARY = [
     "rug",
     "bucket",
     "basin",
+]
+
+# WHY: 这个列表只用于把昨晚短期引入的过细默认 prompt 精确降级回 17 个核心物体；
+# 影响范围仅限“完全等于该列表”的持久化 state，确认所有本地 run 都刷新后可删除。
+EXPANDED_DEFAULT_WORKSPACE_VOCABULARY = [
+    "cat",
+    "cat collar",
+    "cat bell",
+    "bathtub",
+    "bath water",
+    "bathtub drain",
+    "toilet",
+    "toilet tank",
+    "toilet lid",
+    "toilet seat",
+    "sink",
+    "sink drain",
+    "countertop",
+    "bathroom cabinet",
+    "bathroom vanity",
+    "cabinet door",
+    "cabinet drawer",
+    "cabinet knob",
+    "cabinet handle",
+    "mirror",
+    "mirror frame",
+    "window",
+    "arched window",
+    "window frame",
+    "window sill",
+    "curtain",
+    "shower curtain",
+    "shower curtain panel",
+    "curtain rod",
+    "curtain ring",
+    "curtain hook",
+    "towel",
+    "hand towel",
+    "bath towel",
+    "rolled towel",
+    "towel rack",
+    "towel bar",
+    "basket",
+    "laundry basket",
+    "stool",
+    "wooden stool",
+    "bottle",
+    "bottle cap",
+    "pump bottle",
+    "soap dispenser",
+    "shampoo bottle",
+    "conditioner bottle",
+    "soap bottle",
+    "lotion bottle",
+    "shower bottle",
+    "soap dish",
+    "bar soap",
+    "plant",
+    "potted plant",
+    "hanging plant",
+    "plant pot",
+    "succulent",
+    "shelf",
+    "wall shelf",
+    "storage shelf",
+    "rug",
+    "bath mat",
+    "paw rug",
+    "bucket",
+    "water bucket",
+    "wooden bucket",
+    "water bowl",
+    "pet bowl",
+    "basin",
+    "water",
+    "faucet",
+    "sink faucet",
+    "shower head",
+    "shower pipe",
+    "shower caddy",
+    "shower valve",
+    "picture frame",
+    "cat picture",
+    "cat figurine",
+    "floor tile",
+    "wall tile",
+    "wall",
+    "floor",
+    "baseboard",
 ]
 
 ELEMENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
@@ -152,6 +246,8 @@ class ElementRecord(BaseModel):
     source: str = "manual"
     sourceProvider: str | None = None
     sourcePrompt: str | None = None
+    sourcePromptHint: str | None = None
+    generationProfile: GenerationProfile | None = None
     notes: str = ""
     visible: bool = True
     confidence: float | None = None

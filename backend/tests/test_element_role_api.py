@@ -134,6 +134,27 @@ def test_patch_non_removable_child_clears_remove_from_parent(client: TestClient)
     assert element["removeFromParent"] is None
 
 
+def test_patch_element_parent_relationship_sets_tree_and_removal_semantics(
+    client: TestClient,
+) -> None:
+    assert client.put("/api/workspace/state", json=_state()).status_code == 200
+
+    response = client.patch(
+        "/api/workspace/elements/element_002/parent",
+        json={"parentId": "element_001"},
+    )
+
+    assert response.status_code == 200
+    by_id = {
+        element["id"]: element
+        for element in response.json()["state"]["elements"]
+    }
+    assert by_id["element_001"]["assetRole"] == "parent"
+    assert by_id["element_002"]["assetRole"] == "removable_child"
+    assert by_id["element_002"]["parentId"] == "element_001"
+    assert by_id["element_002"]["removeFromParent"] == "element_001"
+
+
 def _state() -> dict:
     return {
         "source": {

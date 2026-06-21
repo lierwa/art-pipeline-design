@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
+from io import BytesIO
 from typing import Annotated, Literal
 
-from PIL import Image, ImageChops, ImageFilter
+from PIL import Image, ImageChops, ImageFilter, UnidentifiedImageError
 from PIL import ImageDraw
 from pydantic import BaseModel, Field, model_validator
 
@@ -35,8 +37,22 @@ class PolygonMaskShape(BaseModel):
         return self
 
 
+class MagicWandMaskShape(BaseModel):
+    type: Literal["magic_wand"]
+    coordinateSpace: CoordinateSpace = "source"
+    seed: MaskPoint
+    tolerance: int = Field(default=28, ge=0, le=255)
+
+
+class MaskDeltaShape(BaseModel):
+    type: Literal["mask_delta"]
+    coordinateSpace: CoordinateSpace = "canvas"
+    maskData: str
+    cleanupMinArea: int | None = Field(default=None, ge=1)
+
+
 MaskShape = Annotated[
-    RectangleMaskShape | PolygonMaskShape,
+    RectangleMaskShape | PolygonMaskShape | MagicWandMaskShape | MaskDeltaShape,
     Field(discriminator="type"),
 ]
 
@@ -161,9 +177,18 @@ def validate_non_empty_mask(element_id: str, mask: Image.Image) -> None:
         raise ValueError(f"Mask for element {element_id} is empty.")
 
 
-def create_mask_from_shape(element: ElementRecord, shape: MaskShape) -> Image.Image:
+def create_mask_from_shape(
+    element: ElementRecord,
+    shape: MaskShape,
+    source_image: Image.Image | None = None,
+) -> Image.Image:
     if element.canvas is None:
         raise ValueError(f"Element {element.id} canvas is required for mask replacement.")
+
+    if shape.type == "magic_wand":
+        return _create_magic_wand_mask(element, shape, source_image)
+    if shape.type == "mask_delta":
+        return _create_mask_delta_mask(element, shape)
 
     canvas = element.canvas
     mask = Image.new("L", (canvas.w, canvas.h), 0)
@@ -182,6 +207,159 @@ def create_mask_from_shape(element: ElementRecord, shape: MaskShape) -> Image.Im
         draw.polygon(points, fill=255)
 
     return normalize_mask(element.id, mask, (canvas.w, canvas.h))
+
+
+def _create_magic_wand_mask(
+    element: ElementRecord,
+    shape: MagicWandMaskShape,
+    source_image: Image.Image | None,
+) -> Image.Image:
+    if element.canvas is None:
+        raise ValueError(f"Element {element.id} canvas is required for magic wand mask editing.")
+    if source_image is None:
+        raise ValueError("Magic wand mask shape requires a source image.")
+
+    canvas = element.canvas
+    seed_x, seed_y = _shape_point_to_canvas(
+        element,
+        shape.coordinateSpace,
+        shape.seed.x,
+        shape.seed.y,
+    )
+    if seed_x < 0 or seed_y < 0 or seed_x >= canvas.w or seed_y >= canvas.h:
+        raise ValueError("Magic wand seed must be inside the element canvas.")
+
+    source_crop = source_image.convert("RGBA").crop(
+        (canvas.x, canvas.y, canvas.x + canvas.w, canvas.y + canvas.h)
+    )
+    mask = _flood_fill_similar_region(source_crop, seed_x, seed_y, shape.tolerance)
+    return normalize_mask(element.id, mask, (canvas.w, canvas.h))
+
+
+def _create_mask_delta_mask(element: ElementRecord, shape: MaskDeltaShape) -> Image.Image:
+    if element.canvas is None:
+        raise ValueError(f"Element {element.id} canvas is required for mask delta editing.")
+    if shape.coordinateSpace != "canvas":
+        raise ValueError("Mask delta shape must use canvas coordinates.")
+
+    mask = _decode_mask_data(shape.maskData)
+    if shape.cleanupMinArea is not None:
+        mask = remove_small_mask_fragments(mask, shape.cleanupMinArea)
+    return normalize_mask(element.id, mask, (element.canvas.w, element.canvas.h))
+
+
+def remove_small_mask_fragments(mask: Image.Image, min_area: int) -> Image.Image:
+    binary = mask.convert("L").point(lambda value: 255 if value > 0 else 0)
+    width, height = binary.size
+    pixels = bytearray(binary.tobytes())
+    visited = bytearray(width * height)
+    kept = bytearray(width * height)
+
+    # WHY: 用户在左侧局部修 mask 时会产生零散点击碎片；清理只按连通面积移除小块，
+    # 不改变主体轮廓，避免把凳子腿、植物叶片这类真实小细节一并自动删掉。
+    for start in range(width * height):
+        if visited[start] or pixels[start] == 0:
+            continue
+
+        component: list[int] = []
+        stack = [start]
+        visited[start] = 1
+        while stack:
+            index = stack.pop()
+            component.append(index)
+            x = index % width
+            y = index // width
+            for neighbor in _mask_neighbor_indexes(x, y, width, height):
+                if visited[neighbor] or pixels[neighbor] == 0:
+                    continue
+                visited[neighbor] = 1
+                stack.append(neighbor)
+
+        if len(component) >= min_area:
+            for index in component:
+                kept[index] = 255
+
+    return Image.frombytes("L", (width, height), bytes(kept))
+
+
+def _decode_mask_data(mask_data: str) -> Image.Image:
+    encoded = mask_data.split(",", 1)[1] if "," in mask_data else mask_data
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+        with Image.open(BytesIO(raw)) as image:
+            rgba = image.convert("RGBA")
+    except (ValueError, UnidentifiedImageError) as exc:
+        raise ValueError("Mask delta data must be a valid base64 PNG image.") from exc
+
+    alpha = rgba.getchannel("A")
+    if alpha.getbbox() and alpha.getbbox() != (0, 0, rgba.width, rgba.height):
+        return alpha
+    return rgba.convert("L")
+
+
+def _mask_neighbor_indexes(x: int, y: int, width: int, height: int) -> list[int]:
+    neighbors: list[int] = []
+    if x > 0:
+        neighbors.append(y * width + x - 1)
+    if x + 1 < width:
+        neighbors.append(y * width + x + 1)
+    if y > 0:
+        neighbors.append((y - 1) * width + x)
+    if y + 1 < height:
+        neighbors.append((y + 1) * width + x)
+    return neighbors
+
+
+def _flood_fill_similar_region(
+    source_crop: Image.Image,
+    seed_x: int,
+    seed_y: int,
+    tolerance: int,
+) -> Image.Image:
+    image = source_crop.convert("RGBA")
+    width, height = image.size
+    pixels = image.load()
+    seed_color = pixels[seed_x, seed_y]
+    visited = bytearray(width * height)
+    selected = bytearray(width * height)
+    stack = [(seed_x, seed_y)]
+
+    # WHY: 修 mask 要的是“点一下同色连通区域”，不是让用户输入矩形数值。
+    # 这里限制为 4 邻域连通，避免相同颜色但被轮廓线隔开的物体被一起误选。
+    while stack:
+        x, y = stack.pop()
+        index = y * width + x
+        if visited[index]:
+            continue
+        visited[index] = 1
+        if not _is_similar_magic_wand_color(seed_color, pixels[x, y], tolerance):
+            continue
+
+        selected[index] = 255
+        if x > 0:
+            stack.append((x - 1, y))
+        if x + 1 < width:
+            stack.append((x + 1, y))
+        if y > 0:
+            stack.append((x, y - 1))
+        if y + 1 < height:
+            stack.append((x, y + 1))
+
+    return Image.frombytes("L", (width, height), bytes(selected))
+
+
+def _is_similar_magic_wand_color(
+    seed_color: tuple[int, int, int, int],
+    sample_color: tuple[int, int, int, int],
+    tolerance: int,
+) -> bool:
+    alpha_tolerance = max(16, tolerance)
+    return (
+        abs(seed_color[0] - sample_color[0]) <= tolerance
+        and abs(seed_color[1] - sample_color[1]) <= tolerance
+        and abs(seed_color[2] - sample_color[2]) <= tolerance
+        and abs(seed_color[3] - sample_color[3]) <= alpha_tolerance
+    )
 
 
 def _shape_point_to_canvas(

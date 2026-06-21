@@ -3,15 +3,19 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CanvasStage } from "../src/components/CanvasStage";
-import { CanvasToolbar } from "../src/components/CanvasToolbar";
-import { DetectionVocabularyPanel } from "../src/components/DetectionVocabularyPanel";
+import { CanvasStage } from "../src/features/canvas/CanvasStage";
+import { CanvasToolbar } from "../src/features/canvas/CanvasToolbar";
+import { DetectionVocabularyPanel } from "../src/features/detection/DetectionVocabularyPanel";
 import {
   DEFAULT_OVERLAYS,
   SourceMetadata,
   WorkspaceState,
   normalizeWorkspaceState,
-} from "../src/workspace";
+} from "../src/domain/workspace";
+
+vi.mock("@yaireo/tagify/react", async () => ({
+  default: (await import("./helpers/tagifyMock")).MockTagify,
+}));
 
 describe("detection workflow building blocks", () => {
   it("defaults sticker workflow fields while normalizing legacy workspace elements", () => {
@@ -50,7 +54,7 @@ describe("detection workflow building blocks", () => {
     });
   });
 
-  it("adds a vocabulary chip and saves the normalized labels", async () => {
+  it("adds a vocabulary chip from the tag input and saves normalized labels", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
 
@@ -62,10 +66,12 @@ describe("detection workflow building blocks", () => {
       />,
     );
 
-    await user.type(screen.getByRole("textbox", { name: /detection label/i }), "bucket");
-    await user.click(screen.getByRole("button", { name: /add label/i }));
+    await user.type(screen.getByLabelText(/detection label/i), "bucket{enter}");
 
     expect(onSave).toHaveBeenCalledWith(["cat", "bucket"]);
+    expect(screen.queryByRole("button", { name: /add label/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/detect these objects/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/labels/i)).not.toBeInTheDocument();
   });
 
   it("removes a vocabulary chip and saves the remaining normalized labels", async () => {
@@ -83,6 +89,41 @@ describe("detection workflow building blocks", () => {
     await user.click(screen.getByRole("button", { name: /remove cat/i }));
 
     expect(onSave).toHaveBeenCalledWith(["bucket"]);
+  });
+
+  it("splits pasted comma-separated vocabulary into multiple tags", () => {
+    const onSave = vi.fn();
+
+    render(
+      <DetectionVocabularyPanel
+        labels={["basin"]}
+        disabled={false}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.paste(screen.getByLabelText(/detection label/i), {
+      clipboardData: {
+        getData: () => "test,abc,sdd",
+      },
+    });
+
+    expect(onSave).toHaveBeenCalledWith(["basin", "test", "abc", "sdd"]);
+  });
+
+  it("lets arrow keys move the caret while editing a new label", () => {
+    render(
+      <DetectionVocabularyPanel
+        labels={["basin", "wall"]}
+        disabled={false}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const input = screen.getByLabelText(/detection label/i);
+    fireEvent.change(input, { target: { value: "soap" } });
+
+    expect(fireEvent.keyDown(input, { key: "ArrowLeft" })).toBe(true);
   });
 
   it("renders an enabled click detect toolbar button when a source exists", () => {

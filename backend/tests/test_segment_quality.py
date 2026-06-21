@@ -3,12 +3,12 @@ from __future__ import annotations
 from PIL import Image, ImageDraw
 
 from art_pipeline.elements import ElementRecord
-from art_pipeline.segment_quality import build_sam2_prompt_candidates
-from art_pipeline.segment_quality import positive_support_points
-from art_pipeline.segment_quality import quality_metadata_for_candidate
-from art_pipeline.segment_quality import repair_and_score_sam2_candidate
-from art_pipeline.segment_quality import select_best_sam2_candidate
-from art_pipeline.segment_quality import segmentation_quality_status
+from art_pipeline.segment.quality import build_sam2_prompt_candidates
+from art_pipeline.segment.quality import positive_support_points
+from art_pipeline.segment.quality import quality_metadata_for_candidate
+from art_pipeline.segment.quality import repair_and_score_sam2_candidate
+from art_pipeline.segment.quality import select_best_sam2_candidate
+from art_pipeline.segment.quality import segmentation_quality_status
 
 
 def test_repair_removes_tiny_detached_noise_but_keeps_large_parts() -> None:

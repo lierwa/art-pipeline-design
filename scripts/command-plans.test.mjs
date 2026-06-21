@@ -64,9 +64,14 @@ test("createDevPlan starts backend and frontend from repository root", () => {
         "--reload",
         "--app-dir",
         "backend",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8766",
       ],
       env: {
         ART_PIPELINE_DETECTION_PROVIDER: "grounding_dino",
+        ART_PIPELINE_SAM2_PROVIDER: "transformers",
       },
     },
     {
@@ -83,8 +88,39 @@ test("createDevPlan starts backend and frontend from repository root", () => {
         "--port",
         "5176",
       ],
+      env: {
+        ART_PIPELINE_API_PROXY: "http://127.0.0.1:8766",
+      },
     },
   ]);
+});
+
+test("createDevPlan lets the backend dev port avoid other local services", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_BACKEND_PORT: "8787" },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.deepEqual(plan[0].args.slice(-4), ["--host", "127.0.0.1", "--port", "8787"]);
+  assert.deepEqual(plan[1].env, {
+    ART_PIPELINE_API_PROXY: "http://127.0.0.1:8787",
+  });
+});
+
+test("createDevPlan preserves an explicitly configured API proxy target", () => {
+  const plan = createDevPlan({
+    env: {
+      ART_PIPELINE_BACKEND_PORT: "8787",
+      ART_PIPELINE_API_PROXY: "http://127.0.0.1:9900",
+    },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.deepEqual(plan[1].env, {
+    ART_PIPELINE_API_PROXY: "http://127.0.0.1:9900",
+  });
 });
 
 test("createDevPlan lets the frontend dev port avoid other local services", () => {
@@ -108,6 +144,36 @@ test("createDevPlan preserves python launcher prefix arguments", () => {
 });
 
 test("createDevPlan preserves an explicitly configured detection provider", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_DETECTION_PROVIDER: "grounding_dino" },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].env.ART_PIPELINE_DETECTION_PROVIDER, "grounding_dino");
+});
+
+test("createDevPlan starts the real SAM2 provider by default", () => {
+  const plan = createDevPlan({
+    env: {},
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].env.ART_PIPELINE_SAM2_PROVIDER, "transformers");
+});
+
+test("createDevPlan preserves an explicitly configured SAM2 provider", () => {
+  const plan = createDevPlan({
+    env: { ART_PIPELINE_SAM2_PROVIDER: "hf" },
+    npmCommand: { command: "npm", args: [] },
+    pythonCommand: { command: "python3", args: [] },
+  });
+
+  assert.equal(plan[0].env.ART_PIPELINE_SAM2_PROVIDER, "hf");
+});
+
+test("createDevPlan preserves demo provider only when explicitly configured", () => {
   const plan = createDevPlan({
     env: { ART_PIPELINE_DETECTION_PROVIDER: "demo" },
     npmCommand: { command: "npm", args: [] },

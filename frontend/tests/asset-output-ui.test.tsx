@@ -1,9 +1,9 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { AssetTreePanel } from "../src/components/AssetTreePanel";
-import { ModelStatusStrip } from "../src/components/ModelStatusStrip";
-import type { WorkspaceElement } from "../src/workspace";
+import { AssetTreePanel } from "../src/features/inspector/AssetTreePanel";
+import { ModelStatusStrip } from "../src/app/components/ModelStatusStrip";
+import type { WorkspaceElement } from "../src/domain/workspace";
 
 const element: WorkspaceElement = {
   id: "element_001",
@@ -43,11 +43,14 @@ describe("asset output UI", () => {
         workspaceRunId="run_real_models"
         assetCacheKey={1}
         showRejected={false}
+        hasRejectedElements={false}
         reviewableCount={0}
         onSelectElement={vi.fn()}
         onToggleShowRejected={vi.fn()}
         onToggleVisibility={vi.fn()}
         onCompleteReview={vi.fn()}
+        onMoveElementToParent={vi.fn()}
+        onReorderElement={vi.fn()}
       />,
     );
 

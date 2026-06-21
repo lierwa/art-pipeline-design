@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { InspectorPanel } from "../src/components/InspectorPanel";
-import type { AssetRole, ElementEditorDraft, WorkspaceElement } from "../src/workspace";
+import { InspectorPanel } from "../src/features/inspector/InspectorPanel";
+import type { AssetRole, ElementEditorDraft, WorkspaceElement } from "../src/domain/workspace";
 
 type RolePatch = {
   assetRole: AssetRole;

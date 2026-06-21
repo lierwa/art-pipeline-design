@@ -7,5 +7,5 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 node_modules/
 .codex-runtime/
-workspace/
+/workspace/
 .worktrees/
