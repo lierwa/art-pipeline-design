@@ -9,3 +9,9 @@ node_modules/
 .codex-runtime/
 /workspace/
 .worktrees/
+
+# Local agent, browser, and review artifacts.
+.codegraph/
+.codex-run/
+.superpowers/
+review-artifacts/
