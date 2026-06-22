@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "install:all": "node scripts/install.mjs",
-    "install:all:model": "node scripts/install.mjs --model",
-    "download:model": "node scripts/download-model.mjs",
+    "setup": "node scripts/setup.mjs",
     "dev": "node scripts/dev.mjs",
     "dev:demo": "node scripts/dev.mjs --demo",
     "test:scripts": "node --test scripts/*.test.mjs"

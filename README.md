@@ -10,34 +10,27 @@ The intended output is a set of transparent sticker assets that have passed edge
 
 ## Quick Start
 
-From the repository root, install both backend and frontend dependencies:
+From the repository root, install backend/frontend dependencies and cache the model weights:
 
 ```bash
-npm run install:all
+npm run setup
 ```
 
-Start the backend and frontend together:
+Start the backend and frontend together with the real model providers:
 
 ```bash
 npm run dev
 ```
 
-Open the URL Vite prints, usually `http://127.0.0.1:5176`. The dev script runs the FastAPI backend on `http://127.0.0.1:8000` and the Vite frontend with `/api` proxied to that backend. By default it uses the lightweight demo provider so the sample scene can run without model downloads.
+Open the URL Vite prints, usually `http://127.0.0.1:5176`. The dev script runs the FastAPI backend on `http://127.0.0.1:8766` and the Vite frontend with `/api` proxied to that backend.
 
-Install and cache the real GroundingDINO model before first use:
-
-```bash
-npm run install:all:model
-npm run download:model
-```
-
-For a no-model local demo run:
+For a no-model local demo run after dependencies are already installed:
 
 ```bash
 npm run dev:demo
 ```
 
-For real GroundingDINO detection, install/cache the model dependencies above and set `ART_PIPELINE_DETECTION_PROVIDER=grounding_dino` before running `npm run dev`.
+`npm run setup` is the canonical setup command. It installs the model-enabled backend dependencies, installs the frontend dependencies, then downloads the GroundingDINO and SAM2 model caches in order.
 
 ## Start The Backend
 

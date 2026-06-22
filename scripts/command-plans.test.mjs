@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +15,7 @@ import {
   createDownloadModelPlan,
   createDevPlan,
   createInstallPlan,
+  createSetupPlan,
   npmCommandForRuntime,
   parseDevArgs,
   parseInstallArgs,
@@ -212,6 +220,46 @@ test("createDownloadModelPlan downloads the formal detection and segmentation mo
       },
     ],
   );
+});
+
+test("createSetupPlan installs model dependencies before downloading model weights", () => {
+  assert.deepEqual(
+    createSetupPlan({
+      npmCommand: { command: "npm", args: [] },
+      pythonCommand: { command: "python3", args: [] },
+    }),
+    [
+      {
+        label: "backend",
+        command: "python3",
+        args: ["-m", "pip", "install", "-e", "backend[dev,model]"],
+      },
+      {
+        label: "frontend",
+        command: "npm",
+        args: ["--prefix", "frontend", "install"],
+      },
+      {
+        label: "grounding-dino-model",
+        command: "python3",
+        args: ["-m", "art_pipeline.model_runners.download_grounding_dino"],
+      },
+      {
+        label: "sam2-model",
+        command: "python3",
+        args: ["-m", "art_pipeline.model_runners.download_sam2"],
+      },
+    ],
+  );
+});
+
+test("root npm scripts expose one canonical model setup command", () => {
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+
+  assert.equal(packageJson.scripts.setup, "node scripts/setup.mjs");
+  assert.equal(packageJson.scripts["install:all"], undefined);
+  assert.equal(packageJson.scripts["install:all:model"], undefined);
+  assert.equal(packageJson.scripts["download:model"], undefined);
 });
 
 test("findPythonCommand prefers the repository virtual environment", () => {

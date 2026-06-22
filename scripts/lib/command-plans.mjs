@@ -93,6 +93,22 @@ export function createDownloadModelPlan({
   ];
 }
 
+export function createSetupPlan({
+  npmCommand = npmCommandForRuntime(),
+  pythonCommand,
+} = {}) {
+  return [
+    ...createInstallPlan({
+      includeModel: true,
+      npmCommand,
+      pythonCommand,
+    }),
+    ...createDownloadModelPlan({
+      pythonCommand,
+    }),
+  ];
+}
+
 export function createDevPlan({
   env = process.env,
   host = "127.0.0.1",
