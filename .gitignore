@@ -11,7 +11,5 @@ node_modules/
 .worktrees/
 
 # Local agent, browser, and review artifacts.
-.codegraph/
 .codex-run/
-.superpowers/
 review-artifacts/
