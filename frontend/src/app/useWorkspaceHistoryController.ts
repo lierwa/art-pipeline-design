@@ -14,16 +14,22 @@ import {
   type WorkspaceState,
 } from "../domain/workspace";
 
+type WorkspaceReplaceOptions = {
+  bumpAssetCache?: boolean;
+};
+
 type ReplaceWorkspace = (
   nextState: WorkspaceState,
   nextStatus: string,
   nextSelectionId?: string | null,
+  options?: WorkspaceReplaceOptions,
 ) => void;
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
 type UseWorkspaceHistoryControllerInput = {
   activeRunId: string | null;
+  bumpElementAssetCacheKey: (elementId: string) => void;
   refreshWorkspaceRuns: () => Promise<void>;
   replaceWorkspace: ReplaceWorkspace;
   selectedElementId: string | null;
@@ -39,6 +45,7 @@ type UseWorkspaceHistoryControllerInput = {
 
 export function useWorkspaceHistoryController({
   activeRunId,
+  bumpElementAssetCacheKey,
   refreshWorkspaceRuns,
   replaceWorkspace,
   selectedElementId,
@@ -66,8 +73,9 @@ export function useWorkspaceHistoryController({
   function restoreHistorySnapshot(
     snapshot: WorkspaceHistorySnapshot,
     nextStatus: string,
+    options?: WorkspaceReplaceOptions,
   ) {
-    replaceWorkspace(snapshot.state, nextStatus, snapshot.selectedElementId);
+    replaceWorkspace(snapshot.state, nextStatus, snapshot.selectedElementId, options);
     setSelectedElementIds(snapshot.selectedElementIds);
   }
 
@@ -83,9 +91,10 @@ export function useWorkspaceHistoryController({
     nextState: WorkspaceState,
     nextStatus: string,
     nextSelectionId?: string | null,
+    options?: WorkspaceReplaceOptions,
   ) {
     pushUndoSnapshot();
-    replaceWorkspace(nextState, nextStatus, nextSelectionId);
+    replaceWorkspace(nextState, nextStatus, nextSelectionId, options);
   }
 
   async function persistWorkspace(
@@ -140,7 +149,9 @@ export function useWorkspaceHistoryController({
     snapshot: WorkspaceHistorySnapshot,
     nextStatus: string,
   ): Promise<boolean> {
-    restoreHistorySnapshot(snapshot, nextStatus);
+    const elementAssetCacheTarget = findSingleElementAssetHistoryTarget(workspace, snapshot.state);
+    const replaceOptions = elementAssetCacheTarget ? { bumpAssetCache: false } : undefined;
+    restoreHistorySnapshot(snapshot, nextStatus, replaceOptions);
     setIsSavingState(true);
     setError(null);
 
@@ -159,8 +170,12 @@ export function useWorkspaceHistoryController({
       }
 
       const persistedState = normalizeWorkspaceState((await response.json()) as WorkspaceState);
-      restoreHistorySnapshot({ ...snapshot, state: persistedState }, nextStatus);
-      void refreshWorkspaceRuns();
+      restoreHistorySnapshot({ ...snapshot, state: persistedState }, nextStatus, replaceOptions);
+      if (elementAssetCacheTarget) {
+        bumpElementAssetCacheKey(elementAssetCacheTarget);
+      } else {
+        void refreshWorkspaceRuns();
+      }
       return true;
     } catch (saveError) {
       setStatus("History restore failed.");
@@ -182,4 +197,53 @@ export function useWorkspaceHistoryController({
     setWorkspaceHistory,
     workspaceHistory,
   };
+}
+
+function findSingleElementAssetHistoryTarget(
+  previousState: WorkspaceState,
+  nextState: WorkspaceState,
+): string | null {
+  // WHY: Segment mask undo/redo 只是在同一元素的本地派生图之间切换；把它识别成
+  // 元素级恢复，才能避免 history restore 触发全局 runs 刷新和整批缩略图重载。
+  if (
+    JSON.stringify(previousState.source) !== JSON.stringify(nextState.source)
+    || JSON.stringify(previousState.detectionVocabulary) !== JSON.stringify(nextState.detectionVocabulary)
+    || previousState.elements.length !== nextState.elements.length
+  ) {
+    return null;
+  }
+
+  let changedElementId: string | null = null;
+  for (let index = 0; index < previousState.elements.length; index += 1) {
+    const previousElement = previousState.elements[index];
+    const nextElement = nextState.elements[index];
+    if (!previousElement || !nextElement || previousElement.id !== nextElement.id) {
+      return null;
+    }
+    if (JSON.stringify(previousElement) === JSON.stringify(nextElement)) {
+      continue;
+    }
+    if (
+      changedElementId
+      || JSON.stringify(stripLocalAssetFields(previousElement)) !== JSON.stringify(stripLocalAssetFields(nextElement))
+    ) {
+      return null;
+    }
+    changedElementId = previousElement.id;
+  }
+
+  return changedElementId;
+}
+
+function stripLocalAssetFields(element: WorkspaceState["elements"][number]) {
+  const {
+    exportStatus,
+    mask,
+    repairStatus,
+    segmentationQuality,
+    segmentationStatus,
+    sourceProvider,
+    ...stableElement
+  } = element;
+  return stableElement;
 }

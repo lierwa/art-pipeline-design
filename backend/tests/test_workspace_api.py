@@ -107,6 +107,25 @@ def test_get_state_keeps_user_edited_detection_vocabulary(
     assert response.json()["detectionVocabulary"] == custom_vocabulary
 
 
+def test_get_run_state_returns_conflict_for_corrupted_processing_record(tmp_path: Path) -> None:
+    corrupting_client = TestClient(
+        workspace_api.create_app(workspace_root=tmp_path / "workspace"),
+        raise_server_exceptions=False,
+    )
+    create_response = corrupting_client.post(
+        "/api/workspace/runs",
+        files={"file": ("scene-a.png", make_png_bytes(), "image/png")},
+    )
+    run = create_response.json()["run"]
+    state_path = tmp_path / "workspace" / "runs" / run["id"] / "state.json"
+    state_path.write_text(f"{state_path.read_text(encoding='utf-8')} ]\n}}", encoding="utf-8")
+
+    response = corrupting_client.get(f"/api/workspace/state?runId={run['id']}")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Processing record state is corrupted. Restore from backup or rerun this record."
+
+
 def test_upload_run_creates_processing_record_without_restoring_legacy_state(
     client: TestClient,
     tmp_path: Path,
@@ -157,6 +176,85 @@ def test_upload_run_creates_processing_record_without_restoring_legacy_state(
     )
     assert scoped_asset_response.status_code == 200
     assert scoped_asset_response.headers["content-type"] == "image/png"
+
+
+def test_duplicate_run_copies_processing_record_files_and_switchable_state(
+    client: TestClient,
+    tmp_path: Path,
+) -> None:
+    create_response = client.post(
+        "/api/workspace/runs",
+        files={"file": ("scene-a.png", make_png_bytes(), "image/png")},
+    )
+    source_run = create_response.json()["run"]
+    source_root = tmp_path / "workspace" / "runs" / source_run["id"]
+    state = create_response.json()["state"] | {
+        "elements": [
+            {
+                "id": "element_001",
+                "name": "Checkpoint asset",
+                "label": "Checkpoint asset",
+                "status": "accepted",
+                "mode": "visible_only",
+                "assetRole": "sticker",
+                "bbox": {"x": 0, "y": 0, "w": 2, "h": 2},
+                "canvas": {"x": 0, "y": 0, "w": 2, "h": 2},
+                "layer": 1,
+                "thumbnail": "elements/element_001/thumb.png",
+                "mask": None,
+                "parentId": None,
+                "source": "manual",
+                "notes": "",
+                "visible": True,
+                "confidence": None,
+            }
+        ],
+    }
+    assert client.put(f"/api/workspace/state?runId={source_run['id']}", json=state).status_code == 200
+    thumb_path = source_root / "elements" / "element_001" / "thumb.png"
+    thumb_path.parent.mkdir(parents=True)
+    thumb_path.write_bytes(make_png_bytes())
+
+    duplicate_response = client.post(f"/api/workspace/runs/{source_run['id']}/duplicate")
+
+    assert duplicate_response.status_code == 200
+    payload = duplicate_response.json()
+    duplicate_run = payload["run"]
+    duplicate_root = tmp_path / "workspace" / "runs" / duplicate_run["id"]
+    assert duplicate_run["id"] != source_run["id"]
+    assert duplicate_run["title"] == "scene-a.png - checkpoint"
+    assert duplicate_run["elementCount"] == 1
+    assert payload["state"]["elements"][0]["id"] == "element_001"
+    # WHY: 另存为保护的是完整 mask/缩略图产物，不只是 state.json 元数据。
+    assert (duplicate_root / "elements" / "element_001" / "thumb.png").exists()
+    assert (source_root / "elements" / "element_001" / "thumb.png").exists()
+
+    scoped_state_response = client.get(f"/api/workspace/state?runId={duplicate_run['id']}")
+    assert scoped_state_response.status_code == 200
+    assert scoped_state_response.json()["elements"][0]["name"] == "Checkpoint asset"
+    assert [run["id"] for run in payload["runs"]] == [duplicate_run["id"], source_run["id"]]
+
+
+def test_duplicate_run_uses_incrementing_checkpoint_titles(client: TestClient) -> None:
+    create_response = client.post(
+        "/api/workspace/runs",
+        files={"file": ("scene-a.png", make_png_bytes(), "image/png")},
+    )
+    run_id = create_response.json()["run"]["id"]
+
+    first = client.post(f"/api/workspace/runs/{run_id}/duplicate").json()["run"]
+    second = client.post(f"/api/workspace/runs/{run_id}/duplicate").json()["run"]
+
+    assert first["title"] == "scene-a.png - checkpoint"
+    assert second["title"] == "scene-a.png - checkpoint 2"
+
+
+def test_duplicate_run_rejects_invalid_or_missing_record(client: TestClient) -> None:
+    invalid_response = client.post("/api/workspace/runs/not-a-run/duplicate")
+    missing_response = client.post("/api/workspace/runs/run_missing/duplicate")
+
+    assert invalid_response.status_code == 400
+    assert missing_response.status_code == 404
 
 
 def test_delete_run_removes_processing_record_and_files(
@@ -267,8 +365,14 @@ def test_put_state_round_trips_elements_payload(
 
     state_path = tmp_path / "workspace" / "state.json"
     assert state_path.exists()
-    assert replace_calls == [(state_path.with_suffix(".json.tmp"), state_path)]
-    assert list(state_path.parent.glob("state.json.*")) == []
+    assert len(replace_calls) == 1
+    temp_path, target_path = replace_calls[0]
+    assert target_path == state_path
+    assert temp_path.parent == state_path.parent
+    assert temp_path.name.startswith("state.json.")
+    assert temp_path.name.endswith(".tmp")
+    assert not temp_path.exists()
+    assert list(state_path.parent.glob("state.json.*.tmp")) == []
 
 
 @pytest.mark.parametrize("element_id", ["../../outside", "bad/id", "bad\\id"])

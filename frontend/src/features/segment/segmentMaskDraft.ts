@@ -3,6 +3,14 @@ import type { Box } from "../../domain/workspace";
 export type CanvasPoint = { x: number; y: number };
 export type MaskDraftOperation = "add" | "subtract";
 export type MaskViewTransform = { scale: number; offsetX: number; offsetY: number };
+export type LiveBrushStroke = {
+  maskCanvas: HTMLCanvasElement;
+  overlayCanvas: HTMLCanvasElement | null;
+  selectionCanvas: HTMLCanvasElement | null;
+  operation: MaskDraftOperation;
+  size: number;
+  lastPoint: CanvasPoint | null;
+};
 
 const FALLBACK_MASK_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
@@ -92,6 +100,59 @@ export function drawBrushIntoDraft(
   context.fill();
   context.restore();
   thresholdMaskCanvas(canvas);
+}
+
+export function beginLiveBrushStroke({
+  maskCanvas,
+  overlayCanvas,
+  selectionCanvas,
+  operation,
+  size,
+}: {
+  maskCanvas: HTMLCanvasElement;
+  overlayCanvas: HTMLCanvasElement | null;
+  selectionCanvas: HTMLCanvasElement | null;
+  operation: MaskDraftOperation;
+  size: number;
+}): LiveBrushStroke {
+  resetCanvasToMaskSize(overlayCanvas, maskCanvas);
+  resetCanvasToMaskSize(selectionCanvas, maskCanvas);
+  if (overlayCanvas) {
+    paintBackgroundMaskOverlayToCanvas(overlayCanvas, maskCanvas);
+  }
+  clearCanvas(selectionCanvas);
+  return {
+    maskCanvas,
+    overlayCanvas,
+    selectionCanvas,
+    operation,
+    size,
+    lastPoint: null,
+  };
+}
+
+export function drawLiveBrushStroke(stroke: LiveBrushStroke, points: CanvasPoint[]) {
+  if (!points.length) {
+    return;
+  }
+  // WHY: 画笔拖动是最高频输入路径，不能在这里生成 PNG dataURL 或整图重算。
+  // 这里仅把新增路径写入 mutable canvas；React state 和后端提交在 stroke 结束时再同步。
+  for (const point of points) {
+    const from = stroke.lastPoint ?? point;
+    drawBrushSegment(stroke.maskCanvas, from, point, stroke.size, stroke.operation, "mask");
+    drawBrushSegment(stroke.overlayCanvas, from, point, stroke.size, stroke.operation, "overlay");
+    drawBrushSegment(stroke.selectionCanvas, from, point, stroke.size, stroke.operation, "selection");
+    stroke.lastPoint = point;
+  }
+}
+
+export function finishLiveBrushStroke(stroke: LiveBrushStroke): HTMLCanvasElement {
+  thresholdMaskCanvas(stroke.maskCanvas);
+  return stroke.maskCanvas;
+}
+
+export function clearLiveBrushCanvas(canvas: HTMLCanvasElement | null) {
+  clearCanvas(canvas);
 }
 
 export function buildBrushSelection(
@@ -209,6 +270,47 @@ export function buildBackgroundMaskOverlayDataUrl(
   }
   sourceContext.putImageData(overlay, 0, 0);
   return canvasToDataUrl(sourceCanvas);
+}
+
+export function paintBackgroundMaskOverlayToCanvas(
+  targetCanvas: HTMLCanvasElement,
+  maskSource: HTMLCanvasElement | HTMLImageElement,
+  fallbackSize?: { w: number; h: number },
+) {
+  const width = maskSource instanceof HTMLCanvasElement
+    ? maskSource.width
+    : maskSource.naturalWidth || fallbackSize?.w || maskSource.width;
+  const height = maskSource instanceof HTMLCanvasElement
+    ? maskSource.height
+    : maskSource.naturalHeight || fallbackSize?.h || maskSource.height;
+  targetCanvas.width = Math.max(1, width);
+  targetCanvas.height = Math.max(1, height);
+
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = targetCanvas.width;
+  sourceCanvas.height = targetCanvas.height;
+  const sourceContext = getCanvas2dContext(sourceCanvas);
+  const targetContext = getCanvas2dContext(targetCanvas);
+  if (!sourceContext || !targetContext) {
+    clearCanvas(targetCanvas);
+    return;
+  }
+
+  sourceContext.drawImage(maskSource, 0, 0, sourceCanvas.width, sourceCanvas.height);
+  const mask = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const overlay = targetContext.createImageData(targetCanvas.width, targetCanvas.height);
+  for (let index = 0; index < mask.data.length; index += 4) {
+    const luma = (mask.data[index] + mask.data[index + 1] + mask.data[index + 2]) / 3;
+    const isForeground = mask.data[index + 3] > 0 && luma > 16;
+    if (isForeground) {
+      continue;
+    }
+    overlay.data[index] = QUICK_MASK_PINK.r;
+    overlay.data[index + 1] = QUICK_MASK_PINK.g;
+    overlay.data[index + 2] = QUICK_MASK_PINK.b;
+    overlay.data[index + 3] = QUICK_MASK_PINK.a;
+  }
+  targetContext.putImageData(overlay, 0, 0);
 }
 
 export function thresholdMaskCanvas(canvas: HTMLCanvasElement) {
@@ -437,6 +539,74 @@ function neighborIndexes(x: number, y: number, width: number, height: number): n
   if (y > 0) indexes.push((y - 1) * width + x);
   if (y + 1 < height) indexes.push((y + 1) * width + x);
   return indexes;
+}
+
+function drawBrushSegment(
+  canvas: HTMLCanvasElement | null,
+  from: CanvasPoint,
+  to: CanvasPoint,
+  size: number,
+  operation: MaskDraftOperation,
+  target: "mask" | "overlay" | "selection",
+) {
+  const context = canvas ? getCanvas2dContext(canvas) : null;
+  if (!context) {
+    return;
+  }
+  const lineWidth = Math.max(1, size);
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = lineWidth;
+  if (target === "mask") {
+    context.strokeStyle = operation === "add" ? "#ffffff" : "#000000";
+    context.fillStyle = context.strokeStyle;
+  } else if (target === "overlay") {
+    context.globalCompositeOperation = operation === "add" ? "destination-out" : "source-over";
+    context.strokeStyle = operation === "add" ? "rgba(0, 0, 0, 1)" : quickMaskPinkCss(QUICK_MASK_PINK);
+    context.fillStyle = context.strokeStyle;
+  } else {
+    context.strokeStyle = quickMaskPinkCss(QUICK_MASK_SELECTION_PINK);
+    context.fillStyle = context.strokeStyle;
+  }
+  if (from.x === to.x && from.y === to.y) {
+    context.beginPath();
+    context.arc(to.x, to.y, lineWidth / 2, 0, Math.PI * 2);
+    context.fill();
+  } else {
+    context.beginPath();
+    context.moveTo(from.x, from.y);
+    context.lineTo(to.x, to.y);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function resetCanvasToMaskSize(canvas: HTMLCanvasElement | null, maskCanvas: HTMLCanvasElement) {
+  if (!canvas) {
+    return;
+  }
+  if (canvas.width !== maskCanvas.width) {
+    canvas.width = maskCanvas.width;
+  }
+  if (canvas.height !== maskCanvas.height) {
+    canvas.height = maskCanvas.height;
+  }
+}
+
+function clearCanvas(canvas: HTMLCanvasElement | null) {
+  if (!canvas) {
+    return;
+  }
+  const context = getCanvas2dContext(canvas);
+  if (!context) {
+    return;
+  }
+  context.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function quickMaskPinkCss(color: typeof QUICK_MASK_PINK): string {
+  return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
 }
 
 function silenceCanvasNotImplementedErrors(): () => void {

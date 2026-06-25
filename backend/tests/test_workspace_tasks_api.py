@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from io import BytesIO
@@ -10,7 +11,12 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
 from art_pipeline.api import create_app
-from art_pipeline.codex_assets import CodexAssetRequest
+from art_pipeline.http.routes.tasks import _task_event_stream
+from art_pipeline.workspace.tasks import (
+    WorkspaceTaskItem,
+    create_workspace_task,
+    set_task_item_status,
+)
 from workspace_fixtures import upload_scene_and_state as _upload_scene_and_state
 
 
@@ -36,21 +42,6 @@ class SelectiveSam2Provider:
             fill=255,
         )
         return mask
-
-
-class FakeCodexProvider:
-    name = "codex_cli"
-
-    def __init__(self, failing_element_ids: set[str] | None = None) -> None:
-        self.failing_element_ids = failing_element_ids or set()
-        self.requests: list[CodexAssetRequest] = []
-
-    def generate(self, request: CodexAssetRequest) -> None:
-        self.requests.append(request)
-        if request.element_id in self.failing_element_ids:
-            raise RuntimeError(f"boom {request.element_id}")
-        with Image.open(request.reference_image_path) as reference:
-            reference.convert("RGBA").save(request.output_path, format="PNG")
 
 
 def test_sam2_batch_task_records_success_and_failure_items(tmp_path: Path) -> None:
@@ -172,6 +163,28 @@ def test_sam2_batch_with_no_pending_masks_finishes_immediately(tmp_path: Path) -
     assert task["items"] == []
 
 
+def test_task_events_reports_detection_item_status_changes(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    task = create_workspace_task(
+        root,
+        "detection_batch",
+        [WorkspaceTaskItem(elementId="element_001", name="Cat")],
+    )
+    set_task_item_status(root, task.taskId, "element_001", "running", "Preparing detection candidate.")
+
+    async def collect_snapshots() -> tuple[dict[str, Any], dict[str, Any]]:
+        stream = _task_event_stream(_DisconnectAfter(checks=2), root)
+        first = _snapshot_payload(await anext(stream))
+        set_task_item_status(root, task.taskId, "element_001", "succeeded", "Detection candidate ready.")
+        second = _snapshot_payload(await asyncio.wait_for(anext(stream), timeout=0.1))
+        await stream.aclose()
+        return first, second
+
+    first_snapshot, next_snapshot = asyncio.run(collect_snapshots())
+    assert "element_001" in first_snapshot["changedElementIds"]
+    assert "element_001" in next_snapshot["changedElementIds"]
+
+
 def test_sam2_batch_regenerates_stale_mask_draft_without_artifacts(tmp_path: Path) -> None:
     provider = SelectiveSam2Provider()
     client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
@@ -191,59 +204,132 @@ def test_sam2_batch_regenerates_stale_mask_draft_without_artifacts(tmp_path: Pat
     assert next_state["elements"][0]["segmentationStatus"] == "mask_suggested"
 
 
-def test_codex_final_batch_task_generates_mask_accepted_assets_and_retries_failed(
-    tmp_path: Path,
-) -> None:
-    codex_provider = FakeCodexProvider({"element_002"})
-    client = TestClient(
-        create_app(
-            tmp_path / "workspace",
-            sam2_provider=SelectiveSam2Provider(),
-            codex_asset_provider=codex_provider,
-        )
-    )
+def test_sam2_batch_force_reruns_explicit_existing_mask_targets(tmp_path: Path) -> None:
+    provider = SelectiveSam2Provider()
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
     _upload_scene_and_state(client)
+    first_task = client.post("/api/workspace/tasks/sam2-masks").json()
+    _wait_for_task(client, first_task["taskId"])
     state = client.get("/api/workspace/state").json()
     state["elements"].append(
         {
             **state["elements"][0],
             "id": "element_002",
-            "name": "Second sticker",
-            "bbox": {"x": 1, "y": 1, "w": 3, "h": 3},
-            "canvas": {"x": 0, "y": 0, "w": 6, "h": 5},
-            "mask": None,
-            "segmentationStatus": "not_started",
-            "segmentationQuality": None,
+            "name": "Accepted bad mask",
+            "segmentationStatus": "mask_accepted",
+            "mask": "elements/element_002/sam2_edge/mask.png",
         }
     )
     assert client.put("/api/workspace/state", json=state).status_code == 200
-    sam2_task = client.post("/api/workspace/tasks/sam2-masks").json()
-    _wait_for_task(client, sam2_task["taskId"])
-    for element_id in ("element_001", "element_002"):
-        assert client.post(f"/api/workspace/elements/{element_id}/segment/accept").status_code == 200
 
-    response = client.post("/api/workspace/tasks/codex-finals")
+    response = client.post(
+        "/api/workspace/tasks/sam2-masks",
+        json={"elementIds": ["element_001", "element_002"], "force": True},
+    )
 
     assert response.status_code == 200
     task = _wait_for_task(client, response.json()["taskId"])
-    assert task["type"] == "codex_final_batch"
-    assert task["status"] == "failed"
     assert task["total"] == 2
-    assert task["done"] == 1
-    assert task["failed"] == 1
+    assert task["done"] == 2
+    assert [item["elementId"] for item in task["items"]] == ["element_001", "element_002"]
     assert _item(task, "element_001")["status"] == "succeeded"
-    assert _item(task, "element_002")["status"] == "failed"
-    assert "boom element_002" in _item(task, "element_002")["message"]
-    assert len(codex_provider.requests) == 2
+    assert _item(task, "element_002")["status"] == "succeeded"
 
-    codex_provider.failing_element_ids.clear()
-    retry_response = client.post(f"/api/workspace/tasks/{task['taskId']}/retry-failed")
-    assert retry_response.status_code == 200
-    retry_task = _wait_for_task(client, retry_response.json()["taskId"])
-    assert retry_task["total"] == 1
-    assert retry_task["done"] == 1
-    assert [item["elementId"] for item in retry_task["items"]] == ["element_002"]
-    assert len(codex_provider.requests) == 3
+
+def test_sam2_batch_force_explicit_ids_still_excludes_invalid_assets(tmp_path: Path) -> None:
+    provider = SelectiveSam2Provider()
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"].extend(
+        [
+            {
+                **state["elements"][0],
+                "id": "element_hidden",
+                "name": "Hidden asset",
+                "visible": False,
+                "mask": "elements/element_hidden/sam2_edge/mask.png",
+                "segmentationStatus": "mask_suggested",
+            },
+            {
+                **state["elements"][0],
+                "id": "element_merged",
+                "name": "Merged asset",
+                "mergedInto": "element_001",
+                "mask": "elements/element_merged/sam2_edge/mask.png",
+                "segmentationStatus": "mask_suggested",
+            },
+            {
+                **state["elements"][0],
+                "id": "element_skip",
+                "name": "Skip asset",
+                "assetRole": "skip",
+                "mask": "elements/element_skip/sam2_edge/mask.png",
+                "segmentationStatus": "mask_suggested",
+            },
+        ]
+    )
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post(
+        "/api/workspace/tasks/sam2-masks",
+        json={
+            "elementIds": ["element_001", "element_hidden", "element_merged", "element_skip"],
+            "force": True,
+        },
+    )
+
+    assert response.status_code == 200
+    task = _wait_for_task(client, response.json()["taskId"])
+    assert task["total"] == 1
+    assert [item["elementId"] for item in task["items"]] == ["element_001"]
+
+
+def test_sam2_batch_child_failure_does_not_cascade_to_parent_item(tmp_path: Path) -> None:
+    provider = SelectiveSam2Provider({"child"})
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"] = [
+        {
+            **state["elements"][0],
+            "id": "child",
+            "name": "plant + bottle",
+            "assetRole": "removable_child",
+            "parentId": "parent",
+            "removeFromParent": "parent",
+            "bbox": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "canvas": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+        {
+            **state["elements"][0],
+            "id": "parent",
+            "name": "wall cabinet",
+            "assetRole": "parent",
+            "bbox": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+    ]
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.post("/api/workspace/tasks/sam2-masks")
+
+    assert response.status_code == 200
+    task = _wait_for_task(client, response.json()["taskId"])
+    assert task["status"] == "failed"
+    assert task["failed"] == 1
+    assert _item(task, "child")["status"] == "failed"
+    assert _item(task, "parent")["status"] == "succeeded"
+    next_state = client.get("/api/workspace/state").json()
+    by_id = {element["id"]: element for element in next_state["elements"]}
+    assert by_id["child"]["segmentationStatus"] == "not_started"
+    assert by_id["parent"]["segmentationStatus"] == "mask_suggested"
 
 
 def test_task_list_and_detail_are_scoped_to_processing_record(tmp_path: Path) -> None:
@@ -316,6 +402,24 @@ def _item(task: dict[str, Any], element_id: str) -> dict[str, Any]:
         if item["elementId"] == element_id:
             return item
     raise AssertionError(f"Missing task item {element_id}")
+
+
+class _DisconnectAfter:
+    def __init__(self, checks: int) -> None:
+        self.checks = checks
+        self.seen = 0
+
+    async def is_disconnected(self) -> bool:
+        self.seen += 1
+        return self.seen > self.checks
+
+
+def _snapshot_payload(event: str) -> dict[str, Any]:
+    assert event.startswith("event: snapshot")
+    for line in event.splitlines():
+        if line.startswith("data: "):
+            return json.loads(line.removeprefix("data: "))
+    raise AssertionError("Snapshot event has no data payload")
 
 
 def _scene_png_bytes() -> bytes:

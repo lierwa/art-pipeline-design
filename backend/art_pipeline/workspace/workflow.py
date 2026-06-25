@@ -16,6 +16,7 @@ SnapshotStage = Literal["upload", "detect", "mask"]
 
 
 class WorkflowTaskIds(BaseModel):
+    detectionBatch: str | None = None
     sam2MaskBatch: str | None = None
     codexFinalBatches: list[str] = Field(default_factory=list)
 

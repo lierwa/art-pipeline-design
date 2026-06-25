@@ -37,6 +37,7 @@ export function App() {
   const shell = useAppShellState();
   const history = useWorkspaceHistoryController({
     activeRunId: shell.activeRunId,
+    bumpElementAssetCacheKey,
     refreshWorkspaceRuns,
     replaceWorkspace,
     selectedElementId: shell.selectedElementId,
@@ -65,11 +66,13 @@ export function App() {
     setError: shell.setError,
     setStatus: shell.setStatus,
     setWorkspace: shell.setWorkspace,
+    workspace: shell.workspace,
     workspaceHasSource: Boolean(shell.workspace.source),
   });
   const workflowController = useWorkflowController({
     activeRunId: shell.activeRunId,
     clearAllLocalRepairState: repair.clearAllLocalRepairState,
+    clearPendingTask: workspaceTasks.clearPendingTask,
     hasActiveTask: workspaceTasks.hasActiveTask,
     replaceWorkspace,
     refreshTasks: workspaceTasks.refreshTasks,
@@ -81,11 +84,13 @@ export function App() {
     setSelectedElementIds: shell.setSelectedElementIds,
     setStatus: shell.setStatus,
     startTask: workspaceTasks.handleTaskStarted,
+    startPendingTask: workspaceTasks.startPendingTask,
     workspace: shell.workspace,
   });
   const segment = useSegmentController({
     activeRunId: shell.activeRunId,
     applyWorkspaceMutation: history.applyWorkspaceMutation,
+    bumpElementAssetCacheKey,
     clearLocalRepairMetadata: repair.clearLocalRepairMetadata,
     pushUndoSnapshot: history.pushUndoSnapshot,
     refreshWorkspaceRuns,
@@ -394,6 +399,7 @@ export function App() {
     nextState: WorkspaceState,
     nextStatus: string,
     nextSelectionId?: string | null,
+    options: { bumpAssetCache?: boolean } = {},
   ) {
     const normalized = normalizeWorkspaceState(nextState);
     const normalizedActionableElements = normalized.elements.filter(isActionableElement);
@@ -401,7 +407,9 @@ export function App() {
     shell.setRenamingElementId(null);
     shell.setExportSummary(null);
     repair.retainRepairMetadataForElementIds(normalized.elements.map((elementItem) => elementItem.id));
-    shell.setAssetCacheKey((current) => current + 1);
+    if (options.bumpAssetCache !== false) {
+      shell.setAssetCacheKey((current) => current + 1);
+    }
 
     const requestedSelectionId = nextSelectionId !== undefined ? nextSelectionId : shell.selectedElementId;
     const resolvedSelectionId =
@@ -422,5 +430,13 @@ export function App() {
       return resolvedSelectionId ? [resolvedSelectionId] : [];
     });
     shell.setStatus(nextStatus);
+  }
+
+  function bumpElementAssetCacheKey(elementId: string) {
+    // WHY: 手工 mask patch 只改一个元素的派生图；元素级 cache 能刷新当前预览，同时避免资产树整批缩略图重载。
+    shell.setElementAssetCacheKeys((current) => ({
+      ...current,
+      [elementId]: (current[elementId] ?? 0) + 1,
+    }));
   }
 }

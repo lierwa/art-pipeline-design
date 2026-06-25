@@ -203,6 +203,53 @@ def test_grounding_dino_provider_supports_transformers_threshold_keyword(
     assert module.AutoProcessor.captured_threshold == 0.41
 
 
+def test_grounding_dino_stream_detect_chunks_vocabulary_and_limits_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_grounding_dino_dependencies(monkeypatch)
+    module = importlib.import_module("art_pipeline.model_runners.grounding_dino")
+    recorded_workers: list[int] = []
+
+    class ImmediateFuture:
+        def __init__(self, fn, args):
+            self._result = fn(*args)
+
+        def result(self):
+            return self._result
+
+    class RecordingExecutor:
+        def __init__(self, max_workers: int) -> None:
+            recorded_workers.append(max_workers)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def submit(self, fn, *args):
+            return ImmediateFuture(fn, args)
+
+    monkeypatch.setattr(module, "ThreadPoolExecutor", RecordingExecutor)
+    monkeypatch.setattr(module, "as_completed", lambda futures: futures)
+
+    provider = module.GroundingDinoProvider()
+    results = list(
+        provider.stream_detect(
+            Image.new("RGBA", (100, 80)),
+            ["cabinet", "plant", "sink", "cat", "rug", "mirror", "basket"],
+            "ignored",
+        )
+    )
+
+    assert recorded_workers == [2]
+    assert module.AutoProcessor.captured_texts == [
+        "cabinet. plant. sink. cat. rug. mirror.",
+        "basket.",
+    ]
+    assert [result["label"] for result in results] == ["cabinet", "cabinet"]
+
+
 def test_download_grounding_dino_model_uses_env_model_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -273,13 +320,16 @@ def _install_fake_grounding_dino_dependencies(
 
     class FakeProcessor:
         captured_text = ""
+        captured_texts: list[str] = []
         captured_image_mode = ""
         captured_threshold = None
 
         def __call__(self, images, text, return_tensors):
             FakeProcessor.captured_text = text
+            FakeProcessor.captured_texts.append(text)
             FakeProcessor.captured_image_mode = images.mode
             FakeAutoProcessor.captured_text = text
+            FakeAutoProcessor.captured_texts.append(text)
             FakeAutoProcessor.captured_image_mode = images.mode
             return _FakeInputs(pixel_values=fake_torch.zeros((1, 3, 8, 8)))
 
@@ -328,6 +378,7 @@ def _install_fake_grounding_dino_dependencies(
 
     class FakeAutoProcessor:
         captured_text = ""
+        captured_texts: list[str] = []
         captured_image_mode = ""
         captured_threshold = None
         requested_model_id = ""

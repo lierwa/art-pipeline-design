@@ -1,6 +1,5 @@
 import type { AssetContextMenuState, MergeDraft } from "../appStateTypes";
 import type { ExportSummary, WorkspaceElement } from "../../domain/workspace";
-import type { WorkspaceTask } from "../../domain/workspaceTasks";
 import {
   canRejectStatus,
   isActionableElement,
@@ -11,7 +10,6 @@ import { AssetContextMenu } from "../../features/elements/AssetContextMenu";
 import { MergeAssetDialog } from "../../features/elements/MergeAssetDialog";
 import { ModelStatusStrip } from "./ModelStatusStrip";
 import { WorkflowToast, type WorkflowToastState } from "./WorkflowToast";
-import { WorkspaceTaskPanel } from "../../features/tasks/WorkspaceTaskPanel";
 
 type AppChromeOverlaysProps = {
   assetContextMenu: AssetContextMenuState | null;
@@ -27,7 +25,6 @@ type AppChromeOverlaysProps = {
   mergeDraft: MergeDraft | null;
   mergeDraftElements: WorkspaceElement[];
   status: string;
-  tasks: WorkspaceTask[];
   workflowToast: WorkflowToastState | null;
   workspaceElements: WorkspaceElement[];
   onAcceptElement: (elementId: string) => void;
@@ -42,7 +39,6 @@ type AppChromeOverlaysProps = {
   onMergeWithSelection: (elementId: string) => void;
   onRejectElement: (elementId: string) => void;
   onRenameElement: (elementId: string) => void;
-  onRetryFailedTask: (taskId: string) => void;
   onSplitParent: () => void;
   onWorkflowToastDismiss: () => void;
 };
@@ -61,7 +57,6 @@ export function AppChromeOverlays({
   mergeDraft,
   mergeDraftElements,
   status,
-  tasks,
   workflowToast,
   workspaceElements,
   onAcceptElement,
@@ -76,7 +71,6 @@ export function AppChromeOverlays({
   onMergeWithSelection,
   onRejectElement,
   onRenameElement,
-  onRetryFailedTask,
   onSplitParent,
   onWorkflowToastDismiss,
 }: AppChromeOverlaysProps) {
@@ -96,7 +90,6 @@ export function AppChromeOverlays({
         exportSummary={exportSummary}
       />
       <WorkflowToast toast={workflowToast} onDismiss={onWorkflowToastDismiss} />
-      <WorkspaceTaskPanel tasks={tasks} onRetryFailedTask={onRetryFailedTask} />
       {mergeDraft ? (
         <MergeAssetDialog
           elements={mergeDraftElements}

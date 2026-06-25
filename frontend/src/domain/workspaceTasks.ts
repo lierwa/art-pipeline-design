@@ -1,10 +1,10 @@
-import { workspaceApiUrl, type WorkspaceElement } from "./workspace";
+import { isCodexFinalSourceProvider, workspaceApiUrl, type WorkspaceElement } from "./workspace";
 import { isPendingCodexFinalElement } from "./workspaceDerived";
 import type { CodexFinalTaskRequest, Fetcher } from "./workspaceApi";
 
-export type WorkspaceTaskType = "sam2_mask_batch" | "codex_final_batch";
+export type WorkspaceTaskType = "detection_batch" | "sam2_mask_batch" | "codex_final_batch";
 export type WorkspaceTaskStatus = "queued" | "running" | "succeeded" | "failed";
-export type WorkspaceTaskItemStatus = "queued" | "running" | "succeeded" | "failed" | "skipped";
+export type WorkspaceTaskItemStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "skipped";
 
 export type WorkspaceTaskItem = {
   elementId: string;
@@ -27,14 +27,34 @@ export type WorkspaceTask = {
   failed: number;
   skipped: number;
   items: WorkspaceTaskItem[];
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkspacePendingTask = {
+  type: WorkspaceTaskType;
+  message: string;
 };
 
 export type WorkspaceTasksResponse = {
   tasks: WorkspaceTask[];
 };
 
+export type StopCodexFinalTasksResponse = WorkspaceTasksResponse & {
+  matchedProcessCount: number;
+  terminatedProcessCount: number;
+  failedTaskCount: number;
+  failedJobCount: number;
+  failedItemCount: number;
+  errors: string[];
+};
+
 export type WorkspaceTaskEventPayload = WorkspaceTasksResponse & {
   changedElementIds: string[];
+};
+
+export type Sam2MaskTaskRequest = {
+  elementIds?: string[];
+  force?: boolean;
 };
 
 export type WorkspaceTaskItemIndex = Record<string, WorkspaceTaskItem>;
@@ -45,6 +65,7 @@ export type WorkspaceTaskDisplaySummary = {
   failed: number;
   skipped: number;
   queued: number;
+  claimed: number;
   running: number;
   unchanged: number;
 };
@@ -63,12 +84,14 @@ export async function fetchWorkspaceTasks(
 
 export async function startSam2MaskTask(
   runId: string | null = null,
+  request: Sam2MaskTaskRequest = {},
   fetcher: Fetcher = fetch,
 ): Promise<WorkspaceTask> {
+  const hasBody = (request.elementIds?.length ?? 0) > 0 || request.force === true;
   return requestTaskJson<WorkspaceTask>(
     fetcher,
     workspaceApiUrl("/api/workspace/tasks/sam2-masks", runId),
-    { method: "POST" },
+    hasBody ? jsonTaskRequest("POST", request) : { method: "POST" },
     "Could not start SAM2 mask task.",
   );
 }
@@ -99,8 +122,26 @@ export async function retryFailedWorkspaceTask(
   );
 }
 
+export async function stopCodexFinalTasks(
+  runId: string | null = null,
+  fetcher: Fetcher = fetch,
+): Promise<StopCodexFinalTasksResponse> {
+  return requestTaskJson<StopCodexFinalTasksResponse>(
+    fetcher,
+    workspaceApiUrl("/api/workspace/tasks/codex-final/stop-all", runId),
+    { method: "POST" },
+    "Could not stop Codex generation.",
+  );
+}
+
 export function hasRunningWorkspaceTask(tasks: WorkspaceTask[]): boolean {
   return tasks.some((task) => task.status === "queued" || task.status === "running");
+}
+
+export function hasRunningCodexFinalTask(tasks: WorkspaceTask[]): boolean {
+  return tasks.some(
+    (task) => task.type === "codex_final_batch" && (task.status === "queued" || task.status === "running"),
+  );
 }
 
 export function latestWorkspaceTask(tasks: WorkspaceTask[]): WorkspaceTask | null {
@@ -118,6 +159,9 @@ export function buildTaskItemIndex(
       if (isInformationalTaskSkip(item)) {
         continue;
       }
+      if (isInternalTaskItem(item)) {
+        continue;
+      }
       if (!isTaskItemConsistentWithElement(task, item, elementById.get(item.elementId))) {
         continue;
       }
@@ -132,11 +176,12 @@ export function buildTaskItemIndex(
 }
 
 export function summarizeWorkspaceTaskForDisplay(task: WorkspaceTask): WorkspaceTaskDisplaySummary {
-  const activeItems = task.items.filter((item) => !isInformationalTaskSkip(item));
+  const activeItems = task.items.filter((item) => !isInformationalTaskSkip(item) && !isInternalTaskItem(item));
   const done = activeItems.filter((item) => item.status === "succeeded").length;
   const failed = activeItems.filter((item) => item.status === "failed").length;
   const skipped = activeItems.filter((item) => item.status === "skipped").length;
   const queued = activeItems.filter((item) => item.status === "queued").length;
+  const claimed = activeItems.filter((item) => item.status === "claimed").length;
   const running = activeItems.filter((item) => item.status === "running").length;
   // WHY: 旧任务记录可能已经把“已有 mask / 合并源框”计入 total 和 skipped；
   // 展示层把这些还原成 unchanged，避免用户误读成 SAM2 漏跑或失败。
@@ -147,15 +192,17 @@ export function summarizeWorkspaceTaskForDisplay(task: WorkspaceTask): Workspace
     failed,
     skipped,
     queued,
+    claimed,
     running,
     unchanged,
   };
 }
 
 export function displayWorkspaceTaskItems(task: WorkspaceTask): WorkspaceTaskItem[] {
-  const activeItems = task.items.filter((item) => !isInformationalTaskSkip(item));
+  const activeItems = task.items.filter((item) => !isInformationalTaskSkip(item) && !isInternalTaskItem(item));
   return [
     ...activeItems.filter((item) => item.status === "running"),
+    ...activeItems.filter((item) => item.status === "claimed"),
     ...activeItems.filter((item) => item.status === "failed"),
     ...activeItems.filter((item) => item.status === "succeeded"),
     ...activeItems.filter((item) => item.status === "skipped"),
@@ -177,6 +224,10 @@ export function isInformationalTaskSkip(item: WorkspaceTaskItem): boolean {
   ].some((token) => message.includes(token));
 }
 
+export function isInternalTaskItem(item: WorkspaceTaskItem): boolean {
+  return item.elementId.startsWith("__");
+}
+
 function isTaskItemConsistentWithElement(
   task: WorkspaceTask,
   item: WorkspaceTaskItem,
@@ -191,8 +242,11 @@ function isTaskItemConsistentWithElement(
       && Boolean(element.mask)
     );
   }
+  if (task.type === "detection_batch") {
+    return element.status === "model_detected" && element.source === "model_detection";
+  }
   return (
-    element.sourceProvider === "codex_cli"
+    isCodexFinalSourceProvider(element.sourceProvider)
     && ["ready", "exported"].includes(element.exportStatus)
   );
 }
@@ -206,11 +260,20 @@ export function countQueuedTaskItems(task: WorkspaceTask): number {
 }
 
 export function taskTypeLabel(type: WorkspaceTaskType): string {
-  return type === "sam2_mask_batch" ? "SAM2 mask batch" : "Codex final batch";
+  switch (type) {
+    case "detection_batch":
+      return "Detection batch";
+    case "sam2_mask_batch":
+      return "SAM2 mask batch";
+    case "codex_final_batch":
+      return "Codex final batch";
+  }
 }
 
 export function taskItemStatusLabel(status: WorkspaceTaskItemStatus): string {
   switch (status) {
+    case "claimed":
+      return "Claimed";
     case "queued":
       return "Queued";
     case "running":
@@ -233,6 +296,7 @@ export function taskStatusTone(status: WorkspaceTaskItemStatus): string {
     case "skipped":
       return "is-muted";
     case "running":
+    case "claimed":
       return "is-progress";
     case "queued":
       return "is-queued";

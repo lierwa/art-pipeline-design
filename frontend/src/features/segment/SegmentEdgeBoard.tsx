@@ -10,10 +10,11 @@ import {
   useSegmentMaskDraftEditor,
   type SegmentDraftHistoryStatus,
   type SegmentEdgeBoardHandle,
+  type SegmentMaskPatchMeta,
   type SegmentMaskPatchRequest,
 } from "./useSegmentMaskDraftEditor";
 
-export type { SegmentDraftHistoryStatus, SegmentEdgeBoardHandle };
+export type { SegmentDraftHistoryStatus, SegmentEdgeBoardHandle, SegmentMaskPatchMeta };
 
 type SegmentEdgeBoardProps = {
   element: WorkspaceElement | null;
@@ -21,9 +22,16 @@ type SegmentEdgeBoardProps = {
   workspaceRunId?: string | null;
   isSuggesting?: boolean;
   isAccepting?: boolean;
+  isRerunning?: boolean;
+  rerunMaskTargetCount?: number;
   onAcceptMask?: (elementId: string) => void;
   onDraftHistoryChange?: (status: SegmentDraftHistoryStatus) => void;
-  onPatchMask?: (elementId: string, patch: SegmentMaskPatchRequest) => boolean | void | Promise<boolean | void>;
+  onPatchMask?: (
+    elementId: string,
+    patch: SegmentMaskPatchRequest,
+    meta?: SegmentMaskPatchMeta,
+  ) => boolean | void | Promise<boolean | void>;
+  onRerunMask?: () => void;
 };
 
 const SEGMENTATION_STATUSES_WITH_PREVIEWS: WorkspaceElement["segmentationStatus"][] = [
@@ -57,9 +65,12 @@ const SegmentEdgeBoardContent = forwardRef<SegmentEdgeBoardHandle, SegmentEdgeBo
   workspaceRunId,
   isSuggesting = false,
   isAccepting = false,
+  isRerunning = false,
+  rerunMaskTargetCount = 1,
   onAcceptMask,
   onDraftHistoryChange,
   onPatchMask,
+  onRerunMask,
 }, ref) {
   const [activeTool, setActiveTool] = useState<MaskEditTool | null>(null);
   const [brushSize, setBrushSize] = useState(18);
@@ -76,13 +87,17 @@ const SegmentEdgeBoardContent = forwardRef<SegmentEdgeBoardHandle, SegmentEdgeBo
     : thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId);
   const maskPreviewSrc = hasMaskPreviewArtifacts ? sam2EdgeUrls.maskUrl : null;
   const stickerPreviewSrc = hasMaskPreviewArtifacts ? sam2EdgeUrls.transparentAssetUrl : null;
+  const maskAssetVersion = `${activeElement.id}:${activeElement.mask ?? ""}:${assetCacheKey ?? 0}:${workspaceRunId ?? ""}`;
   const reviewState = maskReviewState(element);
-  const canPatchMask = hasMaskPreviewArtifacts && Boolean(onPatchMask) && !isSuggesting;
+  // WHY: 父级 SAM2 失败或 child 依赖错误时，用户仍需要从空白 mask 开始手工修复；
+  // brush 首次提交走 replace + mask_delta，保留现有后端协议，不再强依赖已有 artifact。
+  const canPatchMask = Boolean(onPatchMask) && !isSuggesting && !isRerunning;
   const editor = useSegmentMaskDraftEditor({
     activeElement,
     activeTool,
     brushSize,
     canPatchMask,
+    maskAssetVersion,
     maskImageRef,
     onDraftHistoryChange,
     onPatchMask,
@@ -127,6 +142,16 @@ const SegmentEdgeBoardContent = forwardRef<SegmentEdgeBoardHandle, SegmentEdgeBo
           </strong>
         </div>
         <div className="segment-edge-board-actions">
+          {onRerunMask ? (
+            <button
+              className="secondary-action"
+              disabled={isRerunning || isSuggesting || isAccepting || rerunMaskTargetCount <= 0}
+              onClick={onRerunMask}
+              type="button"
+            >
+              {rerunMaskTargetCount > 1 ? `Rerun ${rerunMaskTargetCount} masks` : "Rerun mask"}
+            </button>
+          ) : null}
           {hasMaskPreviewArtifacts && !hasAcceptedMask ? (
             <button
               className="primary-action"
@@ -139,6 +164,17 @@ const SegmentEdgeBoardContent = forwardRef<SegmentEdgeBoardHandle, SegmentEdgeBo
           ) : null}
         </div>
       </div>
+      {editor.shouldPreloadCommittedMask && maskPreviewSrc ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          data-testid="segment-committed-mask-preload"
+          draggable={false}
+          onLoad={editor.handleCommittedMaskAssetLoad}
+          src={maskPreviewSrc}
+          style={{ display: "none" }}
+        />
+      ) : null}
       <ol className="segment-mask-review" aria-label="Mask review stages">
         <li className="segment-mask-review-primary">
           <PreviewFigure
@@ -153,13 +189,19 @@ const SegmentEdgeBoardContent = forwardRef<SegmentEdgeBoardHandle, SegmentEdgeBo
             imageRef={sourceImageRef}
             imageSrc={cropPreviewSrc ?? undefined}
             icon={Crop}
-            isDraftOverlay={Boolean(draftMaskSrc)}
+            isDraftOverlay={Boolean(draftMaskSrc || editor.liveBrushDraft.active)}
             isInteractive={canPatchMask && Boolean(activeTool)}
+            liveMaskOverlayActive={editor.liveBrushDraft.active}
+            liveMaskOverlayRef={editor.liveMaskOverlayCanvasRef}
+            liveSelectionOperation={editor.liveBrushDraft.operation ?? undefined}
+            liveSelectionOverlayActive={editor.liveBrushDraft.active}
+            liveSelectionOverlayRef={editor.liveSelectionCanvasRef}
             maskOverlaySrc={sourceMaskOverlaySrc ?? undefined}
             onClick={editor.handleSourceClick}
             onNativeGestureChange={editor.handleSourceGestureChange}
             onNativeGestureEnd={editor.handleSourceGestureEnd}
             onNativeGestureStart={editor.handleSourceGestureStart}
+            onPointerCancel={editor.handleSourcePointerCancel}
             onPointerDown={editor.handleSourcePointerDown}
             onPointerMove={editor.handleSourcePointerMove}
             onPointerUp={editor.handleSourcePointerUp}

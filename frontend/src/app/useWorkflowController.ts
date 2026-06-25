@@ -17,7 +17,7 @@ import {
   type WorkspaceState,
 } from "../domain/workspace";
 import { isGenerateSelectableElement, needsElementReview } from "../domain/workspaceDerived";
-import type { WorkspaceTask } from "../domain/workspaceTasks";
+import type { WorkspacePendingTask, WorkspaceTask } from "../domain/workspaceTasks";
 
 type ReplaceWorkspace = (
   nextState: WorkspaceState,
@@ -34,6 +34,7 @@ type UseWorkflowControllerInput = {
   replaceWorkspace: ReplaceWorkspace;
   refreshTasks: (options?: { silent?: boolean; refreshWorkspace?: boolean }) => Promise<void>;
   refreshWorkspaceRuns: () => Promise<void>;
+  clearPendingTask: () => void;
   setAssetCacheKey: SetState<number>;
   setError: SetState<string | null>;
   setExportSummary: SetState<ExportSummary | null>;
@@ -41,6 +42,7 @@ type UseWorkflowControllerInput = {
   setSelectedElementIds: SetState<string[]>;
   setStatus: SetState<string>;
   startTask: (task: WorkspaceTask) => Promise<void>;
+  startPendingTask: (task: WorkspacePendingTask) => void;
   workspace: WorkspaceState;
 };
 
@@ -51,6 +53,7 @@ export function useWorkflowController({
   replaceWorkspace,
   refreshTasks,
   refreshWorkspaceRuns,
+  clearPendingTask,
   setAssetCacheKey,
   setError,
   setExportSummary,
@@ -58,6 +61,7 @@ export function useWorkflowController({
   setSelectedElementIds,
   setStatus,
   startTask,
+  startPendingTask,
   workspace,
 }: UseWorkflowControllerInput) {
   const [workflow, setWorkflow] = useState<WorkflowState | null>(null);
@@ -106,17 +110,23 @@ export function useWorkflowController({
       return;
     }
     setIsRunningStageDetect(true);
+    startPendingTask({ type: "detection_batch", message: "Running detection provider." });
     setStatus("Running detection...");
     setError(null);
     try {
       const payload = await runWorkspaceStageDetect(activeRunId);
-      await applyStagePayload(payload, "Detection completed.", payload.state.elements[0]?.id ?? null);
+      await applyStagePayload(
+        payload,
+        payload.task ? "Detection started." : "Detection completed.",
+        payload.state.elements[0]?.id ?? null,
+      );
       setSelectedElementIds([]);
       setIsPromptBoardExpanded(false);
       clearAllLocalRepairState();
     } catch (stageError) {
       setStatus("Detection failed.");
       setError(stageError instanceof Error ? stageError.message : "Detection failed.");
+      clearPendingTask();
     } finally {
       setIsRunningStageDetect(false);
     }
@@ -127,6 +137,7 @@ export function useWorkflowController({
       return;
     }
     setIsRunningStageMask(true);
+    startPendingTask({ type: "sam2_mask_batch", message: "Starting SAM2 mask batch." });
     setStatus("Starting SAM2 mask batch...");
     setError(null);
     try {
@@ -135,6 +146,7 @@ export function useWorkflowController({
     } catch (stageError) {
       setStatus("Mask batch failed to start.");
       setError(stageError instanceof Error ? stageError.message : "Could not start SAM2 mask batch.");
+      clearPendingTask();
     } finally {
       setIsRunningStageMask(false);
     }
@@ -151,6 +163,7 @@ export function useWorkflowController({
       return;
     }
     setIsRunningStageGenerate(true);
+    startPendingTask({ type: "codex_final_batch", message: "Starting Codex final batch." });
     setStatus("Starting Codex final batch...");
     setError(null);
     try {
@@ -167,13 +180,14 @@ export function useWorkflowController({
     } catch (stageError) {
       setStatus("Codex final batch failed to start.");
       setError(stageError instanceof Error ? stageError.message : "Could not start final generation.");
+      clearPendingTask();
     } finally {
       setIsRunningStageGenerate(false);
     }
   }
 
   async function handleRerunGenerateElement(elementId: string, promptHint: string) {
-    if (!workspace.source || isRunningStageGenerate || hasActiveTask) {
+    if (!workspace.source || isRunningStageGenerate) {
       return;
     }
     const normalizedHint = promptHint.trim();
@@ -189,6 +203,7 @@ export function useWorkflowController({
       generatePromptHints: nextHints,
     }));
     setIsRunningStageGenerate(true);
+    startPendingTask({ type: "codex_final_batch", message: "Starting Codex final rerun." });
     setStatus("Starting Codex final rerun...");
     setError(null);
     try {
@@ -204,6 +219,7 @@ export function useWorkflowController({
     } catch (stageError) {
       setStatus("Codex final rerun failed to start.");
       setError(stageError instanceof Error ? stageError.message : "Could not rerun final generation.");
+      clearPendingTask();
     } finally {
       setIsRunningStageGenerate(false);
     }
@@ -235,6 +251,22 @@ export function useWorkflowController({
       ...effectiveWorkflow.generateSelection,
       [elementId]: isSelected,
     };
+    await persistGenerateSelection(nextSelection);
+  }
+
+  async function handleToggleAllGenerateSelection(elementIds: string[], isSelected: boolean) {
+    const nextSelection = {
+      ...effectiveWorkflow.generateSelection,
+    };
+    elementIds.forEach((elementId) => {
+      nextSelection[elementId] = isSelected;
+    });
+    await persistGenerateSelection(nextSelection);
+  }
+
+  async function persistGenerateSelection(nextSelection: Record<string, boolean>) {
+    // WHY: 单选和全选都必须走同一个乐观更新 + 持久化路径，
+    // 否则右上角 Generate Selected 的可用状态会和右侧树勾选状态分叉。
     setWorkflow((current) => ({
       ...(current ?? effectiveWorkflow),
       generateSelection: nextSelection,
@@ -283,6 +315,8 @@ export function useWorkflowController({
     setAssetCacheKey((current) => current + 1);
     if (payload.task) {
       await startTask(payload.task);
+    } else {
+      clearPendingTask();
     }
     void refreshWorkspaceRuns();
   }
@@ -296,6 +330,7 @@ export function useWorkflowController({
     handleRerunGenerateElement,
     handleSaveGeneratePromptHint,
     handleStageBack,
+    handleToggleAllGenerateSelection,
     handleToggleGenerateSelection,
     isRunningStageBack,
     isRunningStageDetect,
@@ -326,6 +361,7 @@ function deriveWorkflowFromWorkspace(workspace: WorkspaceState): WorkflowState {
     generatePromptHints: {},
     stageSnapshots: {},
     taskIds: {
+      detectionBatch: null,
       sam2MaskBatch: null,
       codexFinalBatches: [],
     },

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 try:
@@ -24,10 +25,14 @@ class GroundingDinoProvider:
         model_id: str = default_model_id,
         box_threshold: float = 0.35,
         text_threshold: float = 0.25,
+        stream_chunk_size: int = 6,
+        stream_max_workers: int = 2,
     ) -> None:
         self.model_id = model_id
         self.box_threshold = box_threshold
         self.text_threshold = text_threshold
+        self.stream_chunk_size = max(1, stream_chunk_size)
+        self.stream_max_workers = max(1, stream_max_workers)
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.processor = AutoProcessor.from_pretrained(model_id)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(
@@ -39,6 +44,31 @@ class GroundingDinoProvider:
         image: Image.Image,
         vocabulary: list[str],
         prompt: str,
+    ) -> list[dict[str, Any]]:
+        return self._detect_once(image, vocabulary)
+
+    def stream_detect(
+        self,
+        image: Image.Image,
+        vocabulary: list[str],
+        prompt: str,
+    ):
+        chunks = list(_chunk_vocabulary(vocabulary, self.stream_chunk_size))
+        if self.stream_max_workers <= 1 or len(chunks) <= 1:
+            for chunk in chunks:
+                yield from self._detect_once(image, chunk)
+            return
+
+        worker_count = min(self.stream_max_workers, len(chunks))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(self._detect_once, image, chunk) for chunk in chunks]
+            for future in as_completed(futures):
+                yield from future.result()
+
+    def _detect_once(
+        self,
+        image: Image.Image,
+        vocabulary: list[str],
     ) -> list[dict[str, Any]]:
         text = _grounding_dino_prompt(vocabulary)
         inputs = self.processor(
@@ -89,6 +119,12 @@ def _grounding_dino_prompt(vocabulary: list[str]) -> str:
     if not labels:
         raise ValueError("Grounding DINO vocabulary must not be empty.")
     return ". ".join(labels) + "."
+
+
+def _chunk_vocabulary(vocabulary: list[str], chunk_size: int):
+    labels = [label for label in vocabulary if label.strip()]
+    for index in range(0, len(labels), chunk_size):
+        yield labels[index:index + chunk_size]
 
 
 def _grounding_dino_threshold_kwargs(post_process, threshold: float) -> dict[str, float]:

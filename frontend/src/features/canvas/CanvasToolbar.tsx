@@ -11,7 +11,6 @@ import {
   PenLine,
   Redo2,
   ScanLine,
-  SplitSquareHorizontal,
   Tags,
   Trash2,
   Undo2,
@@ -28,7 +27,6 @@ type CanvasToolbarProps = {
   hasSource: boolean;
   canClickDetect?: boolean;
   hasSelection: boolean;
-  canSplit: boolean;
   canMerge: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -52,7 +50,6 @@ export function CanvasToolbar({
   hasSource,
   canClickDetect = false,
   hasSelection,
-  canSplit,
   canMerge,
   canUndo,
   canRedo,
@@ -120,14 +117,6 @@ export function CanvasToolbar({
             isActive={isPanMode}
             disabled={!hasSource}
             onClick={onTogglePanMode}
-          />
-          <IconButton
-            label="Split selected"
-            icon={<SplitSquareHorizontal size={16} strokeWidth={2.2} />}
-            aria-pressed={tool === "split"}
-            isActive={tool === "split"}
-            disabled={!hasSource || !canSplit}
-            onClick={() => onSelectTool("split")}
           />
           <IconButton
             label="Merge"

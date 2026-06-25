@@ -52,6 +52,14 @@ class DemoDetectionProvider:
             if spec.label in allowed_labels
         ]
 
+    def stream_detect(
+        self,
+        image: Image.Image,
+        vocabulary: list[str],
+        prompt: str,
+    ):
+        yield from self.detect(image, vocabulary, prompt)
+
 
 def _scaled_box(width: int, height: int, spec: _DemoDetectionSpec) -> BoundingBox:
     x = _scale_start(width, spec.x)

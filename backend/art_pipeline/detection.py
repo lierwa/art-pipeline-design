@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol
 
 from PIL import Image
@@ -37,4 +38,14 @@ class DetectionProvider(Protocol):
         vocabulary: list[str],
         prompt: str,
     ) -> list[DetectionResult | dict[str, Any]]:
+        raise NotImplementedError
+
+
+class StreamingDetectionProvider(DetectionProvider, Protocol):
+    def stream_detect(
+        self,
+        image: Image.Image,
+        vocabulary: list[str],
+        prompt: str,
+    ) -> Iterable[DetectionResult | dict[str, Any]]:
         raise NotImplementedError

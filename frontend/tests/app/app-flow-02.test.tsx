@@ -1,4 +1,4 @@
-import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, dragSortableAssetTreeItem, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
+import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
 
 describe("App flow 02", () => {
   const workflowState = (stage: "upload" | "detect" | "mask" | "generate") => ({
@@ -204,7 +204,7 @@ describe("App flow 02", () => {
       expect(within(canvasToolbar).getByRole("button", { name: /^select$/i })).toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^edit box$/i })).toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^draw element$/i })).toBeInTheDocument();
-      expect(within(canvasToolbar).getByRole("button", { name: /^split selected$/i })).toBeInTheDocument();
+      expect(within(canvasToolbar).queryByRole("button", { name: /^split selected$/i })).not.toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^merge$/i })).toBeInTheDocument();
       expect(within(canvasToolbar).getByRole("button", { name: /^delete$/i })).toBeDisabled();
       expect(within(canvasToolbar).queryByText(/^Select$/i)).not.toBeInTheDocument();
@@ -288,6 +288,18 @@ describe("App flow 02", () => {
       expect(within(canvasToolbar).getByRole("button", { name: /draw element/i })).toHaveAttribute(
         "aria-pressed",
         "true",
+      );
+
+      const commandRefresh = new KeyboardEvent("keydown", {
+        key: "r",
+        metaKey: true,
+        cancelable: true,
+      });
+      window.dispatchEvent(commandRefresh);
+      expect(commandRefresh.defaultPrevented).toBe(false);
+      expect(within(canvasToolbar).getByRole("button", { name: /pan canvas/i })).toHaveAttribute(
+        "aria-pressed",
+        "false",
       );
 
       fireEvent.keyDown(window, { key: "r" });

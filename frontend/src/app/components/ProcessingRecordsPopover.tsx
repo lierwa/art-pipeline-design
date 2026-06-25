@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { History, Trash2, X } from "lucide-react";
+import { CopyPlus, History, Trash2, X } from "lucide-react";
 
 import { IconButton } from "../../shared/ui/IconButton";
+import { ConfirmActionDialog } from "../../shared/ui/ConfirmActionDialog";
 import { WorkspaceRunSummary } from "../../domain/workspace";
 
 type ProcessingRecordsPopoverProps = {
   runs: WorkspaceRunSummary[];
   activeRunId: string | null;
   onSelectRun: (runId: string) => void;
+  onDuplicateRun: (runId: string) => void | Promise<void>;
   onDeleteRun: (runId: string) => void | Promise<void>;
 };
 
@@ -15,6 +17,7 @@ export function ProcessingRecordsPopover({
   runs,
   activeRunId,
   onSelectRun,
+  onDuplicateRun,
   onDeleteRun,
 }: ProcessingRecordsPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -27,6 +30,9 @@ export function ProcessingRecordsPopover({
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
+      if (target instanceof Element && target.closest("[data-confirm-dialog]")) {
+        return;
+      }
       if (target instanceof Node && containerRef.current?.contains(target)) {
         return;
       }
@@ -100,14 +106,36 @@ export function ProcessingRecordsPopover({
                     <strong>{run.title}</strong>
                     <span>{formatRunMeta(run)}</span>
                   </button>
-                  <IconButton
-                    label={`Delete ${run.title} processing record`}
-                    icon={<Trash2 size={15} strokeWidth={2.2} />}
-                    className="record-delete-button"
+                  <button
+                    type="button"
+                    className="record-action-button record-duplicate-button"
+                    aria-label={`Duplicate ${run.title} processing record`}
+                    title="Duplicate processing record"
+                    onPointerDown={(event) => event.stopPropagation()}
                     onClick={(event) => {
                       event.stopPropagation();
-                      void onDeleteRun(run.id);
+                      void onDuplicateRun(run.id);
                     }}
+                  >
+                    <CopyPlus size={15} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+                  <ConfirmActionDialog
+                    title="Delete processing record"
+                    description="Delete this processing record and its files. This removes the saved source, state, masks, assets, and snapshots for this record."
+                    confirmLabel="Delete record"
+                    onConfirm={() => onDeleteRun(run.id)}
+                    trigger={(
+                      <button
+                        type="button"
+                        className="record-action-button record-delete-button"
+                        aria-label={`Delete ${run.title} processing record`}
+                        title="Delete processing record"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Trash2 size={15} strokeWidth={2.2} aria-hidden="true" />
+                      </button>
+                    )}
                   />
                 </div>
               ))}

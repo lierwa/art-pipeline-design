@@ -129,10 +129,12 @@ export function CanvasStage({
   const onZoomByWheelRef = useRef(onZoomByWheel);
   const onZoomByGestureRef = useRef(onZoomByGesture);
   const onPanChangeRef = useRef(onPanChange);
+  const overlayElementsRef = useRef(overlayElements);
   const focusPanTimerRef = useRef<number | null>(null);
   const [isFocusPanning, setIsFocusPanning] = useState(false);
 
   useEffect(() => {
+    overlayElementsRef.current = overlayElements;
     onZoomByWheelRef.current = onZoomByWheel;
     onZoomByGestureRef.current = onZoomByGesture;
     onPanChangeRef.current = onPanChange;
@@ -349,13 +351,16 @@ export function CanvasStage({
       return undefined;
     }
 
-    const selectedElement = overlayElements.find((element) => element.id === focusRequest.elementId);
     const canvasPanel = canvasPanelRef.current;
-    if (!selectedElement || !canvasPanel) {
+    if (!canvasPanel) {
       return undefined;
     }
 
     const animationFrame = window.requestAnimationFrame(() => {
+      const selectedElement = overlayElementsRef.current.find((element) => element.id === focusRequest.elementId);
+      if (!selectedElement) {
+        return;
+      }
       const artboardElement = canvasPanel.querySelector<HTMLElement>(".canvas-artboard");
       const stage = canvasPanel.querySelector<HTMLElement>(".canvas-stage");
       if (!artboardElement || !stage) {
@@ -395,7 +400,9 @@ export function CanvasStage({
     });
 
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [focusRequest?.elementId, focusRequest?.sequence, overlayElements, source]);
+    // WHY: focusRequest 是一次性“把外部列表选择带到画布视口”的命令；
+    // 拖拽编辑 bbox 会持续更新 overlayElements，不能因此重复执行旧命令，否则画布会追着控制点抖动。
+  }, [focusRequest?.elementId, focusRequest?.sequence, source]);
 
   return (
     <section

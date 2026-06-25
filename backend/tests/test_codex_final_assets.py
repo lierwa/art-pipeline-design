@@ -6,7 +6,15 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image
 
+import art_pipeline.codex_assets as codex_assets
+from art_pipeline.elements import WorkspaceState
 from art_pipeline.api import create_app
+from art_pipeline.codex_final_jobs import CodexFinalJob
+from art_pipeline.codex_final_paths import read_codex_final_request_metadata
+from codex_final_fixtures import (
+    write_accepted_sam2_reference,
+    write_parent_child_sam2_references,
+)
 from workspace_fixtures import upload_scene_and_state
 
 
@@ -19,12 +27,13 @@ class FakeCodexAssetProvider:
 
     def generate(self, request: object) -> None:
         self.requests.append(request)
-        output_path = Path(getattr(request, "output_path"))
+        output_path = Path(getattr(request, "raw_output_path"))
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        image = Image.new("RGBA", self.output_size, (0, 0, 0, 0))
+        chroma_key = getattr(request, "chroma_key")
+        image = Image.new("RGB", self.output_size, chroma_key)
         for x in range(self.output_size[0] // 4, self.output_size[0] * 3 // 4):
             for y in range(self.output_size[1] // 4, self.output_size[1] * 3 // 4):
-                image.putpixel((x, y), (12, 180, 90, 255))
+                image.putpixel((x, y), (12, 180, 90))
         image.save(output_path, format="PNG")
 
 
@@ -34,8 +43,203 @@ class FreshOutputCodexAssetProvider(FakeCodexAssetProvider):
         self.output_existed_when_called = False
 
     def generate(self, request: object) -> None:
-        self.output_existed_when_called = Path(getattr(request, "output_path")).exists()
+        self.output_existed_when_called = Path(getattr(request, "raw_output_path")).exists()
         super().generate(request)
+
+
+class NoOutputCodexAssetProvider:
+    name = "codex_cli"
+
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def generate(self, request: object) -> None:
+        self.requests.append(request)
+
+
+class CopyCutoutCodexAssetProvider:
+    name = "codex_cli"
+
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def generate(self, request: object) -> None:
+        self.requests.append(request)
+        output_path = Path(getattr(request, "raw_output_path"))
+        reference_path = Path(getattr(request, "reference_image_path"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(reference_path) as reference:
+            reference.convert("RGBA").save(output_path, format="PNG")
+
+
+class NearCopyCutoutCodexAssetProvider(CopyCutoutCodexAssetProvider):
+    def generate(self, request: object) -> None:
+        self.requests.append(request)
+        output_path = Path(getattr(request, "raw_output_path"))
+        reference_path = Path(getattr(request, "reference_image_path"))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(reference_path) as reference:
+            image = reference.convert("RGBA")
+        image.putpixel((1, 1), (221, 90, 40, 255))
+        image.save(output_path, format="PNG")
+
+
+def test_prepare_codex_final_job_includes_previous_final_after_base_inputs(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    previous_final = workspace_root / "elements" / "element_001" / "codex_final" / "transparent_asset.png"
+    previous_final.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (8, 6), (12, 180, 90, 255)).save(previous_final, format="PNG")
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
+
+    assert [(image.role, image.path) for image in prepared.input_images] == [
+        ("source_crop", "elements/element_001/sam2_edge/source_crop.png"),
+        ("visual_generation_brief", prepared.brief_image_path.relative_to(workspace_root).as_posix()),
+        ("transparent_cutout", "elements/element_001/sam2_edge/transparent_asset.png"),
+        ("mask", "elements/element_001/sam2_edge/mask.png"),
+        ("layout_guide", prepared.layout_guide_path.relative_to(workspace_root).as_posix()),
+        ("previous_final", "elements/element_001/codex_final/transparent_asset.png"),
+    ]
+
+
+def test_prepare_codex_final_job_includes_recent_failed_candidate_after_base_inputs(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    _write_codex_failed_candidate(workspace_root, "element_001", "job_20260624000000000000_old")
+    recent_candidate = _write_codex_failed_candidate(
+        workspace_root,
+        "element_001",
+        "job_20260625000000000000_recent",
+    )
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
+
+    assert [(image.role, image.path) for image in prepared.input_images] == [
+        ("source_crop", "elements/element_001/sam2_edge/source_crop.png"),
+        ("visual_generation_brief", prepared.brief_image_path.relative_to(workspace_root).as_posix()),
+        ("transparent_cutout", "elements/element_001/sam2_edge/transparent_asset.png"),
+        ("mask", "elements/element_001/sam2_edge/mask.png"),
+        ("layout_guide", prepared.layout_guide_path.relative_to(workspace_root).as_posix()),
+        ("failed_candidate", recent_candidate.relative_to(workspace_root).as_posix()),
+    ]
+    _assert_prompt_input_role_lines(
+        prepared.prompt,
+        [
+            "1. source_crop is the highest-authority reference",
+            "2. visual_generation_brief is a local deterministic task map",
+            "3. transparent_cutout is a rough silhouette guide",
+            "4. mask is diagnostic only",
+            "5. layout_guide is a measurement-only construction reference",
+            "6. failed_candidate is an optional negative reference",
+        ],
+    )
+    assert "6. previous_final" not in prepared.prompt
+    assert "7. failed_candidate" not in prepared.prompt
+
+
+def test_prepare_codex_final_job_ignores_failed_candidate_from_other_element(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    other_candidate = _write_codex_failed_candidate(
+        workspace_root,
+        "element_999",
+        "job_20260626000000000000_other",
+    )
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
+
+    assert all(image.path != other_candidate.relative_to(workspace_root).as_posix() for image in prepared.input_images)
+    assert "failed_candidate" not in [image.role for image in prepared.input_images]
+
+
+def test_prepare_codex_final_prompt_orders_both_repair_refs_before_removed_child_masks(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_parent_child_sam2_references(workspace_root)
+    previous_final = workspace_root / "elements" / "parent_001" / "codex_final" / "transparent_asset.png"
+    previous_final.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (22, 22), (12, 180, 90, 255)).save(previous_final, format="PNG")
+    _write_codex_failed_candidate(workspace_root, "parent_001", "job_20260625000000000000_recent")
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "parent_001")
+
+    assert [image.role for image in prepared.input_images] == [
+        "source_crop",
+        "visual_generation_brief",
+        "transparent_cutout",
+        "mask",
+        "layout_guide",
+        "previous_final",
+        "failed_candidate",
+        "removed_child_mask",
+        "removed_child_mask",
+    ]
+    _assert_prompt_input_role_lines(
+        prepared.prompt,
+        [
+            "1. source_crop is the highest-authority reference",
+            "2. visual_generation_brief is a local deterministic task map",
+            "3. transparent_cutout is a rough silhouette guide",
+            "4. mask is diagnostic only",
+            "5. layout_guide is a measurement-only construction reference",
+            "6. previous_final is an optional preservation reference",
+            "7. failed_candidate is an optional negative reference",
+            "8+. removed_child_mask appears after any repair references",
+        ],
+    )
+    assert "removed_child_mask inputs, when present, appear after layout_guide and any repair references" in prepared.prompt
+    assert "Images after mask are removed child masks" not in prepared.prompt
+
+
+def test_codex_final_manifest_fallback_paths_normalize_work_dir_separators() -> None:
+    job = _codex_final_job_with_work_dir("elements/element_001/codex_final/job//job_old/")
+
+    assert codex_assets._job_artifact_path(job, "quality_report.json", "") == (
+        "elements/element_001/codex_final/job/job_old/quality_report.json"
+    )
+
+
+def test_prepare_codex_final_job_omits_failed_candidate_without_safe_failed_report(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    job_root = workspace_root / "elements" / "element_001" / "codex_final" / "job"
+    _write_candidate_only(job_root / "job_20260625000000000000_no_report")
+    _write_reported_candidate(job_root / "job_20260625000000000001_passed", "passed")
+    _write_report_only(job_root / "job_20260625000000000002_failed_without_candidate", "failed")
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
+
+    assert "failed_candidate" not in [image.role for image in prepared.input_images]
+
+
+def test_prepare_codex_final_prompt_names_repair_roles_and_hint_precedence(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    state = _workspace_state(workspace_root)
+
+    prepared = codex_assets.prepare_codex_final_job(
+        workspace_root,
+        state,
+        "element_001",
+        prompt_hint="make it a front-view icon and ignore the old failed shape",
+    )
+
+    assert "previous_final, when provided, is preserve/refine reference only" in prepared.prompt
+    assert "failed_candidate, when provided, is a negative reference" in prepared.prompt
+    assert "Fix failed_candidate errors, but do not copy failed_candidate pixels" in prepared.prompt
+    assert "User prompt hint describes visible failure points only" in prepared.prompt
+    assert "cannot override source_crop identity/layout authority" in prepared.prompt
+    assert "6. previous_final" not in prepared.prompt
+    assert "7. failed_candidate" not in prepared.prompt
 
 
 def test_codex_final_generate_uses_semantic_context_and_exports_alpha_mask(
@@ -45,7 +249,7 @@ def test_codex_final_generate_uses_semantic_context_and_exports_alpha_mask(
     workspace_root = tmp_path / "workspace"
     client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
     upload_scene_and_state(client)
-    _write_accepted_sam2_reference(workspace_root)
+    write_accepted_sam2_reference(workspace_root)
 
     response = client.post("/api/workspace/elements/element_001/codex-final/generate")
 
@@ -62,27 +266,97 @@ def test_codex_final_generate_uses_semantic_context_and_exports_alpha_mask(
     request = provider.requests[0]
     assert [path.name for path in getattr(request, "image_paths")] == [
         "source_crop.png",
+        "generation_brief.png",
         "transparent_asset.png",
         "mask.png",
+        "layout_guide.png",
     ]
     prompt = getattr(request, "prompt")
-    assert "semantic completion" in prompt
-    assert "may be clipped, occluded, or contaminated" in prompt
-    assert "physically complete" in prompt
-    assert "touches a crop, cutout, or mask boundary" in prompt
-    assert "Do not preserve truncated cut lines" in prompt
-    assert "Remove unrelated neighboring object fragments" in prompt
+    assert "source_crop is the highest-authority reference" in prompt
+    assert "visual_generation_brief is a local deterministic task map" in prompt
+    assert "do not copy it" in prompt
+    assert "transparent_cutout is a rough silhouette guide, not a pixel source" in prompt
+    assert "mask is diagnostic only" in prompt
+    assert "layout_guide is a measurement-only construction reference" in prompt
+    assert "Do not copy guide marks" in prompt
+    assert "source_crop remains the identity and layout authority" in prompt
+    assert "Create one RGB image of the requested subject on a perfectly flat chroma-key background" in prompt
+    assert "Do not create transparency" in prompt
+    assert "Do not run Python, ffmpeg, Node, shell pixel processing, alpha extraction, or chroma removal" in prompt
+    assert "After image generation finishes, respond exactly DONE" in prompt
+    assert "Keep the source crop isometric/orthographic camera" in prompt
+    assert "Do not convert the asset into a front view, icon, product render, or free-view redraw" in prompt
+    assert "Do not rescale, rotate, or rearrange the subject" in prompt
+    assert "Match the source crop colors, brightness, shading, material, and line weight" in prompt
+    assert "Holes, missing chunks, black areas, or transparent gaps in cutout/mask references are mask defects" in prompt
+    assert "Do not use transparent_cutout pixels as output pixels" in prompt
+    assert "Regenerate the entire visible subject" not in prompt
+    assert "polished standalone final sticker" not in prompt
+    assert "white halo/fringe" not in prompt
+    assert "transparent-background PNG" not in prompt
+    assert "Complete only missing or damaged regions" not in prompt
+    assert "Repair only missing or damaged parts" not in prompt
 
     final_dir = workspace_root / "elements" / "element_001" / "codex_final"
     assert (final_dir / "transparent_asset.png").exists()
     metadata = json.loads((final_dir / "generation.json").read_text(encoding="utf-8"))
     assert metadata["provider"] == "codex_cli"
     assert metadata["referenceAssetPath"] == "elements/element_001/sam2_edge/transparent_asset.png"
+    assert metadata["outputPath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["outputPath"].endswith("/candidate_asset.png")
+    assert metadata["rawOutputPath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["rawOutputPath"].endswith("/codex_raw.png")
+    assert metadata["promptPath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["promptPath"].endswith("/prompt.md")
+    assert metadata["briefImagePath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["briefImagePath"].endswith("/generation_brief.png")
+    assert metadata["briefJsonPath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["briefJsonPath"].endswith("/generation_brief.json")
+    assert metadata["analysisMaskPath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["analysisMaskPath"].endswith("/analysis_mask.png")
+    assert metadata["layoutGuidePath"].startswith("elements/element_001/codex_final/job/")
+    assert metadata["layoutGuidePath"].endswith("/layout_guide.png")
+    assert metadata["chromaKey"] in ([0, 255, 0], [255, 0, 255], [0, 255, 255], [255, 0, 0])
+    assert metadata["jobId"]
+    assert metadata["referenceSha256"]
+    assert metadata["outputSha256"]
+    assert metadata["isOutputIdenticalToReference"] is False
     assert metadata["inputImagePaths"] == [
         "elements/element_001/sam2_edge/source_crop.png",
+        metadata["briefImagePath"],
         "elements/element_001/sam2_edge/transparent_asset.png",
         "elements/element_001/sam2_edge/mask.png",
+        metadata["layoutGuidePath"],
     ]
+    assert metadata["inputImages"] == [
+        {
+            "path": "elements/element_001/sam2_edge/source_crop.png",
+            "role": "source_crop",
+            "required": True,
+        },
+        {
+            "path": metadata["briefImagePath"],
+            "role": "visual_generation_brief",
+            "required": True,
+        },
+        {
+            "path": "elements/element_001/sam2_edge/transparent_asset.png",
+            "role": "transparent_cutout",
+            "required": True,
+        },
+        {
+            "path": "elements/element_001/sam2_edge/mask.png",
+            "role": "mask",
+            "required": True,
+        },
+        {
+            "path": metadata["layoutGuidePath"],
+            "role": "layout_guide",
+            "required": True,
+        },
+    ]
+    assert metadata["prompt"] == prompt
+    assert metadata["generationProfile"] == "sticker_completion"
 
     export_response = client.post("/api/workspace/export")
 
@@ -104,7 +378,7 @@ def test_codex_final_generate_removes_stale_job_output_before_rerun(tmp_path: Pa
     workspace_root = tmp_path / "workspace"
     client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
     upload_scene_and_state(client)
-    _write_accepted_sam2_reference(workspace_root)
+    write_accepted_sam2_reference(workspace_root)
     stale_output = workspace_root / "elements" / "element_001" / "codex_final" / "job" / "final_asset.png"
     stale_output.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGBA", (8, 6), (255, 0, 0, 255)).save(stale_output, format="PNG")
@@ -113,6 +387,61 @@ def test_codex_final_generate_removes_stale_job_output_before_rerun(tmp_path: Pa
 
     assert response.status_code == 200
     assert provider.output_existed_when_called is False
+    request = provider.requests[0]
+    assert Path(getattr(request, "work_dir")).name.startswith("job_")
+    assert Path(getattr(request, "output_path")).parent == Path(getattr(request, "work_dir"))
+    assert Path(getattr(request, "raw_output_path")).parent == Path(getattr(request, "work_dir"))
+
+
+def test_codex_final_generate_fails_when_provider_reuses_stale_fixed_job_output(tmp_path: Path) -> None:
+    provider = NoOutputCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    upload_scene_and_state(client)
+    write_accepted_sam2_reference(workspace_root)
+    stale_output = workspace_root / "elements" / "element_001" / "codex_final" / "job" / "final_asset.png"
+    stale_output.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (8, 6), (255, 0, 0, 255)).save(stale_output, format="PNG")
+
+    response = client.post("/api/workspace/elements/element_001/codex-final/generate")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Codex CLI did not create codex_raw.png."
+    assert not (workspace_root / "elements" / "element_001" / "codex_final" / "transparent_asset.png").exists()
+
+
+def test_codex_final_generate_rejects_output_identical_to_mask_sticker(tmp_path: Path) -> None:
+    provider = CopyCutoutCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    upload_scene_and_state(client)
+    write_accepted_sam2_reference(workspace_root)
+
+    response = client.post("/api/workspace/elements/element_001/codex-final/generate")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Codex final candidate failed quality gate: near_copy_of_sam2_cutout"
+    report = json.loads((Path(getattr(provider.requests[0], "work_dir")) / "quality_report.json").read_text())
+    assert report["status"] == "failed"
+    assert "near_copy_of_sam2_cutout" in report["errors"]
+    assert not (workspace_root / "elements" / "element_001" / "codex_final" / "transparent_asset.png").exists()
+
+
+def test_codex_final_generate_rejects_output_visually_too_similar_to_mask_sticker(tmp_path: Path) -> None:
+    provider = NearCopyCutoutCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    upload_scene_and_state(client)
+    write_accepted_sam2_reference(workspace_root)
+
+    response = client.post("/api/workspace/elements/element_001/codex-final/generate")
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Codex final candidate failed quality gate: near_copy_of_sam2_cutout"
+    report = json.loads((Path(getattr(provider.requests[0], "work_dir")) / "quality_report.json").read_text())
+    assert report["status"] == "failed"
+    assert "near_copy_of_sam2_cutout" in report["errors"]
+    assert not (workspace_root / "elements" / "element_001" / "codex_final" / "transparent_asset.png").exists()
 
 
 def test_codex_final_generate_allows_semantic_completion_to_expand_reference_alpha(
@@ -122,7 +451,7 @@ def test_codex_final_generate_allows_semantic_completion_to_expand_reference_alp
     workspace_root = tmp_path / "workspace"
     client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
     upload_scene_and_state(client)
-    _write_accepted_sam2_reference(workspace_root)
+    write_accepted_sam2_reference(workspace_root)
 
     response = client.post("/api/workspace/elements/element_001/codex-final/generate")
 
@@ -147,10 +476,10 @@ def test_codex_final_generate_requires_cutout_reference(tmp_path: Path) -> None:
 
 
 def test_codex_parent_generation_inpaints_parent_without_removed_children(tmp_path: Path) -> None:
-    provider = FakeCodexAssetProvider()
+    provider = FakeCodexAssetProvider(output_size=(44, 44))
     workspace_root = tmp_path / "workspace"
     client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
-    _write_parent_child_sam2_references(workspace_root)
+    write_parent_child_sam2_references(workspace_root)
 
     response = client.post(
         "/api/workspace/elements/parent_001/codex-final/generate",
@@ -164,6 +493,10 @@ def test_codex_parent_generation_inpaints_parent_without_removed_children(tmp_pa
     assert "Removed child objects: bottle, plant" in prompt
     assert "Do not regenerate the removed child objects" in prompt
     assert "Inpaint and complete only the parent structure" in prompt
+    assert "shelves, cabinet panels" not in prompt
+    assert "walls, wood grain" not in prompt
+    assert "source crop content not listed as removed child metadata must stay visible" in prompt
+    assert "Do not simplify, empty, replace, or redesign the parent as a generic clean object" in prompt
     assert "User prompt hint, subordinate to the rules above: keep the same front-facing shelf angle" in prompt
     relative_inputs = [
         str(Path(path).relative_to(workspace_root)).replace("\\", "/")
@@ -184,131 +517,170 @@ def test_codex_parent_generation_inpaints_parent_without_removed_children(tmp_pa
     assert metadata["promptHint"] == "keep the same front-facing shelf angle"
 
 
+def test_codex_generation_metadata_request_is_readable_for_review_panel(tmp_path: Path) -> None:
+    provider = FakeCodexAssetProvider()
+    workspace_root = tmp_path / "workspace"
+    client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
+    upload_scene_and_state(client)
+    write_accepted_sam2_reference(workspace_root)
+    generate_response = client.post("/api/workspace/elements/element_001/codex-final/generate")
+    assert generate_response.status_code == 200
+
+    response = client.get("/api/workspace/elements/element_001/codex-final/request")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "codex_cli"
+    assert body["generationProfile"] == "sticker_completion"
+    assert body["assetPath"] == "elements/element_001/codex_final/transparent_asset.png"
+    assert body["outputPath"].startswith("elements/element_001/codex_final/job/")
+    assert body["outputPath"].endswith("/candidate_asset.png")
+    assert body["promptPath"].startswith("elements/element_001/codex_final/job/")
+    assert body["promptPath"].endswith("/prompt.md")
+    assert body["briefImagePath"].startswith("elements/element_001/codex_final/job/")
+    assert body["briefImagePath"].endswith("/generation_brief.png")
+    assert body["briefJsonPath"].startswith("elements/element_001/codex_final/job/")
+    assert body["briefJsonPath"].endswith("/generation_brief.json")
+    assert body["jobId"]
+    assert body["referenceSha256"]
+    assert body["outputSha256"]
+    assert body["isOutputIdenticalToReference"] is False
+    assert body["inputImagePaths"] == [
+        "elements/element_001/sam2_edge/source_crop.png",
+        body["briefImagePath"],
+        "elements/element_001/sam2_edge/transparent_asset.png",
+        "elements/element_001/sam2_edge/mask.png",
+        next(path for path in body["inputImagePaths"] if path.endswith("/layout_guide.png")),
+    ]
+    assert body["inputImages"] == [
+        {
+            "path": "elements/element_001/sam2_edge/source_crop.png",
+            "role": "source_crop",
+            "required": True,
+        },
+        {
+            "path": body["briefImagePath"],
+            "role": "visual_generation_brief",
+            "required": True,
+        },
+        {
+            "path": "elements/element_001/sam2_edge/transparent_asset.png",
+            "role": "transparent_cutout",
+            "required": True,
+        },
+        {
+            "path": "elements/element_001/sam2_edge/mask.png",
+            "role": "mask",
+            "required": True,
+        },
+        {
+            "path": next(path for path in body["inputImagePaths"] if path.endswith("/layout_guide.png")),
+            "role": "layout_guide",
+            "required": True,
+        },
+    ]
+    assert body["removedChildren"] == []
+    assert body["promptHint"] is None
+    assert body["createdAt"]
+    assert body["prompt"] == getattr(provider.requests[0], "prompt")
+
+
+def test_legacy_codex_generation_metadata_defaults_input_images_to_empty_list(tmp_path: Path) -> None:
+    workspace_root = tmp_path / "workspace"
+    metadata_file = workspace_root / "elements" / "element_001" / "codex_final" / "generation.json"
+    metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    metadata_file.write_text(
+        json.dumps({
+            "provider": "codex_cli",
+            "inputImagePaths": ["elements/element_001/sam2_edge/source_crop.png"],
+        }),
+        encoding="utf-8",
+    )
+
+    metadata = read_codex_final_request_metadata(workspace_root, "element_001")
+
+    assert metadata["inputImagePaths"] == ["elements/element_001/sam2_edge/source_crop.png"]
+    assert metadata["inputImages"] == []
+
+
+def test_missing_codex_generation_metadata_returns_404(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path / "workspace"))
+    upload_scene_and_state(client)
+
+    response = client.get("/api/workspace/elements/element_001/codex-final/request")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Codex request metadata not found."
+
+
 def test_codex_child_generation_uses_standalone_profile(tmp_path: Path) -> None:
     provider = FakeCodexAssetProvider()
     workspace_root = tmp_path / "workspace"
     client = TestClient(create_app(workspace_root, codex_asset_provider=provider))
-    _write_parent_child_sam2_references(workspace_root)
+    write_parent_child_sam2_references(workspace_root)
 
     response = client.post("/api/workspace/elements/child_001/codex-final/generate")
 
     assert response.status_code == 200
     prompt = getattr(provider.requests[0], "prompt")
     assert "removable child asset" in prompt
-    assert "Generate only this child object as a standalone sticker" in prompt
+    assert "Generate only the requested child asset as a standalone RGB image" in prompt
+    assert "Do not use transparent_cutout pixels as output pixels" in prompt
     assert "Do not include its parent container" in prompt
+    assert "same isometric angle, color, scale, and local layout shown by source_crop" in prompt
     assert response.json()["element"]["generationProfile"] == "child_standalone"
 
 
-def _write_accepted_sam2_reference(workspace_root: Path) -> None:
-    stage_dir = workspace_root / "elements" / "element_001" / "sam2_edge"
-    stage_dir.mkdir(parents=True, exist_ok=True)
-    source_crop = Image.new("RGBA", (8, 6), (220, 90, 40, 255))
-    source_crop.save(stage_dir / "source_crop.png", format="PNG")
-    cutout = Image.new("RGBA", (8, 6), (0, 0, 0, 0))
-    for x in range(1, 7):
-        for y in range(1, 5):
-            cutout.putpixel((x, y), (220, 90, 40, 255))
-    cutout.save(stage_dir / "transparent_asset.png", format="PNG")
-    mask = cutout.getchannel("A")
-    mask.save(stage_dir / "mask.png", format="PNG")
-    state = {
-        "source": {
-            "filename": "original.png",
-            "path": "source/original.png",
-            "width": 12,
-            "height": 10,
-        },
-        "elements": [
-            {
-                "id": "element_001",
-                "name": "Sticker",
-                "status": "accepted",
-                "assetRole": "sticker",
-                "bbox": {"x": 3, "y": 2, "w": 4, "h": 3},
-                "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
-                "layer": 1,
-                "visible": True,
-                "segmentationStatus": "mask_accepted",
-                "segmentationQuality": {
-                    "selectedProfile": "base",
-                    "candidateCount": 1,
-                    "foregroundArea": 24,
-                    "detachedArea": 0,
-                    "filledHoleCount": 0,
-                    "filledHoleArea": 0,
-                    "qualityStatus": "pass",
-                    "qualityReasons": [],
-                },
-                "mask": "elements/element_001/sam2_edge/mask.png",
-            }
-        ],
-    }
-    (workspace_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+def _workspace_state(workspace_root: Path) -> WorkspaceState:
+    return WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
 
 
-def _write_parent_child_sam2_references(workspace_root: Path) -> None:
-    for element_id, color in [
-        ("parent_001", (180, 110, 40, 255)),
-        ("child_001", (230, 90, 120, 255)),
-        ("child_002", (90, 190, 80, 255)),
-    ]:
-        stage_dir = workspace_root / "elements" / element_id / "sam2_edge"
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        source_crop = Image.new("RGBA", (10, 10), color)
-        source_crop.save(stage_dir / "source_crop.png", format="PNG")
-        cutout = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
-        for x in range(2, 8):
-            for y in range(2, 8):
-                cutout.putpixel((x, y), color)
-        cutout.save(stage_dir / "transparent_asset.png", format="PNG")
-        cutout.getchannel("A").save(stage_dir / "mask.png", format="PNG")
-
-    state = {
-        "source": {
-            "filename": "original.png",
-            "path": "source/original.png",
-            "width": 32,
-            "height": 32,
-        },
-        "elements": [
-            _sam2_state_element("parent_001", "wall cabinet", "parent", None, {"x": 3, "y": 2, "w": 20, "h": 20}),
-            _sam2_state_element("child_001", "bottle", "removable_child", "parent_001", {"x": 9, "y": 8, "w": 4, "h": 6}),
-            _sam2_state_element("child_002", "plant", "removable_child", "parent_001", {"x": 14, "y": 5, "w": 5, "h": 5}),
-        ],
-    }
-    (workspace_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+def _write_codex_failed_candidate(workspace_root: Path, element_id: str, job_id: str) -> Path:
+    job_dir = workspace_root / "elements" / element_id / "codex_final" / "job" / job_id
+    _write_reported_candidate(job_dir, "failed")
+    return job_dir / "candidate_asset.png"
 
 
-def _sam2_state_element(
-    element_id: str,
-    name: str,
-    asset_role: str,
-    remove_from_parent: str | None,
-    bbox: dict[str, int],
-) -> dict:
-    return {
-        "id": element_id,
-        "name": name,
-        "label": name,
-        "status": "accepted",
-        "mode": "needs_completion",
-        "assetRole": asset_role,
-        "removeFromParent": remove_from_parent,
-        "bbox": bbox,
-        "canvas": {"x": max(0, bbox["x"] - 1), "y": max(0, bbox["y"] - 1), "w": bbox["w"] + 2, "h": bbox["h"] + 2},
-        "layer": 1,
-        "visible": True,
-        "segmentationStatus": "mask_accepted",
-        "segmentationQuality": {
-            "selectedProfile": "fixture",
-            "candidateCount": 1,
-            "foregroundArea": 36,
-            "detachedArea": 0,
-            "filledHoleCount": 0,
-            "filledHoleArea": 0,
-            "qualityStatus": "pass",
-            "qualityReasons": [],
-        },
-        "mask": f"elements/{element_id}/sam2_edge/mask.png",
-    }
+def _write_reported_candidate(job_dir: Path, status: str) -> None:
+    job_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (8, 6), (221, 90, 40, 255)).save(job_dir / "candidate_asset.png", format="PNG")
+    _write_report_only(job_dir, status)
+
+
+def _write_candidate_only(job_dir: Path) -> None:
+    job_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("RGBA", (8, 6), (221, 90, 40, 255)).save(job_dir / "candidate_asset.png", format="PNG")
+
+
+def _write_report_only(job_dir: Path, status: str) -> None:
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / "quality_report.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+
+
+def _codex_final_job_with_work_dir(work_dir_path: str) -> CodexFinalJob:
+    return CodexFinalJob(
+        jobId="job_old",
+        elementId="element_001",
+        elementName="Sticker",
+        status="ready_for_agent",
+        message="Waiting for Codex agent raw image.",
+        workDirPath=work_dir_path,
+        promptPath=f"{work_dir_path}/prompt.md",
+        briefImagePath=f"{work_dir_path}/generation_brief.png",
+        briefJsonPath=f"{work_dir_path}/generation_brief.json",
+        rawOutputPath=f"{work_dir_path}/codex_raw.png",
+        finalOutputPath=f"{work_dir_path}/candidate_asset.png",
+        metadataPath="elements/element_001/codex_final/generation.json",
+        inputImages=[],
+        generationProfile="sticker_completion",
+    )
+
+
+def _assert_prompt_input_role_lines(prompt: str, expected_prefixes: list[str]) -> None:
+    lines = prompt.splitlines()
+    start = lines.index("INPUT IMAGE ROLES, IN EXACT ORDER:") + 1
+    end = lines.index("", start)
+    role_lines = lines[start:end]
+    assert len(role_lines) == len(expected_prefixes)
+    for line, prefix in zip(role_lines, expected_prefixes, strict=True):
+        assert line.startswith(prefix)

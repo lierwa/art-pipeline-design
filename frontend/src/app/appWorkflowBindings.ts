@@ -43,8 +43,15 @@ export function buildBoundAppWorkflowState({
     hasGenerateSelection: shell.workspace.elements
       .filter(isGenerateSelectableElement)
       .some((elementItem) => workflowController.effectiveWorkflow.generateSelection[elementItem.id] ?? true),
+    hasPendingSegmentMasks: derived.hasBatchSegmentTargets,
+    hasTaskProgressSurface: workspaceTasks.hasActiveTask,
     hasUnsavedGeometryChanges: derived.hasUnsavedGeometryChanges,
-    isAnnotating: detection.isAnnotating || workflowController.isRunningStageDetect,
+    // WHY: Run Detection 第一版复用后台 task + SSE；进入 detect 阶段后 task 仍在逐框写入，
+    // UI 应继续表现为模型 busy，避免用户在候选框未稳定前启动 mask。
+    isAnnotating:
+      detection.isAnnotating
+      || workflowController.isRunningStageDetect
+      || (workflowStage === "detect" && workspaceTasks.hasActiveTask),
     isExporting: shell.isExporting,
     isSavingState: shell.isSavingState,
     isSavingVocabulary: detection.isSavingVocabulary,

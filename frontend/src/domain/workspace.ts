@@ -119,6 +119,13 @@ export type WorkspaceElement = {
   exportParent: boolean;
 };
 
+const CODEX_FINAL_SOURCE_PROVIDERS = new Set(["codex_cli", "codex_agent"]);
+
+export function isCodexFinalSourceProvider(provider: string | null | undefined): boolean {
+  // WHY: 旧链路和 subagent 摄入链路都会产出同一种 Codex final 资产；UI 只关心资产语义，不应绑定执行器名称。
+  return CODEX_FINAL_SOURCE_PROVIDERS.has(provider ?? "");
+}
+
 export type WorkspaceState = {
   source: SourceMetadata | null;
   elements: WorkspaceElement[];
@@ -128,6 +135,7 @@ export type WorkspaceState = {
 export type WorkflowStage = "upload" | "detect" | "mask" | "generate";
 
 export type WorkflowTaskIds = {
+  detectionBatch?: string | null;
   sam2MaskBatch?: string | null;
   codexFinalBatches: string[];
 };
@@ -163,6 +171,12 @@ export type WorkspaceRunsResponse = {
 
 export type CreateWorkspaceRunResponse = {
   run: WorkspaceRunSummary;
+  state: WorkspaceState;
+};
+
+export type DuplicateWorkspaceRunResponse = {
+  run: WorkspaceRunSummary;
+  runs: WorkspaceRunSummary[];
   state: WorkspaceState;
 };
 
@@ -288,6 +302,7 @@ export type ElementSelectionOptions = {
 };
 
 export type SelectedElementIds = string[];
+type AssetCacheKey = number | string;
 
 export const EMPTY_STATE: WorkspaceState = {
   source: null,
@@ -305,7 +320,7 @@ export const DEFAULT_OVERLAYS: OverlayState = {
 
 export function thumbnailUrl(
   path: string | null,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string | null {
   return workspaceAssetUrl(path, cacheKey, runId);
@@ -313,7 +328,7 @@ export function thumbnailUrl(
 
 export function workspaceAssetUrl(
   path: string | null,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string | null {
   if (!path) {
@@ -325,7 +340,7 @@ export function workspaceAssetUrl(
 
 export function sourceCropUrl(
   element: WorkspaceElement,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string {
   const url = `/api/workspace/assets/elements/${element.id}/source_crop.png`;
@@ -334,7 +349,7 @@ export function sourceCropUrl(
 
 export function assetIncompleteUrl(
   element: WorkspaceElement,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string {
   const url = `/api/workspace/assets/elements/${element.id}/asset_incomplete.png`;
@@ -343,7 +358,7 @@ export function assetIncompleteUrl(
 
 export function sam2EdgeArtifactUrls(
   element: WorkspaceElement,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): { sourceCropUrl: string | null; maskUrl: string | null; transparentAssetUrl: string | null } {
   // WHY: backend SAM2 输出集中在 sam2_edge stage；UI 只从这里投影 URL，避免组件继续拼 legacy 文件名。
@@ -357,7 +372,7 @@ export function sam2EdgeArtifactUrls(
 
 export function missingMaskUrl(
   element: WorkspaceElement,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string {
   const url = `/api/workspace/assets/elements/${element.id}/missing_mask.png`;
@@ -367,7 +382,7 @@ export function missingMaskUrl(
 export function repairAssetUrl(
   element: WorkspaceElement,
   filename: string,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): string {
   const url = `/api/workspace/assets/elements/${element.id}/repair/${filename}`;
@@ -429,7 +444,7 @@ function normalizeSegmentationQuality(
 
 export function codexFinalArtifactUrls(
   element: WorkspaceElement,
-  cacheKey?: number,
+  cacheKey?: AssetCacheKey,
   runId?: string | null,
 ): { sourceCropUrl: string | null; transparentAssetUrl: string | null } {
   // WHY: Codex final 是后续导出的正式贴图；统一从这里投影 URL，避免 UI 多处硬编码 stage 路径。
@@ -462,7 +477,7 @@ function appendWorkspaceQuery(
     cacheKey,
     runId,
   }: {
-    cacheKey?: number;
+    cacheKey?: AssetCacheKey;
     runId?: string | null;
   },
 ): string {

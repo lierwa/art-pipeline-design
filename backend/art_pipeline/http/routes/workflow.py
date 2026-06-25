@@ -5,21 +5,14 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
-from art_pipeline.candidates import filter_detection_results
-from art_pipeline.detection import DetectionResult
-from art_pipeline.detection_results import (
-    detection_results_to_elements as _detection_results_to_elements,
-    validate_detection_results as _validate_detection_results,
-)
 from art_pipeline.elements import WorkspaceState
 from art_pipeline.http.helpers import require_source_image as _require_source_image
 from art_pipeline.http.routes.tasks import (
+    is_sam2_task_target,
     start_codex_final_batch,
     start_sam2_mask_batch,
 )
 from art_pipeline.provider_config import (
-    detection_filter_vocabulary as _detection_filter_vocabulary,
-    get_codex_asset_provider as _get_codex_asset_provider,
     get_detection_provider as _get_detection_provider,
     get_sam2_provider as _get_sam2_provider,
 )
@@ -28,12 +21,12 @@ from art_pipeline.workspace.state_updates import (
     replace_workspace_elements as _replace_workspace_elements,
 )
 from art_pipeline.workspace.store import (
-    clear_generated_workspace_outputs as _clear_generated_workspace_outputs,
     read_state as _read_state,
     resolve_workspace_root as _resolve_workspace_root,
     write_state as _write_state,
 )
 from art_pipeline.workspace.tasks import list_workspace_tasks
+from art_pipeline.workspace.detection_tasks import start_detection_batch
 from art_pipeline.workspace.workflow import (
     WorkflowState,
     WorkflowTaskIds,
@@ -50,6 +43,13 @@ from art_pipeline.workspace.workflow import (
 
 
 def register_workflow_routes(app: FastAPI) -> None:
+    _register_workflow_state_routes(app)
+    _register_workflow_detect_mask_routes(app)
+    _register_workflow_generate_routes(app)
+    _register_workflow_back_routes(app)
+
+
+def _register_workflow_state_routes(app: FastAPI) -> None:
     @app.get("/api/workspace/workflow")
     def get_workflow(runId: str | None = None) -> dict:
         root = _resolve_workspace_root(app.state.workspace_root, runId)
@@ -102,25 +102,36 @@ def register_workflow_routes(app: FastAPI) -> None:
         )
         return workflow.model_dump(mode="json")
 
+
+def _register_workflow_detect_mask_routes(app: FastAPI) -> None:
     @app.post("/api/workspace/stage/detect")
     def post_stage_detect(runId: str | None = None) -> dict:
+        provider = _get_detection_provider(app)
+        if provider is None:
+            detail = app.state.detection_provider_config_error or "Detection provider is not configured."
+            raise HTTPException(status_code=503, detail=detail)
+
         root = _resolve_workspace_root(app.state.workspace_root, runId)
         state = _read_state(root)
         if state.source is None:
             raise HTTPException(status_code=400, detail="Upload a source image before detection.")
         _reject_if_tasks_running(root)
         save_stage_snapshot(root, "upload", state)
-        next_state = _run_detection(app, root, state)
+        previous_workflow = read_workflow(root, state)
+        task = start_detection_batch(root, provider)
         workflow = write_workflow(
             root,
             WorkflowState(
                 stage="detect",
-                generateSelection=merge_generate_selection(next_state),
+                generateSelection=merge_generate_selection(state),
+                generatePromptHints=merge_generate_prompt_hints(state, previous_workflow.generatePromptHints),
+                taskIds=WorkflowTaskIds(detectionBatch=task.taskId),
             ),
         )
         return {
-            "state": next_state.model_dump(mode="json"),
+            "state": state.model_dump(mode="json"),
             "workflow": workflow.model_dump(mode="json"),
+            "task": task.model_dump(mode="json"),
         }
 
     @app.post("/api/workspace/stage/mask")
@@ -135,29 +146,33 @@ def register_workflow_routes(app: FastAPI) -> None:
         state = _read_state(root)
         if state.source is None:
             raise HTTPException(status_code=400, detail="Upload a source image before mask generation.")
+        workflow = read_workflow(root, state)
         save_stage_snapshot(root, "detect", state)
-        task = start_sam2_mask_batch(root, provider)
+        prepared_state, target_ids = _prepare_full_stage_mask_state(state)
+        _write_state(root, prepared_state)
+        task = start_sam2_mask_batch(root, provider, target_ids)
         workflow = write_workflow(
             root,
             WorkflowState(
                 stage="mask",
-                generateSelection=merge_generate_selection(state),
-                generatePromptHints=merge_generate_prompt_hints(state, read_workflow(root, state).generatePromptHints),
+                generateSelection=merge_generate_selection(prepared_state),
+                generatePromptHints=merge_generate_prompt_hints(prepared_state, workflow.generatePromptHints),
                 taskIds=WorkflowTaskIds(sam2MaskBatch=task.taskId),
             ),
         )
         return {
-            "state": state.model_dump(mode="json"),
+            "state": prepared_state.model_dump(mode="json"),
             "workflow": workflow.model_dump(mode="json"),
             "task": task.model_dump(mode="json"),
         }
 
+
+def _register_workflow_generate_routes(app: FastAPI) -> None:
     @app.post("/api/workspace/stage/generate")
     async def post_stage_generate(
         request: Request,
         runId: str | None = None,
     ) -> dict:
-        provider = _get_codex_asset_provider(app)
         root = _resolve_workspace_root(app.state.workspace_root, runId)
         _reject_if_tasks_running(root)
         state = _read_state(root)
@@ -184,10 +199,13 @@ def register_workflow_routes(app: FastAPI) -> None:
         _write_state(root, accepted_state)
         task = start_codex_final_batch(
             root,
-            provider,
-            accepted_ids,
+            element_ids=accepted_ids,
             prompt_hints=next_prompt_hints,
             force=force or workflow.stage == "generate",
+            # WHY: stage/generate 是前端 Generate 按钮主路径；controller 需要当前
+            # request base URL 与 runId 才能 claim 这个 run-scoped task。
+            controller_api_base_url=str(request.base_url).rstrip("/"),
+            run_id=runId,
         )
         next_selection = {
             element_id: element_id in set(selected_ids)
@@ -211,6 +229,8 @@ def register_workflow_routes(app: FastAPI) -> None:
             "task": task.model_dump(mode="json"),
         }
 
+
+def _register_workflow_back_routes(app: FastAPI) -> None:
     @app.post("/api/workspace/stage/back")
     def post_stage_back(runId: str | None = None) -> dict:
         root = _resolve_workspace_root(app.state.workspace_root, runId)
@@ -285,37 +305,6 @@ def record_export_summary(
     )
 
 
-def _run_detection(app: FastAPI, root: Path, state: WorkspaceState) -> WorkspaceState:
-    provider = _get_detection_provider(app)
-    if provider is None:
-        detail = app.state.detection_provider_config_error or "Detection provider is not configured."
-        raise HTTPException(status_code=503, detail=detail)
-
-    source_image = _require_source_image(root)
-    vocabulary = state.detectionVocabulary
-    try:
-        raw_results = provider.detect(source_image, vocabulary, ". ".join(vocabulary))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Detection provider {provider.name!r} failed: {exc}",
-        ) from exc
-
-    results = _validate_detection_results(source_image, raw_results)
-    filtered_results = [
-        DetectionResult.model_validate(item)
-        for item in filter_detection_results(
-            [result.model_dump(mode="json") for result in results],
-            _detection_filter_vocabulary(vocabulary),
-        )
-    ]
-    _clear_generated_workspace_outputs(root)
-    generated = _detection_results_to_elements(root, source_image, provider.name, filtered_results)
-    next_state = _replace_workspace_elements(state, generated)
-    _write_state(root, next_state)
-    return next_state
-
-
 def _accept_selected_masks(
     root: Path,
     state: WorkspaceState,
@@ -345,6 +334,31 @@ def _accept_selected_masks(
             # 不能让一个漏遮罩资源阻断其他已审核资源进入 Codex。
             continue
     return current_state, accepted_ids
+
+
+def _prepare_full_stage_mask_state(state: WorkspaceState) -> tuple[WorkspaceState, list[str]]:
+    target_ids: list[str] = []
+    elements = []
+    for element in state.elements:
+        if not is_sam2_task_target(element):
+            elements.append(element)
+            continue
+        target_ids.append(element.id)
+        # WHY: Detect 阶段用户已经完成框的修订；点击 Generate Masks 表示用当前框
+        # 全量重算 SAM2，旧 draft/accepted mask 和 final-ready 状态都不再可信。
+        elements.append(
+            element.model_copy(
+                update={
+                    "status": "accepted",
+                    "mode": "visible_only",
+                    "segmentationStatus": "not_started",
+                    "segmentationQuality": None,
+                    "mask": None,
+                    "exportStatus": "not_ready",
+                }
+            )
+        )
+    return _replace_workspace_elements(state, elements), target_ids
 
 
 def _find_element(state: WorkspaceState, element_id: str):

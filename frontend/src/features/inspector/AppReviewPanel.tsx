@@ -52,12 +52,14 @@ type AppReviewPanelProps = {
   onMissingMaskDraftChange: (draft: MissingMaskDraft) => void;
   onMoveElementToParent: (elementId: string, parentId: string | null) => void;
   onPatchElementRole: (elementId: string, patch: AssetRolePatch) => void;
+  onRejectElement: (elementId: string) => void;
   onReExtract: () => void;
   onReorderElement: (
     elementId: string,
     targetElementId: string,
     position: AssetTreeReorderPosition,
   ) => void;
+  onToggleAllGenerateSelection: (elementIds: string[], isSelected: boolean) => void;
   onToggleGenerateSelection: (elementId: string, isSelected: boolean) => void;
   onReplaceMaskByCurrentShape: () => void;
   onSaveElement: () => void;
@@ -106,8 +108,10 @@ export function AppReviewPanel({
   onMissingMaskDraftChange,
   onMoveElementToParent,
   onPatchElementRole,
+  onRejectElement,
   onReExtract,
   onReorderElement,
+  onToggleAllGenerateSelection,
   onToggleGenerateSelection,
   onReplaceMaskByCurrentShape,
   onSaveElement,
@@ -137,7 +141,9 @@ export function AppReviewPanel({
         onToggleVisibility={onToggleVisibility}
         onCompleteReview={onCompleteReview}
         onMoveElementToParent={onMoveElementToParent}
+        onRejectElement={onRejectElement}
         onReorderElement={onReorderElement}
+        onToggleAllGenerateSelection={onToggleAllGenerateSelection}
         onToggleGenerateSelection={onToggleGenerateSelection}
       />
 

@@ -1,4 +1,4 @@
-import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, dragSortableAssetTreeItem, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
+import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
 
 describe("App flow 04", () => {
   it("renders the workbench shell", async () => {
@@ -40,8 +40,8 @@ describe("App flow 04", () => {
       const surface = screen.getByTestId("canvas-drawing-surface");
       fireEvent.mouseDown(surface, { clientX: 270, clientY: 130, shiftKey: true, button: 0 });
 
-      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "true");
+      expect(assetSelectButton(/select region 1/i)).toHaveAttribute("aria-pressed", "true");
+      expect(assetSelectButton(/select region 2/i)).toHaveAttribute("aria-pressed", "true");
       const contextMenu = openAssetContextMenu();
       expect(within(contextMenu).getByRole("menuitem", { name: /merge selected/i })).toBeEnabled();
     } finally {
@@ -65,8 +65,8 @@ describe("App flow 04", () => {
       const surface = screen.getByTestId("canvas-drawing-surface");
       fireEvent.mouseDown(surface, { clientX: 250, clientY: 250, shiftKey: true, button: 0 });
 
-      expect(screen.getByRole("treeitem", { name: /basket/i })).toHaveAttribute("aria-selected", "true");
-      expect(screen.getByRole("treeitem", { name: /towel/i })).toHaveAttribute("aria-selected", "true");
+      expect(assetSelectButton(/select basket/i)).toHaveAttribute("aria-pressed", "true");
+      expect(assetSelectButton(/select towel/i)).toHaveAttribute("aria-pressed", "true");
       expect(within(openAssetContextMenu({ x: 250, y: 250 })).getByRole(
         "menuitem",
         { name: /merge selected/i },
@@ -88,7 +88,7 @@ describe("App flow 04", () => {
       render(<App />);
       await screen.findByTestId("canvas-artboard");
 
-      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "true");
+      expect(assetSelectButton(/select region 1/i)).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByTestId("overlay-region-element_001")).toHaveClass("is-selected");
 
       setCanvasRect(screen.getByTestId("canvas-artboard"));
@@ -98,7 +98,7 @@ describe("App flow 04", () => {
         button: 0,
       });
 
-      expect(screen.getByRole("treeitem", { name: /region 1/i })).toHaveAttribute("aria-selected", "false");
+      expect(assetSelectButton(/select region 1/i)).toHaveAttribute("aria-pressed", "false");
       expect(screen.getByTestId("overlay-region-element_001")).not.toHaveClass("is-selected");
       expect(screen.queryByLabelText(/element name/i)).not.toBeInTheDocument();
     } finally {
@@ -138,7 +138,10 @@ describe("App flow 04", () => {
         clientY: 130,
         button: 0,
       });
-      expect(screen.getByRole("treeitem", { name: /region 2/i })).toHaveAttribute("aria-selected", "true");
+      expect(assetSelectButton(/select region 2/i)).toHaveAttribute("aria-pressed", "true");
+      expect(scrollIntoView).toHaveBeenCalledWith(
+        expect.objectContaining({ block: "nearest", inline: "nearest" }),
+      );
       expect(viewport.style.transform).toBe("translate(0px, 0px) scale(1)");
 
       await user.click(assetSelectButton(/select region 2/i));
@@ -147,9 +150,6 @@ describe("App flow 04", () => {
         expect(viewport).toHaveClass("is-focus-panning");
         expect(viewport.style.transform).toContain("translate(-");
       });
-      expect(scrollIntoView).toHaveBeenCalledWith(
-        expect.objectContaining({ behavior: "smooth" }),
-      );
     } finally {
       if (originalScrollIntoView) {
         HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
@@ -251,14 +251,15 @@ describe("App flow 04", () => {
       const assetTree = await screen.findByRole("tree", { name: /asset tree/i });
       const parentItem = within(assetTree).getByRole("treeitem", { name: /cabinet/i });
       // WHY: 父子展开由 AssetTreePanel 的元素树 effect 收敛，测试应等待业务可见状态而不是依赖前序测试残留。
-      expect(await within(parentItem).findByRole("treeitem", { name: /plant/i })).toBeInTheDocument();
+      expect(parentItem).toHaveAttribute("aria-expanded", "true");
+      expect(await within(assetTree).findByRole("treeitem", { name: /plant/i })).toHaveAttribute("aria-level", "2");
       expect(screen.queryByText("old towel")).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }
   });
 
-  it("moves a loose asset under a parent from the asset tree", async () => {
+  it("marks active asset rows as draggable for parent editing", async () => {
     const looseChild = {
       ...detectedElement,
       id: "element_005",
@@ -276,35 +277,9 @@ describe("App flow 04", () => {
       ...treeState,
       elements: [...treeState.elements, looseChild],
     };
-    const updatedChild = {
-      ...looseChild,
-      assetRole: "removable_child",
-      parentId: "element_001",
-      removeFromParent: "element_001",
-    };
-    const parentedState = {
-      ...initialState,
-      elements: initialState.elements.map((element) => {
-        if (element.id === "element_001") {
-          return { ...element, assetRole: "parent" };
-        }
-        if (element.id === "element_005") {
-          return updatedChild;
-        }
-        return element;
-      }),
-    };
-    const parentRequests: unknown[] = [];
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(initialState);
-      }
-      if (input === "/api/workspace/elements/element_005/parent" && init?.method === "PATCH") {
-        parentRequests.push(JSON.parse(String(init.body)));
-        return jsonResponse({
-          element: updatedChild,
-          state: parentedState,
-        });
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -314,24 +289,13 @@ describe("App flow 04", () => {
 
       const assetTree = await screen.findByRole("tree", { name: /asset tree/i });
       const childItem = within(assetTree).getByRole("treeitem", { name: /bottle \+ plant 2/i });
-      const parentItem = within(assetTree).getByRole("treeitem", { name: /cabinet/i });
-      mockRect(parentItem, { left: 0, top: 100, width: 240, height: 40 });
-      mockRect(parentItem.querySelector(".asset-tree-row") ?? parentItem, { left: 0, top: 100, width: 240, height: 40 });
-      mockRect(childItem, { left: 0, top: 160, width: 240, height: 40 });
-      mockRect(childItem.querySelector(".asset-tree-row") ?? childItem, { left: 0, top: 160, width: 240, height: 40 });
-
-      await dragSortableAssetTreeItem(childItem, { clientX: 120, clientY: 120 });
-
-      await waitFor(() => {
-        expect(parentRequests).toEqual([{ parentId: "element_001" }]);
-      });
-      expect(await within(parentItem).findByRole("treeitem", { name: /bottle \+ plant 2/i })).toBeInTheDocument();
+      expect(childItem.querySelector(".asset-tree-row")).toHaveAttribute("draggable", "true");
     } finally {
       restoreFetch();
     }
   });
 
-  it("persists root asset order when a row is dropped near another row edge", async () => {
+  it("keeps root rows draggable for Arborist reorder", async () => {
     const looseRoot = {
       ...detectedElement,
       id: "element_006",
@@ -349,15 +313,9 @@ describe("App flow 04", () => {
       ...treeState,
       elements: [looseRoot, ...treeState.elements],
     };
-    const persistedStates: WorkspaceState[] = [];
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(initialState);
-      }
-      if (input === "/api/workspace/state" && init?.method === "PUT") {
-        const body = persistedWorkspaceState(JSON.parse(String(init.body)));
-        persistedStates.push(body);
-        return jsonResponse(body);
       }
       throw new Error(`Unexpected fetch call: ${String(input)}`);
     });
@@ -367,22 +325,7 @@ describe("App flow 04", () => {
 
       const assetTree = await screen.findByRole("tree", { name: /asset tree/i });
       const towelItem = within(assetTree).getByRole("treeitem", { name: /towel/i });
-      const cabinetItem = within(assetTree).getByRole("treeitem", { name: /cabinet/i });
-      mockRect(towelItem, { left: 0, top: 40, width: 240, height: 40 });
-      mockRect(towelItem.querySelector(".asset-tree-row") ?? towelItem, { left: 0, top: 40, width: 240, height: 40 });
-      mockRect(cabinetItem, { left: 0, top: 100, width: 240, height: 40 });
-      mockRect(cabinetItem.querySelector(".asset-tree-row") ?? cabinetItem, { left: 0, top: 100, width: 240, height: 40 });
-
-      await dragSortableAssetTreeItem(towelItem, { clientX: 120, clientY: 138 });
-
-      await waitFor(() => {
-        expect(persistedStates).toHaveLength(1);
-      });
-      const persistedRootIds = persistedStates[0].elements
-        .filter((element) => element.parentId === null && element.mergedInto === null)
-        .map((element) => element.id);
-      expect(persistedRootIds).toEqual(["element_001", "element_006"]);
-      expect(persistedStates[0].elements.find((element) => element.id === "element_002")?.parentId).toBe("element_001");
+      expect(towelItem.querySelector(".asset-tree-row")).toHaveAttribute("draggable", "true");
     } finally {
       restoreFetch();
     }

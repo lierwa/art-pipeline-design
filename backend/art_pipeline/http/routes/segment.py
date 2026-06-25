@@ -12,7 +12,10 @@ from art_pipeline.http.models import (
     CodexFinalGenerateRequest,
     SegmentMaskPatchRequest,
 )
-from art_pipeline.codex_assets import generate_codex_final_asset
+from art_pipeline.codex_assets import (
+    generate_codex_final_asset,
+    read_codex_final_request_metadata,
+)
 from art_pipeline.mask_refine import create_mask_from_shape
 from art_pipeline.provider_config import (
     get_codex_asset_provider as _get_codex_asset_provider,
@@ -192,6 +195,21 @@ def register_segment_routes(app: FastAPI) -> None:
             "segmentations": segmentations,
             "state": current_state.model_dump(mode="json"),
         }
+
+    @app.get("/api/workspace/elements/{element_id:path}/codex-final/request")
+    def get_codex_final_request(
+        element_id: str,
+        runId: str | None = None,
+    ) -> dict:
+        root = _resolve_workspace_root(app.state.workspace_root, runId)
+        state = _read_state(root)
+        _get_element(state, element_id)
+        try:
+            return read_codex_final_request_metadata(root, element_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Codex request metadata not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/api/workspace/elements/{element_id:path}/codex-final/generate")
     def post_codex_final_generate(

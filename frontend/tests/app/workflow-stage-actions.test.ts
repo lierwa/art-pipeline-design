@@ -2,6 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 
 import { buildAppWorkflowState } from "../../src/app/appWorkflowActions";
 describe("buildAppWorkflowState stage actions", () => {
+  it("reruns mask generation when the mask stage still has assets without masks", () => {
+    const onRunStageMask = vi.fn();
+    const onRunStageGenerate = vi.fn();
+
+    const workflow = buildAppWorkflowState({
+      ...baseInput(),
+      workflowStage: "mask",
+      hasPendingSegmentMasks: true,
+      onRunStageMask,
+      onRunStageGenerate,
+    });
+
+    expect(workflow.primaryWorkflowAction.label).toBe("Generate Masks");
+    workflow.primaryWorkflowAction.onRun();
+    expect(onRunStageMask).toHaveBeenCalledTimes(1);
+    expect(onRunStageGenerate).not.toHaveBeenCalled();
+  });
+
   it("uses the mask stage Generate CTA instead of selected asset Accept Mask", () => {
     const onRunStageGenerate = vi.fn();
 
@@ -51,6 +69,21 @@ describe("buildAppWorkflowState stage actions", () => {
     expect(upload.primaryWorkflowAction.label).toBe("Run Detection");
     expect(detect.primaryWorkflowAction.label).toBe("Generate Masks");
   });
+
+  it("blocks Generate Masks while detection candidates are still streaming", () => {
+    const workflow = buildAppWorkflowState({
+      ...baseInput(),
+      workflowStage: "detect",
+      isAnnotating: true,
+      hasTaskProgressSurface: true,
+      status: "Running detection...",
+    });
+
+    expect(workflow.primaryWorkflowAction.label).toBe("Generate Masks");
+    expect(workflow.primaryWorkflowAction.disabled).toBe(true);
+    expect(workflow.primaryWorkflowAction.isRunning).toBe(true);
+    expect(workflow.workflowToast).toBeNull();
+  });
 });
 
 function baseInput() {
@@ -59,6 +92,7 @@ function baseInput() {
     canRunDetection: false,
     error: null,
     hasGenerateSelection: true,
+    hasPendingSegmentMasks: false,
     hasUnsavedGeometryChanges: false,
     isAnnotating: false,
     isExporting: false,
@@ -66,6 +100,7 @@ function baseInput() {
     isSavingVocabulary: false,
     isStartingCodexFinalTask: false,
     isSuggestingAllSegments: false,
+    hasTaskProgressSurface: false,
     status: "",
     workspaceHasSource: true,
     workflowStage: "upload" as const,

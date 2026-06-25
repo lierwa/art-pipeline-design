@@ -81,6 +81,12 @@ export function useAppKeyboardShortcuts({
         return;
       }
 
+      if (hasSystemModifier) {
+        // WHY: 浏览器/系统组合键如 Cmd+R、Cmd+L、Ctrl+R 必须保留原生语义；
+        // 项目内的单键工具切换只在没有 system modifier 时接管。
+        return;
+      }
+
       if (key === "escape") {
         event.preventDefault();
         if (editingElementId) {

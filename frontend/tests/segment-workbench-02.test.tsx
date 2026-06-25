@@ -187,6 +187,137 @@ describe("segment workbench building blocks 02", () => {
     await waitFor(() => expect(patchMask).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps brush drags off the PNG encoding path until release", async () => {
+    const patchMask = vi.fn();
+    const toDataUrl = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,brush-draft");
+
+    render(
+      <SegmentEdgeBoard
+        element={segmentElement}
+        assetCacheKey={7}
+        workspaceRunId="run_segment_001"
+        onPatchMask={patchMask}
+      />,
+    );
+
+    const sourceFrame = screen.getByTestId("segment-source-frame");
+    fireEvent.click(within(sourceFrame).getByRole("button", { name: /brush erase/i }));
+    mockElementRect(sourceFrame, { left: 10, top: 20, width: 460, height: 480 });
+    toDataUrl.mockClear();
+
+    fireEvent.pointerDown(sourceFrame, { clientX: 210, clientY: 240, pointerId: 62 });
+    fireEvent.pointerMove(sourceFrame, { clientX: 220, clientY: 246, pointerId: 62 });
+    fireEvent.pointerMove(sourceFrame, { clientX: 230, clientY: 252, pointerId: 62 });
+    fireEvent.pointerMove(sourceFrame, { clientX: 240, clientY: 258, pointerId: 62 });
+
+    expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+    expect(within(sourceFrame).getByTestId("segment-selection-overlay")).toHaveAttribute("data-operation", "subtract");
+    expect(toDataUrl).not.toHaveBeenCalled();
+    expect(patchMask).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(sourceFrame, { clientX: 240, clientY: 258, pointerId: 62 });
+
+    await waitFor(() => expect(patchMask).toHaveBeenCalledTimes(1));
+    expect(toDataUrl).toHaveBeenCalled();
+  });
+
+  it("keeps the committed draft visible until the refreshed mask asset loads", async () => {
+    const patchMask = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockReturnValue("data:image/png;base64,brush-draft");
+
+    const { rerender } = render(
+      <SegmentEdgeBoard
+        element={segmentElement}
+        assetCacheKey={7}
+        workspaceRunId="run_segment_001"
+        onPatchMask={patchMask}
+      />,
+    );
+
+    const sourceFrame = screen.getByTestId("segment-source-frame");
+    fireEvent.click(within(sourceFrame).getByRole("button", { name: /brush erase/i }));
+    mockElementRect(sourceFrame, { left: 10, top: 20, width: 460, height: 480 });
+    fireEvent.pointerDown(sourceFrame, { clientX: 210, clientY: 240, pointerId: 64 });
+    fireEvent.pointerMove(sourceFrame, { clientX: 230, clientY: 252, pointerId: 64 });
+    fireEvent.pointerUp(sourceFrame, { clientX: 230, clientY: 252, pointerId: 64 });
+
+    await waitFor(() => expect(patchMask).toHaveBeenCalledTimes(1));
+    expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+
+    rerender(
+      <SegmentEdgeBoard
+        element={segmentElement}
+        assetCacheKey={8}
+        workspaceRunId="run_segment_001"
+        onPatchMask={patchMask}
+      />,
+    );
+
+    expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+    fireEvent.load(screen.getByTestId("segment-committed-mask-preload"));
+
+    await waitFor(() => {
+      expect(within(sourceFrame).queryByTestId("segment-draft-mask-overlay")).not.toBeInTheDocument();
+    });
+    expect(within(sourceFrame).getByTestId("segment-background-mask-overlay")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,brush-draft",
+    );
+  });
+
+  it("allows a parent asset without a SAM2 artifact to start with a manual brush mask", async () => {
+    const patchMask = vi.fn();
+    const parentWithoutMask: WorkspaceElement = {
+      ...segmentElement,
+      id: "parent",
+      name: "Bathroom cabinet",
+      label: "Bathroom cabinet",
+      assetRole: "parent",
+      mask: null,
+      source: "manual",
+      sourceProvider: "manual",
+      segmentationStatus: "not_started",
+      segmentationQuality: null,
+      repairStatus: "not_required",
+      exportStatus: "not_ready",
+    };
+
+    render(
+      <SegmentEdgeBoard
+        element={parentWithoutMask}
+        assetCacheKey={7}
+        workspaceRunId="run_segment_001"
+        onPatchMask={patchMask}
+      />,
+    );
+
+    const sourceFrame = screen.getByTestId("segment-source-frame");
+    expect(screen.getByText("Reference crop")).toBeInTheDocument();
+    expect(within(sourceFrame).getByRole("toolbar", { name: /mask edit tools/i })).toBeInTheDocument();
+    fireEvent.click(within(sourceFrame).getByRole("button", { name: /brush add/i }));
+    mockElementRect(sourceFrame, { left: 10, top: 20, width: 460, height: 480 });
+    fireEvent.pointerDown(sourceFrame, { clientX: 210, clientY: 240, pointerId: 63 });
+    fireEvent.pointerMove(sourceFrame, { clientX: 230, clientY: 252, pointerId: 63 });
+    fireEvent.pointerUp(sourceFrame, { clientX: 230, clientY: 252, pointerId: 63 });
+
+    await waitFor(() => {
+      // WHY: 首次手工补 mask 仍是普通 edit；第三参只服务 UI 状态文案，不混进后端 patch body。
+      expect(patchMask).toHaveBeenCalledWith("parent", {
+        operation: "replace",
+        shape: expect.objectContaining({
+          type: "mask_delta",
+          coordinateSpace: "canvas",
+          maskData: expect.stringMatching(/^data:image\/png;base64,/),
+        }),
+      }, expect.objectContaining({
+        historyAction: "edit",
+      }));
+    });
+  });
+
   it("zooms the source crop edit canvas by wheel and fit controls without changing the right previews", () => {
     render(
       <SegmentEdgeBoard
@@ -436,12 +567,8 @@ describe("segment workbench building blocks 02", () => {
     expect(drawer).toHaveTextContent("Mask review content");
     expect(screen.getByRole("button", { name: /collapse segment drawer/i })).toBeInTheDocument();
 
-    const resizeHandle = screen.getByRole("separator", { name: /resize segment drawer height/i });
-    expect(resizeHandle).toHaveClass("floating-stage-drawer-resize-handle");
-    expect(resizeHandle).toHaveAttribute("aria-orientation", "horizontal");
     expect(drawer.querySelector(".floating-stage-drawer-header")).not.toBeNull();
     expect(drawer.querySelector(".floating-stage-drawer-body")).not.toBeNull();
-    expect((drawer as HTMLElement).style.getPropertyValue("--stage-drawer-height")).toBe("560px");
-    expect((drawer as HTMLElement).style.getPropertyValue("--stage-drawer-width")).toBe("");
+    expect(screen.queryByRole("separator", { name: /resize segment drawer height/i })).not.toBeInTheDocument();
   });
 });

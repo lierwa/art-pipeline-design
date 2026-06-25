@@ -1,4 +1,4 @@
-import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, dragSortableAssetTreeItem, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
+import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
 
 describe("App flow 01", () => {
   it("starts on a new pending workspace with processing records in a floating list", async () => {
@@ -60,6 +60,10 @@ describe("App flow 01", () => {
       await user.click(
         within(reopenedRecordsList).getByRole("button", { name: /delete scene-a\.png processing record/i }),
       );
+      await user.click(
+        within(await screen.findByRole("alertdialog", { name: /delete processing record/i }))
+          .getByRole("button", { name: /delete record/i }),
+      );
 
       await waitFor(() => {
         expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -72,6 +76,132 @@ describe("App flow 01", () => {
       });
       expect(within(reopenedRecordsList).getByText(/no processing records/i)).toBeInTheDocument();
       expect(screen.getByText(/upload a png to populate the workbench canvas/i)).toBeInTheDocument();
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("duplicates a processing record into a checkpoint and switches to the copy", async () => {
+    const user = userEvent.setup();
+    const sourceRun = {
+      id: "run_scene_001",
+      title: "scene-a.png",
+      sourceFilename: "scene-a.png",
+      createdAt: "2026-06-17T12:00:00+00:00",
+      updatedAt: "2026-06-17T12:01:00+00:00",
+      status: "reviewing",
+      elementCount: 1,
+    };
+    const checkpointRun = {
+      ...sourceRun,
+      id: "run_scene_002",
+      title: "scene-a.png - checkpoint",
+      updatedAt: "2026-06-17T12:02:00+00:00",
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/runs" && (!init || init.method === "GET")) {
+        return jsonResponse({ runs: [sourceRun] });
+      }
+
+      if (input === "/api/workspace/runs/run_scene_001/duplicate" && init?.method === "POST") {
+        return jsonResponse({
+          run: checkpointRun,
+          runs: [checkpointRun, sourceRun],
+          state: loadedState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      await user.click(await screen.findByRole("button", { name: /processing records/i }));
+      const recordsList = await screen.findByRole("dialog", { name: /processing records/i });
+      await user.click(
+        within(recordsList).getByRole("button", { name: /duplicate scene-a\.png processing record/i }),
+      );
+
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "/api/workspace/runs/run_scene_001/duplicate",
+          expect.objectContaining({ method: "POST" }),
+        );
+      });
+      await waitFor(() => {
+        expect(screen.getAllByText(/processing record duplicated/i).length).toBeGreaterThan(0);
+      });
+      expect(within(recordsList).getByText("scene-a.png - checkpoint")).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: /workspace source/i })).toHaveAttribute(
+        "src",
+        expect.stringContaining("runId=run_scene_002"),
+      );
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("requires confirmation before deleting a processing record", async () => {
+    const user = userEvent.setup();
+    const runsPayload = {
+      runs: [
+        {
+          id: "run_scene_001",
+          title: "scene-a.png",
+          sourceFilename: "scene-a.png",
+          createdAt: "2026-06-17T12:00:00+00:00",
+          updatedAt: "2026-06-17T12:01:00+00:00",
+          status: "uploaded",
+          elementCount: 0,
+        },
+      ],
+    };
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/runs" && (!init || init.method === "GET")) {
+        return jsonResponse(runsPayload);
+      }
+
+      if (input === "/api/workspace/runs/run_scene_001" && init?.method === "DELETE") {
+        return jsonResponse({ runs: [] });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      await user.click(await screen.findByRole("button", { name: /processing records/i }));
+      const recordsList = await screen.findByRole("dialog", { name: /processing records/i });
+      await user.click(
+        within(recordsList).getByRole("button", { name: /delete scene-a\.png processing record/i }),
+      );
+
+      const dialog = await screen.findByRole("alertdialog", { name: /delete processing record/i });
+      expect(within(dialog).getByText(/delete this processing record and its files/i)).toBeInTheDocument();
+      expect(globalThis.fetch).not.toHaveBeenCalledWith(
+        "/api/workspace/runs/run_scene_001",
+        expect.objectContaining({ method: "DELETE" }),
+      );
+
+      await user.click(within(dialog).getByRole("button", { name: /cancel/i }));
+      expect(screen.queryByRole("alertdialog", { name: /delete processing record/i })).not.toBeInTheDocument();
+
+      await user.click(
+        within(recordsList).getByRole("button", { name: /delete scene-a\.png processing record/i }),
+      );
+      await user.click(
+        within(await screen.findByRole("alertdialog", { name: /delete processing record/i }))
+          .getByRole("button", { name: /delete record/i }),
+      );
+
+      await waitFor(() => {
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+          "/api/workspace/runs/run_scene_001",
+          expect.objectContaining({ method: "DELETE" }),
+        );
+      });
     } finally {
       restoreFetch();
     }
@@ -90,7 +220,7 @@ describe("App flow 01", () => {
           sourceProvider: "codex_cli",
           sourcePrompt: "$imagegen repair cat",
           mask: "elements/element_codex_cat/mask.png",
-          segmentationStatus: "mask_suggested",
+          segmentationStatus: "mask_accepted",
           repairStatus: "repair_complete",
           exportStatus: "ready",
         },
@@ -106,7 +236,7 @@ describe("App flow 01", () => {
     try {
       render(<App />);
 
-      const stageDrawer = await screen.findByRole("dialog", { name: /segment/i });
+      const stageDrawer = await screen.findByRole("dialog", { name: /generate/i });
       expect(within(stageDrawer).getByText(/stage workbench/i)).toBeInTheDocument();
       expect(within(stageDrawer).getByRole("img", { name: /cat codex final/i })).toHaveAttribute(
         "src",
@@ -169,9 +299,13 @@ describe("App flow 01", () => {
     expect(stylesheet).toMatch(/\.asset-tree-panel\.has-rejected-filter\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\);/);
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.asset-tree-panel\s*\{[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\);/);
     expect(stylesheet).toMatch(/\.right-review-panel\s+\.asset-tree-panel\.has-rejected-filter\s*\{[\s\S]*grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\);/);
-    expect(stylesheet).toMatch(/\.asset-tree-select\s*\{[\s\S]*min-height:\s*34px;/);
-    expect(stylesheet).toMatch(/\.asset-tree-badges\s*\{[\s\S]*grid-column:\s*auto;/);
-    expect(stylesheet).toMatch(/\.asset-visibility-toggle\s*\{[\s\S]*width:\s*28px;[\s\S]*height:\s*28px;/);
+    expect(stylesheet).toMatch(/\.asset-tree-select\s*\{[\s\S]*min-height:\s*54px;/);
+    expect(stylesheet).toMatch(/\.asset-tree-badges\s*\{[\s\S]*grid-column:\s*2;/);
+    expect(stylesheet).toMatch(/\.asset-tree-row\s*\{[\s\S]*border:\s*1px solid transparent;/);
+    expect(stylesheet).toMatch(/\.asset-tag\s*\{[\s\S]*display:\s*inline-flex;[\s\S]*align-items:\s*center;[\s\S]*font-size:\s*0\.62rem;/);
+    expect(stylesheet).not.toMatch(/\.asset-badge\s*\{/);
+    expect(stylesheet).not.toMatch(/\.asset-task-badge\s*\{/);
+    expect(stylesheet).toMatch(/\.asset-visibility-toggle,\s*[\s\S]*\.asset-delete-button,\s*[\s\S]*\.asset-tree-action-spacer\s*\{[\s\S]*width:\s*27px;[\s\S]*height:\s*27px;/);
     expect(stylesheet).toMatch(/\.canvas-overlay-switches\s+\.overlay-toggle\s+input\s*\{[\s\S]*opacity:\s*0;/);
     expect(stylesheet).toMatch(/\.asset-context-menu\s*\{[\s\S]*position:\s*fixed;[\s\S]*z-index:\s*80;/);
     expect(stylesheet).toMatch(/\.asset-context-menu\s+button\s*\{[\s\S]*justify-content:\s*flex-start;/);
@@ -203,7 +337,8 @@ describe("App flow 01", () => {
     expect(stylesheet).toMatch(/\.canvas-prompt-board-dock\s*\{[\s\S]*left:\s*50%;[\s\S]*bottom:\s*1rem;/);
     expect(stylesheet).toMatch(/\.detection-vocabulary-input\s*\{[\s\S]*width:\s*100%;/);
     expect(stylesheet).toMatch(/\.canvas-prompt-board-collapse\s*\{[\s\S]*border:\s*0;/);
-    expect(stylesheet).toMatch(/\.floating-stage-drawer\s*\{[\s\S]*height:\s*clamp\(320px,\s*var\(--stage-drawer-height,\s*560px\),\s*min\(820px,\s*calc\(100vh - 72px\)\)\);/);
+    expect(stylesheet).toMatch(/\.floating-stage-drawer\s*\{[\s\S]*height:\s*calc\(100% - 1rem\);/);
+    expect(stylesheet).toMatch(/\.floating-stage-drawer\s*\{[\s\S]*min-height:\s*min\(520px,\s*calc\(100% - 1rem\)\);/);
     expect(stylesheet).not.toMatch(/\.floating-stage-drawer\s*\{[\s\S]*max-height:\s*240px;/);
     expect(stylesheet).toMatch(/\.canvas-workspace\.has-stage-drawer\s+\.canvas-prompt-board-dock\s*\{[\s\S]*bottom:\s*1rem;[\s\S]*z-index:\s*2;/);
     expect(stylesheet).not.toMatch(/\.canvas-workspace\.has-stage-drawer\s+\.canvas-prompt-board-dock\s*\{[\s\S]*bottom:\s*calc\(420px \+ 1rem\);/);
@@ -214,8 +349,9 @@ describe("App flow 01", () => {
     expect(stylesheet).toMatch(/\.segment-edge-preview-frame\s*\{[\s\S]*position:\s*relative;[\s\S]*height:\s*clamp\(200px,\s*26vh,\s*320px\);/);
     expect(stylesheet).not.toMatch(/\.segment-edge-preview\[data-emphasis="primary"\]\s+\.segment-edge-preview-frame\s*\{/);
     expect(stylesheet).toMatch(/\.segment-edge-preview figcaption\s*\{[\s\S]*position:\s*absolute;[\s\S]*pointer-events:\s*none;/);
-    expect(stylesheet).not.toMatch(/\.segment-edge-preview-frame\s*\{[^}]*min-height:/);
-    expect(stylesheet).not.toMatch(/\.segment-edge-preview-frame\s*\{[^}]*height:\s*82px;/);
+    const segmentPreviewFrameRule = stylesheet.match(/^\.segment-edge-preview-frame\s*\{[^}]*\}/m)?.[0] ?? "";
+    expect(segmentPreviewFrameRule).not.toMatch(/min-height:/);
+    expect(segmentPreviewFrameRule).not.toMatch(/height:\s*82px;/);
     expect(stylesheet).toMatch(/\.segment-edge-preview img\s*\{[\s\S]*position:\s*absolute;[\s\S]*inset:\s*0;[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*object-fit:\s*contain;[\s\S]*box-sizing:\s*border-box;/);
     expect(stylesheet).not.toMatch(/\.segment-edge-preview img\s*\{[^}]*max-height:\s*calc/);
     expect(stylesheet).toMatch(/\.workspace-preview-panels\s*\{[\s\S]*display:\s*none;/);

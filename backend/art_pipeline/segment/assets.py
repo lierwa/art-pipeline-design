@@ -133,12 +133,8 @@ def patch_sam2_edge_mask(
         raise ValueError("Segment mask patch operation must be replace, add, or subtract.")
 
     mask = _combine_manual_patch(workspace_root, element, patch_mask, operation)
-    mask, _child_mask_subtracted = subtract_child_masks_from_parent_mask(
-        workspace_root,
-        element,
-        mask,
-        state,
-    )
+    # WHY: 手工 patch 是用户对当前父/子关系错误后的显式修复结果；如果这里继续自动扣
+    # removable child，坏 child mask 会再次污染父级，用户就无法用人工编辑打破依赖。
     source_crop = crop_source_to_canvas(source_image, element)
     asset = compose_asset_from_source(source_crop, polish_mask_alpha(mask))
     paths = _write_sam2_edge_outputs(
@@ -242,6 +238,22 @@ def _apply_sticker_statuses(
             continue
 
         if role == "parent":
+            if _is_manual_parent_mask_override(element):
+                if element.repairStatus != "not_required" or element.mode != "visible_only":
+                    # WHY: manual_patch 代表用户已经直接定义父级最终可见 mask；旧 repair 包
+                    # 不再是权威输出，继续保留会让 failed/pending child 间接阻塞人工修复。
+                    clear_repair_outputs(workspace_root, element.id)
+                updated.append(
+                    element.model_copy(
+                        update={
+                            "status": "accepted",
+                            "mode": "visible_only",
+                            "repairStatus": "not_required",
+                            "exportStatus": "ready",
+                        }
+                    )
+                )
+                continue
             all_children = [
                 by_id[child_id]
                 for child_id in removable_children.get(element.id, [])
@@ -335,6 +347,15 @@ def _accepted_removed_children(elements: list[ElementRecord]) -> dict[str, list[
         ):
             result.setdefault(element.removeFromParent, []).append(element.id)
     return result
+
+
+def _is_manual_parent_mask_override(element: ElementRecord) -> bool:
+    quality = element.segmentationQuality
+    return (
+        element.assetRole == "parent"
+        and quality is not None
+        and quality.selectedProfile == "manual_patch"
+    )
 
 
 def is_sam2_edge_segmentable(element: ElementRecord) -> bool:

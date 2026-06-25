@@ -15,6 +15,8 @@ from art_pipeline.model_runners.codex_cli import CodexCliAssetProvider
 
 DETECTION_PROVIDER_ENV = "ART_PIPELINE_DETECTION_PROVIDER"
 GROUNDING_DINO_MODEL_ENV = "ART_PIPELINE_GROUNDING_DINO_MODEL"
+GROUNDING_DINO_STREAM_CHUNK_SIZE_ENV = "ART_PIPELINE_DETECTION_STREAM_CHUNK_SIZE"
+GROUNDING_DINO_STREAM_WORKERS_ENV = "ART_PIPELINE_DETECTION_STREAM_WORKERS"
 SAM2_PROVIDER_ENV = "ART_PIPELINE_SAM2_PROVIDER"
 SAM2_MODEL_ENV = "ART_PIPELINE_SAM2_MODEL"
 CODEX_PROVIDER_ENV = "ART_PIPELINE_CODEX_PROVIDER"
@@ -173,9 +175,13 @@ def create_grounding_dino_provider(model_id: str | None = None) -> DetectionProv
         raise DetectionProviderNotConfigured(str(exc)) from exc
 
     try:
+        kwargs = {
+            "stream_chunk_size": _positive_int_env(GROUNDING_DINO_STREAM_CHUNK_SIZE_ENV, 6),
+            "stream_max_workers": _positive_int_env(GROUNDING_DINO_STREAM_WORKERS_ENV, 2),
+        }
         if model_id:
-            return GroundingDinoProvider(model_id=model_id)
-        return GroundingDinoProvider()
+            return GroundingDinoProvider(model_id=model_id, **kwargs)
+        return GroundingDinoProvider(**kwargs)
     except Exception as exc:
         raise DetectionProviderNotConfigured(
             f"Detection provider 'grounding_dino' could not be initialized: {exc}"
@@ -196,3 +202,16 @@ def create_transformers_sam2_provider(model_id: str | None = None) -> Sam2ClickP
         raise DetectionProviderNotConfigured(
             f"SAM2 provider 'transformers' could not be initialized: {exc}"
         ) from exc
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise DetectionProviderNotConfigured(f"{name} must be a positive integer.") from exc
+    if value <= 0:
+        raise DetectionProviderNotConfigured(f"{name} must be a positive integer.")
+    return value

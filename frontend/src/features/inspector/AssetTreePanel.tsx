@@ -1,20 +1,10 @@
-import { CSSProperties, MouseEvent, PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, KeyboardEvent, MouseEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
-  DndContext,
-  MouseSensor,
-  PointerSensor,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragMoveEvent,
-  type DragOverEvent,
-  type DragStartEvent,
-  type UniqueIdentifier,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-import { Eye, EyeOff } from "lucide-react";
+  Tree,
+  type NodeRendererProps,
+  type TreeApi,
+} from "react-arborist";
+import { Eye, EyeOff, Trash2 } from "lucide-react";
 
 import {
   ElementSelectionMode,
@@ -28,26 +18,23 @@ import { isGenerateSelectableElement } from "../../domain/workspaceDerived";
 import {
   taskItemStatusLabel,
   taskStatusTone,
-  type WorkspaceTaskItem,
   type WorkspaceTaskItemIndex,
 } from "../../domain/workspaceTasks";
 import {
   buildAssetTree,
   collectExpandableIds,
-  flattenVisibleAssetTreeIds,
   formatAssetBadgeLabel,
   formatConfidence,
   formatOriginLabel,
-  getAssetTreeDropIntentFromOffset,
+  isAssetTreeDropDisabled,
   isActiveCandidate,
-  resolveAssetTreeDropAction,
-  statusToneClass,
-  type AssetTreeDropAction,
-  type AssetTreeDropIntent,
-  type AssetTreeDropPreview,
+  resolveAssetTreeMoveAction,
+  statusTagTone,
   type AssetTreeNode,
   type AssetTreeReorderPosition,
 } from "./assetTreeModel";
+import { AssetTag } from "../../shared/ui/AssetTag";
+import { ConfirmActionDialog } from "../../shared/ui/ConfirmActionDialog";
 
 export type { AssetTreeReorderPosition } from "./assetTreeModel";
 
@@ -72,20 +59,22 @@ type AssetTreePanelProps = {
   onToggleVisibility: (elementId: string) => void;
   onCompleteReview: () => void;
   onMoveElementToParent: (elementId: string, parentId: string | null) => void;
+  onRejectElement?: (elementId: string) => void;
   onReorderElement: (
     elementId: string,
     targetElementId: string,
     position: AssetTreeReorderPosition,
   ) => void;
+  onToggleAllGenerateSelection?: (elementIds: string[], isSelected: boolean) => void;
   onToggleGenerateSelection?: (elementId: string, isSelected: boolean) => void;
 };
 
-type DragRect = {
-  height: number;
-  top: number;
-};
+const ASSET_TREE_ROW_HEIGHT = 78;
+const REACT_ARBORIST_ROOT_ID = "__REACT_ARBORIST_INTERNAL_ROOT__";
 
-export function AssetTreePanel({
+export const AssetTreePanel = memo(AssetTreePanelContent, areAssetTreePanelPropsEqual);
+
+function AssetTreePanelContent({
   elements,
   selectedElementId,
   selectedElementIds,
@@ -100,160 +89,114 @@ export function AssetTreePanel({
   onToggleShowRejected,
   onToggleVisibility,
   onMoveElementToParent,
+  onRejectElement,
   onReorderElement,
+  onToggleAllGenerateSelection,
   onToggleGenerateSelection,
 }: AssetTreePanelProps) {
+  const stableElements = useStableAssetTreeElements(elements);
   const displayElements = useMemo(
-    () => elements.filter((element) => element.mergedInto === null),
-    [elements],
+    () => stableElements.filter((element) => element.mergedInto === null),
+    [stableElements],
   );
-  const tree = useMemo(() => buildAssetTree(displayElements), [displayElements]);
-  const [expandedIds, setExpandedIds] = useState<string[]>(() => collectExpandableIds(tree));
-  const [draggedElementId, setDraggedElementId] = useState<string | null>(null);
-  const [dropPreview, setDropPreview] = useState<AssetTreeDropPreview | null>(null);
-  const pointerPositionRef = useRef<{ x: number; y: number } | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLDivElement>());
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+  const rawTree = useMemo(() => buildAssetTree(displayElements), [displayElements]);
+  const tree = useStableAssetTree(rawTree);
+  const treeRef = useRef<TreeApi<AssetTreeNode>>(null);
+  const panelBodyRef = useRef<HTMLDivElement>(null);
+  const initialOpenState = useMemo(
+    () => Object.fromEntries(collectExpandableIds(tree).map((id) => [id, true])),
+    [tree],
   );
-
-  useEffect(() => {
-    setExpandedIds((current) => {
-      const next = new Set(current);
-      collectExpandableIds(tree).forEach((elementId) => next.add(elementId));
-      return Array.from(next);
-    });
-  }, [tree]);
-
-  useEffect(() => {
-    function handleWindowPointerMove(event: globalThis.PointerEvent) {
-      pointerPositionRef.current = { x: event.clientX, y: event.clientY };
-    }
-    function handleWindowMouseMove(event: globalThis.MouseEvent) {
-      pointerPositionRef.current = { x: event.clientX, y: event.clientY };
-    }
-
-    window.addEventListener("pointermove", handleWindowPointerMove, { passive: true });
-    window.addEventListener("mousemove", handleWindowMouseMove, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", handleWindowPointerMove);
-      window.removeEventListener("mousemove", handleWindowMouseMove);
-    };
-  }, []);
-
-  const expandedSet = useMemo(() => new Set(expandedIds), [expandedIds]);
-  const visibleItemIds = useMemo(
-    () => flattenVisibleAssetTreeIds(tree, expandedSet),
-    [expandedSet, tree],
+  const visibleRowCount = useMemo(() => countVisibleAssetTreeRows(tree), [tree]);
+  const treeFallbackHeight = Math.max(ASSET_TREE_ROW_HEIGHT, visibleRowCount * ASSET_TREE_ROW_HEIGHT);
+  const [treeViewportHeight, setTreeViewportHeight] = useState(treeFallbackHeight);
+  const generateSelectableIds = useMemo(
+    () => displayElements
+      .filter(isGenerateSelectableElement)
+      .map((element) => element.id),
+    [displayElements],
   );
+  const showsGenerateBulkSelection =
+    (workflowStage === "mask" || workflowStage === "generate")
+    && generateSelectableIds.length > 0
+    && Boolean(onToggleAllGenerateSelection);
+  const hasTreeToolbar = showsGenerateBulkSelection || hasRejectedElements;
+  const selectedGenerateCount = generateSelectableIds.filter((elementId) => generateSelection[elementId] ?? true).length;
 
   useEffect(() => {
     if (!selectedElementId) {
       return;
     }
-    rowRefs.current.get(selectedElementId)?.scrollIntoView?.({
-      behavior: "smooth",
-      block: "nearest",
-      inline: "nearest",
-    });
-  }, [selectedElementId]);
+    // WHY: react-arborist 现在是资产树唯一纵向滚动容器；选中同步只触达
+    // TreeApi，避免外层 panel-scroll 和内部虚拟列表互相制造双滚动条。
+    treeRef.current?.scrollTo(selectedElementId);
+  }, [selectedElementId, tree]);
 
-  function toggleExpanded(elementId: string) {
-    setExpandedIds((current) =>
-      current.includes(elementId)
-        ? current.filter((currentId) => currentId !== elementId)
-        : [...current, elementId],
-    );
-  }
-
-  function registerRow(elementId: string, node: HTMLDivElement | null) {
-    if (node) {
-      rowRefs.current.set(elementId, node);
+  useEffect(() => {
+    const body = panelBodyRef.current;
+    if (!body) {
+      setTreeViewportHeight(treeFallbackHeight);
       return;
     }
-    rowRefs.current.delete(elementId);
-  }
 
-  function handleDragStart(event: DragStartEvent) {
-    const sourceId = getElementId(event.active.id);
-    setDraggedElementId(sourceId);
-  }
+    function syncTreeHeight() {
+      const measuredHeight = body?.clientHeight ?? 0;
+      setTreeViewportHeight(
+        measuredHeight > 0
+          ? Math.max(ASSET_TREE_ROW_HEIGHT, measuredHeight)
+          : treeFallbackHeight,
+      );
+    }
 
-  function handlePointerMove(event: PointerEvent<HTMLElement>) {
-    pointerPositionRef.current = { x: event.clientX, y: event.clientY };
-  }
-
-  function handleDragMove(event: DragMoveEvent) {
-    updateDropPreview(event);
-  }
-
-  function handleDragOver(event: DragOverEvent) {
-    updateDropPreview(event);
-  }
-
-  function handleDragEnd(event: DragEndEvent) {
-    const sourceId = getElementId(event.active.id);
-    const targetId = getElementId(event.over?.id);
-    const dropAction = sourceId && targetId
-      ? getDropAction(sourceId, targetId, getActiveDragRect(event))
-      : null;
-
-    setDraggedElementId(null);
-    setDropPreview(null);
-    if (!sourceId || !targetId || !dropAction) {
+    syncTreeHeight();
+    if (typeof ResizeObserver === "undefined") {
       return;
     }
-    if (dropAction.kind === "reorder") {
-      onReorderElement(sourceId, targetId, dropAction.position);
+
+    const observer = new ResizeObserver(syncTreeHeight);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [treeFallbackHeight]);
+
+  useEffect(() => {
+    // WHY: Arborist 的 initialOpenState 只在首次挂载读取；检测、split 或拖拽后新增
+    // child 时需要重新打开有子项的父节点，否则用户完成父子关系却看不到刚放进去的子项。
+    collectExpandableIds(tree).forEach((elementId) => treeRef.current?.open(elementId));
+  }, [tree]);
+
+  function handleTreeMove({
+    dragIds,
+    parentId,
+    index,
+  }: {
+    dragIds: string[];
+    parentId: string | null;
+    index: number;
+  }) {
+    const sourceId = dragIds[0];
+    if (!sourceId) {
       return;
     }
-    onMoveElementToParent(sourceId, targetId);
-  }
-
-  function handleDragCancel() {
-    setDraggedElementId(null);
-    setDropPreview(null);
-  }
-
-  function updateDropPreview(event: DragMoveEvent | DragOverEvent) {
-    const sourceId = getElementId(event.active.id);
-    const targetId = getElementId(event.over?.id);
-    const dropAction = sourceId && targetId
-      ? getDropAction(sourceId, targetId, getActiveDragRect(event))
-      : null;
-    setDropPreview(toDropPreview(targetId, dropAction));
-  }
-
-  function getDropAction(
-    sourceId: string,
-    targetId: string,
-    activeRect: DragRect | null,
-  ): AssetTreeDropAction | null {
-    const intent = getDndDropIntent(targetId, activeRect);
-    return resolveAssetTreeDropAction(displayElements, sourceId, targetId, intent);
-  }
-
-  function getDndDropIntent(targetElementId: string, activeRect: DragRect | null): AssetTreeDropIntent {
-    const row = getTreeRowElement(rowRefs.current.get(targetElementId));
-    const rowRect = row?.getBoundingClientRect();
-    if (!rowRect || rowRect.height <= 0) {
-      return "inside";
+    const normalizedParentId = parentId === REACT_ARBORIST_ROOT_ID ? null : parentId;
+    const action = resolveAssetTreeMoveAction(displayElements, sourceId, normalizedParentId, index);
+    if (!action) {
+      return;
     }
-    const pointerY = pointerPositionRef.current?.y;
-    if (typeof pointerY === "number") {
-      return getAssetTreeDropIntentFromOffset(pointerY - rowRect.top, rowRect.height);
+    if (action.kind === "parent") {
+      onMoveElementToParent(sourceId, action.parentId);
+      return;
     }
-    if (!activeRect) {
-      return "inside";
-    }
-    return getAssetTreeDropIntentFromOffset(activeRect.top + activeRect.height / 2 - rowRect.top, rowRect.height);
+    onReorderElement(sourceId, action.targetElementId, action.position);
   }
 
   return (
     <aside
-      className={`panel asset-tree-panel${hasRejectedElements ? " has-rejected-filter" : ""}`}
-      onPointerMoveCapture={handlePointerMove}
+      className={[
+        "panel",
+        "asset-tree-panel",
+        hasRejectedElements ? "has-rejected-filter" : "",
+        hasTreeToolbar ? "has-tree-toolbar" : "",
+      ].filter(Boolean).join(" ")}
     >
       <div className="panel-header">
         <h2>
@@ -262,8 +205,16 @@ export function AssetTreePanel({
         </h2>
         <span className="panel-header-kicker">Sticker outputs</span>
       </div>
-      {hasRejectedElements ? (
-        <div className="panel-toolbar">
+      {hasTreeToolbar ? (
+        <div className="panel-toolbar asset-tree-toolbar">
+          {showsGenerateBulkSelection ? (
+            <GenerateSelectionBulkToggle
+              elementIds={generateSelectableIds}
+              selectedCount={selectedGenerateCount}
+              onToggleAllGenerateSelection={onToggleAllGenerateSelection!}
+            />
+          ) : null}
+          {hasRejectedElements ? (
           <label className="panel-checkbox">
             <input
               aria-label="Show rejected"
@@ -273,47 +224,53 @@ export function AssetTreePanel({
             />
             <span>Show rejected</span>
           </label>
+          ) : null}
         </div>
       ) : null}
-      <div className="panel-body panel-scroll">
+      <div className="panel-body asset-tree-body" ref={panelBodyRef}>
         {tree.length > 0 ? (
-          <DndContext
-            collisionDetection={pointerWithin}
-            onDragCancel={handleDragCancel}
-            onDragEnd={handleDragEnd}
-            onDragMove={handleDragMove}
-            onDragOver={handleDragOver}
-            onDragStart={handleDragStart}
-            sensors={sensors}
-          >
-            <SortableContext items={visibleItemIds} strategy={verticalListSortingStrategy}>
-              <div role="tree" aria-label="Asset tree" className="asset-tree">
-                {tree.map((node) => (
-                  <AssetTreeItem
-                    key={node.element.id}
-                    assetCacheKey={assetCacheKey}
-                    depth={0}
-                    draggedElementId={draggedElementId}
-                    dropPreview={dropPreview}
-                    expandedSet={expandedSet}
-                    node={node}
-                    onRegisterRow={registerRow}
-                    onSelectElement={onSelectElement}
-                    onToggleExpanded={toggleExpanded}
-                    onToggleVisibility={onToggleVisibility}
-                    selectedElementId={selectedElementId}
-                    selectedElementIds={selectedElementIds}
-                    taskItem={taskItemsByElementId[node.element.id] ?? null}
-                    taskItemsByElementId={taskItemsByElementId}
-                    workflowStage={workflowStage}
-                    generateSelection={generateSelection}
-                    workspaceRunId={workspaceRunId}
-                    onToggleGenerateSelection={onToggleGenerateSelection}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
+          <div role="tree" aria-label="Asset tree" className="asset-tree">
+            <Tree
+              ref={treeRef}
+              className="asset-tree-arborist"
+              data={tree}
+              height={treeViewportHeight}
+              indent={0}
+              initialOpenState={initialOpenState}
+              overscanCount={4}
+              rowHeight={ASSET_TREE_ROW_HEIGHT}
+              selection={selectedElementId ?? undefined}
+              width="100%"
+              childrenAccessor={(node) => node.children}
+              disableDrag={(node) => !isActiveCandidate(node.element)}
+              disableDrop={({ dragNodes, parentNode }) => {
+                return isAssetTreeDropDisabled(
+                  dragNodes[0]?.data?.element,
+                  parentNode?.data?.element,
+                );
+              }}
+              idAccessor={(node) => node.element.id}
+              onMove={handleTreeMove}
+              openByDefault={false}
+            >
+              {(props) => (
+                <AssetTreeItem
+                  {...props}
+                  assetCacheKey={assetCacheKey}
+                  generateSelection={generateSelection}
+                  onRejectElement={onRejectElement}
+                  onSelectElement={onSelectElement}
+                  onToggleGenerateSelection={onToggleGenerateSelection}
+                  onToggleVisibility={onToggleVisibility}
+                  selectedElementId={selectedElementId}
+                  selectedElementIds={selectedElementIds}
+                  taskItemsByElementId={taskItemsByElementId}
+                  workflowStage={workflowStage}
+                  workspaceRunId={workspaceRunId}
+                />
+              )}
+            </Tree>
+          </div>
         ) : (
           <p className="visually-hidden">No assets yet.</p>
         )}
@@ -322,65 +279,102 @@ export function AssetTreePanel({
   );
 }
 
+function GenerateSelectionBulkToggle({
+  elementIds,
+  selectedCount,
+  onToggleAllGenerateSelection,
+}: {
+  elementIds: string[];
+  selectedCount: number;
+  onToggleAllGenerateSelection: (elementIds: string[], isSelected: boolean) => void;
+}) {
+  const checkboxRef = useRef<HTMLInputElement>(null);
+  const isAllSelected = selectedCount === elementIds.length;
+  const isPartiallySelected = selectedCount > 0 && selectedCount < elementIds.length;
+  useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = isPartiallySelected;
+    }
+  }, [isPartiallySelected]);
+
+  return (
+    <label className="asset-tree-bulk-toggle">
+      <input
+        ref={checkboxRef}
+        aria-label={`${isAllSelected ? "Clear" : "Select"} all assets for generation`}
+        type="checkbox"
+        checked={isAllSelected}
+        onChange={() => onToggleAllGenerateSelection(elementIds, !isAllSelected)}
+      />
+      <span>{isAllSelected ? "Clear all" : "Select all"}</span>
+      <small>{selectedCount}/{elementIds.length}</small>
+    </label>
+  );
+}
+
+function areAssetTreePanelPropsEqual(
+  previous: AssetTreePanelProps,
+  next: AssetTreePanelProps,
+): boolean {
+  // WHY: App 顶层 render 会重建回调与 task index；资产树只按可见展示输入重绘，
+  // 避免 Segment mask 局部保存时 react-arborist 重挂载所有缩略图行。
+  return (
+    previous.workspaceRunId === next.workspaceRunId
+    && previous.assetCacheKey === next.assetCacheKey
+    && previous.showRejected === next.showRejected
+    && previous.hasRejectedElements === next.hasRejectedElements
+    && previous.reviewableCount === next.reviewableCount
+    && previous.workflowStage === next.workflowStage
+    && previous.selectedElementId === next.selectedElementId
+    && sameStringList(previous.selectedElementIds, next.selectedElementIds)
+    && sameElementSignatures(previous.elements, next.elements)
+    && taskItemIndexSignature(previous.taskItemsByElementId ?? {}) === taskItemIndexSignature(next.taskItemsByElementId ?? {})
+    && generateSelectionSignature(previous.generateSelection ?? {}) === generateSelectionSignature(next.generateSelection ?? {})
+  );
+}
+
 function AssetTreeItem({
   assetCacheKey,
-  depth,
-  draggedElementId,
-  dropPreview,
-  expandedSet,
   node,
-  onRegisterRow,
+  dragHandle,
+  style,
   onSelectElement,
-  onToggleExpanded,
+  onRejectElement,
   onToggleVisibility,
   selectedElementId,
   selectedElementIds,
-  taskItem,
   taskItemsByElementId,
   workflowStage,
   generateSelection,
   workspaceRunId,
   onToggleGenerateSelection,
-}: {
+}: NodeRendererProps<AssetTreeNode> & {
   assetCacheKey: number;
-  depth: number;
-  draggedElementId: string | null;
-  dropPreview: AssetTreeDropPreview | null;
-  expandedSet: Set<string>;
-  node: AssetTreeNode;
-  onRegisterRow: (elementId: string, node: HTMLDivElement | null) => void;
+  onRejectElement?: (elementId: string) => void;
   onSelectElement: AssetTreePanelProps["onSelectElement"];
-  onToggleExpanded: (elementId: string) => void;
   onToggleVisibility: (elementId: string) => void;
   selectedElementId: string | null;
   selectedElementIds: SelectedElementIds;
-  taskItem: WorkspaceTaskItem | null;
   taskItemsByElementId: WorkspaceTaskItemIndex;
   workflowStage?: WorkflowStage;
   generateSelection: Record<string, boolean>;
   workspaceRunId: string | null;
   onToggleGenerateSelection?: (elementId: string, isSelected: boolean) => void;
 }) {
-  const element = node.element;
-  const childCount = node.children.length;
-  const isExpanded = expandedSet.has(element.id);
+  const element = node.data.element;
   const isFocused = selectedElementId === element.id;
   const isSelected = selectedElementIds.includes(element.id);
   const canAct = isActiveCandidate(element);
-  const activeDropIntent = dropPreview?.targetId === element.id ? dropPreview.intent : null;
   const labelId = `asset-tree-label-${element.id}`;
   const thumbUrl = thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId);
+  const taskItem = taskItemsByElementId[element.id] ?? null;
   const showsGenerateSelection =
     (workflowStage === "mask" || workflowStage === "generate")
     && isGenerateSelectableElement(element)
     && onToggleGenerateSelection;
   const isSelectedForGenerate = generateSelection[element.id] ?? true;
-  const { attributes, isDragging, listeners, setNodeRef, transform, transition } = useSortable({
-    disabled: !canAct,
-    id: element.id,
-  });
 
-  function handleSelect(event: MouseEvent<HTMLButtonElement>) {
+  function handleSelect(event: MouseEvent<HTMLElement>) {
     onSelectElement(
       element.id,
       event.shiftKey || event.metaKey || event.ctrlKey ? "toggle" : "replace",
@@ -388,166 +382,243 @@ function AssetTreeItem({
     );
   }
 
-  const style = {
-    transition,
-    transform: CSS.Transform.toString(transform),
-  } satisfies CSSProperties;
-  const dragHandleProps = canAct ? { ...attributes, ...listeners } : {};
+  function handleSelectKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    onSelectElement(
+      element.id,
+      event.shiftKey || event.metaKey || event.ctrlKey ? "toggle" : "replace",
+      { focusCanvas: true },
+    );
+  }
 
   return (
     <div
-      role="treeitem"
-      aria-level={depth + 1}
-      aria-selected={isSelected}
-      aria-expanded={childCount > 0 ? isExpanded : undefined}
-      aria-labelledby={labelId}
-      ref={(row) => {
-        setNodeRef(row);
-        onRegisterRow(element.id, row);
-      }}
+      style={style}
       className={[
         "asset-tree-item",
         isSelected ? "is-selected" : "",
         isFocused ? "is-focused" : "",
-        isDragging || draggedElementId === element.id ? "is-dragging" : "",
-        activeDropIntent === "inside" ? "is-drop-target" : "",
-        activeDropIntent === "before" ? "is-drop-before" : "",
-        activeDropIntent === "after" ? "is-drop-after" : "",
+        node.isDragging ? "is-dragging" : "",
+        node.willReceiveDrop ? "is-drop-target" : "",
         !canAct ? "is-display-only" : "",
       ].filter(Boolean).join(" ")}
-      style={style}
     >
       <div
+        ref={dragHandle}
         className="asset-tree-row"
-        style={{ "--asset-depth": depth } as CSSProperties}
       >
-        {showsGenerateSelection ? (
-          <label
-            className="asset-generate-toggle"
-            title={isSelectedForGenerate ? "Selected for Codex generation" : "Skipped for Codex generation"}
-            onClick={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
+        <div
+          className="asset-tree-row-depth"
+          style={{ "--asset-depth": node.level } as CSSProperties}
+        >
+          {showsGenerateSelection ? (
+            <label
+              className="asset-generate-toggle"
+              title={isSelectedForGenerate ? "Selected for Codex generation" : "Skipped for Codex generation"}
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <input
+                aria-label={`${isSelectedForGenerate ? "Skip" : "Select"} ${element.name} for generation`}
+                type="checkbox"
+                checked={isSelectedForGenerate}
+                onChange={(event) => onToggleGenerateSelection(element.id, event.currentTarget.checked)}
+              />
+            </label>
+          ) : (
+            <span className="asset-generate-toggle-spacer" aria-hidden="true" />
+          )}
+          <div
+            className="asset-tree-select"
+            role="button"
+            tabIndex={0}
+            aria-label={`Select ${element.name}`}
+            aria-pressed={isSelected}
+            onClick={handleSelect}
+            onKeyDown={handleSelectKeyDown}
           >
-            <input
-              aria-label={`${isSelectedForGenerate ? "Skip" : "Select"} ${element.name} for generation`}
-              type="checkbox"
-              checked={isSelectedForGenerate}
-              onChange={(event) => onToggleGenerateSelection(element.id, event.currentTarget.checked)}
-            />
-          </label>
-        ) : (
-          <span className="asset-generate-toggle-spacer" aria-hidden="true" />
-        )}
-        <button
-          type="button"
-          className="asset-disclosure"
-          aria-label={`${isExpanded ? "Collapse" : "Expand"} ${element.name}`}
-          disabled={childCount === 0}
-          onClick={() => onToggleExpanded(element.id)}
-        >
-          {childCount > 0 ? (isExpanded ? "v" : ">") : ""}
-        </button>
-        <button
-          type="button"
-          className="asset-tree-select"
-          aria-label={`Select ${element.name}`}
-          aria-pressed={isSelected}
-          onClick={handleSelect}
-          {...dragHandleProps}
-        >
-          {thumbUrl ? (
-            <img
-              alt={`${element.name} thumbnail`}
-              className="asset-tree-thumb"
-              src={thumbUrl}
+            {thumbUrl ? (
+              <img
+                alt={`${element.name} thumbnail`}
+                className="asset-tree-thumb"
+                src={thumbUrl}
+              />
+            ) : (
+              <span className="asset-tree-thumb asset-tree-thumb-empty">No thumb</span>
+            )}
+            <span className="asset-tree-copy">
+              <strong id={labelId}>{element.name}</strong>
+              <span>{formatConfidence(element.confidence)} · {formatOriginLabel(element)}</span>
+            </span>
+            <span className="asset-tree-badges" aria-label={`${element.name} metadata`}>
+              <AssetTag tone={statusTagTone(element.status)}>{formatAssetBadgeLabel(element)}</AssetTag>
+              {taskItem ? (
+                <AssetTag tone={taskStatusTone(taskItem.status)} title={taskItem.message}>
+                  {taskItemStatusLabel(taskItem.status)}
+                </AssetTag>
+              ) : null}
+            </span>
+          </div>
+        </div>
+        <span className="asset-tree-actions">
+          {canAct ? (
+            <button
+              type="button"
+              className={`asset-visibility-toggle${element.visible ? " is-visible" : ""}`}
+              aria-label={`${element.visible ? "Hide" : "Show"} ${element.name}`}
+              aria-pressed={element.visible}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onToggleVisibility(element.id)}
+            >
+              {element.visible ? <Eye size={16} strokeWidth={2.3} /> : <EyeOff size={16} strokeWidth={2.3} />}
+            </button>
+          ) : (
+            <span className="asset-tree-action-spacer" aria-hidden="true" />
+          )}
+          {canAct && onRejectElement ? (
+            <ConfirmActionDialog
+              title="Remove from active assets"
+              description="Remove this asset from active assets. It is rejected and hidden, not physically deleted; turn on Show rejected to bring it back."
+              confirmLabel="Remove asset"
+              onConfirm={() => onRejectElement(element.id)}
+              trigger={(
+                <button
+                  type="button"
+                  className="asset-delete-button"
+                  aria-label={`Delete ${element.name}`}
+                  title="Remove from active assets"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <Trash2 size={15} strokeWidth={2.3} aria-hidden="true" />
+                </button>
+              )}
             />
           ) : (
-            <span className="asset-tree-thumb asset-tree-thumb-empty">No thumb</span>
+            <span className="asset-tree-action-spacer" aria-hidden="true" />
           )}
-          <span className="asset-tree-copy">
-            <strong id={labelId}>{element.name}</strong>
-            <span>{formatConfidence(element.confidence)} · {formatOriginLabel(element)}</span>
-          </span>
-          <span className="asset-tree-badges" aria-label={`${element.name} metadata`}>
-            <span className={`asset-badge ${statusToneClass(element.status)}`}>{formatAssetBadgeLabel(element)}</span>
-            {taskItem ? (
-              <span
-                className={`asset-task-badge ${taskStatusTone(taskItem.status)}`}
-                title={taskItem.message}
-              >
-                {taskItemStatusLabel(taskItem.status)}
-              </span>
-            ) : null}
-          </span>
-        </button>
-        {canAct ? (
-          <button
-            type="button"
-            className={`asset-visibility-toggle${element.visible ? " is-visible" : ""}`}
-            aria-label={`${element.visible ? "Hide" : "Show"} ${element.name}`}
-            aria-pressed={element.visible}
-            onClick={() => onToggleVisibility(element.id)}
-          >
-            {element.visible ? <Eye size={16} strokeWidth={2.3} /> : <EyeOff size={16} strokeWidth={2.3} />}
-          </button>
-        ) : null}
+        </span>
       </div>
-      {childCount > 0 && isExpanded ? (
-        <div role="group" className="asset-tree-children">
-          {node.children.map((child) => (
-            <AssetTreeItem
-              key={child.element.id}
-              assetCacheKey={assetCacheKey}
-              depth={depth + 1}
-              draggedElementId={draggedElementId}
-              dropPreview={dropPreview}
-              expandedSet={expandedSet}
-              node={child}
-              onRegisterRow={onRegisterRow}
-              onSelectElement={onSelectElement}
-              onToggleExpanded={onToggleExpanded}
-              onToggleVisibility={onToggleVisibility}
-              selectedElementId={selectedElementId}
-              selectedElementIds={selectedElementIds}
-              taskItem={taskItemsByElementId[child.element.id] ?? null}
-              taskItemsByElementId={taskItemsByElementId}
-              workflowStage={workflowStage}
-              generateSelection={generateSelection}
-              workspaceRunId={workspaceRunId}
-              onToggleGenerateSelection={onToggleGenerateSelection}
-            />
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function getTreeRowElement(item: HTMLDivElement | null | undefined): HTMLElement | null {
-  if (!item) {
-    return null;
+function countVisibleAssetTreeRows(nodes: AssetTreeNode[]): number {
+  return nodes.reduce((total, node) => total + 1 + countVisibleAssetTreeRows(node.children), 0);
+}
+
+function useStableAssetTreeElements(elements: WorkspaceElement[]): WorkspaceElement[] {
+  const previousRef = useRef<{ elements: WorkspaceElement[]; signatures: string[] } | null>(null);
+  const signatures = useMemo(() => elements.map(assetTreeElementSignature), [elements]);
+  const previous = previousRef.current;
+  const canReusePrevious =
+    previous
+    && previous.signatures.length === signatures.length
+    && signatures.every((signature, index) => signature === previous.signatures[index]);
+  if (canReusePrevious) {
+    return previous.elements;
   }
-  const row = item.querySelector(".asset-tree-row");
-  return row instanceof HTMLElement ? row : item;
+  previousRef.current = { elements, signatures };
+  return elements;
 }
 
-function getActiveDragRect(event: DragMoveEvent | DragOverEvent | DragEndEvent): DragRect | null {
-  return event.active.rect.current.translated ?? event.active.rect.current.initial ?? null;
+function useStableAssetTree(rawTree: AssetTreeNode[]): AssetTreeNode[] {
+  const previousTreeRef = useRef<AssetTreeNode[]>([]);
+  return useMemo(() => {
+    // WHY: mask 草稿保存会更新 workspace state，但未变资产的缩略图 DOM 不能被
+    // react-arborist 连带重建；复用稳定 node 可以阻断同 URL 缩略图的重复网络请求。
+    const stableTree = reuseStableAssetTreeNodes(rawTree, previousTreeRef.current);
+    previousTreeRef.current = stableTree;
+    return stableTree;
+  }, [rawTree]);
 }
 
-function toDropPreview(
-  targetId: string | null,
-  dropAction: AssetTreeDropAction | null,
-): AssetTreeDropPreview | null {
-  if (!targetId || !dropAction) {
-    return null;
-  }
-  return {
-    targetId,
-    intent: dropAction.kind === "reorder" ? dropAction.position : "inside",
-  };
+function reuseStableAssetTreeNodes(
+  nextNodes: AssetTreeNode[],
+  previousNodes: AssetTreeNode[],
+): AssetTreeNode[] {
+  const previousById = new Map(previousNodes.map((node) => [node.element.id, node]));
+  let changed = nextNodes.length !== previousNodes.length;
+  const stableNodes = nextNodes.map((nextNode, index) => {
+    const previousNode = previousById.get(nextNode.element.id);
+    const stableChildren = reuseStableAssetTreeNodes(
+      nextNode.children,
+      previousNode?.children ?? [],
+    );
+    const canReusePrevious =
+      previousNode
+      && previousNode.element === nextNode.element
+      && stableChildren === previousNode.children;
+    if (canReusePrevious) {
+      changed ||= previousNodes[index] !== previousNode;
+      return previousNode;
+    }
+    changed = true;
+    return stableChildren === nextNode.children
+      ? nextNode
+      : { ...nextNode, children: stableChildren };
+  });
+
+  return changed ? stableNodes : previousNodes;
 }
 
-function getElementId(id: UniqueIdentifier | undefined): string | null {
-  return typeof id === "string" ? id : null;
+function assetTreeElementSignature(element: WorkspaceElement): string {
+  return [
+    element.id,
+    element.parentId ?? "",
+    element.mergedInto ?? "",
+    element.name,
+    element.thumbnail ?? "",
+    String(element.visible),
+    element.mode,
+    element.status,
+    element.exportStatus,
+    element.source,
+    element.sourceProvider ?? "",
+    element.confidence ?? "",
+    formatAssetBadgeLabel(element),
+  ].join("\u001f");
+}
+
+function sameElementSignatures(
+  previous: WorkspaceElement[],
+  next: WorkspaceElement[],
+): boolean {
+  return (
+    previous.length === next.length
+    && previous.every((element, index) =>
+      assetTreeElementSignature(element) === assetTreeElementSignature(next[index]),
+    )
+  );
+}
+
+function sameStringList(previous: string[], next: string[]): boolean {
+  return (
+    previous.length === next.length
+    && previous.every((value, index) => value === next[index])
+  );
+}
+
+function taskItemIndexSignature(taskItemsByElementId: WorkspaceTaskItemIndex): string {
+  return Object.values(taskItemsByElementId)
+    .map((item) => [
+      item.elementId,
+      item.status,
+      item.message,
+      item.startedAt ?? "",
+      item.finishedAt ?? "",
+    ].join("\u001e"))
+    .sort()
+    .join("\u001f");
+}
+
+function generateSelectionSignature(generateSelection: Record<string, boolean>): string {
+  return Object.entries(generateSelection)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([elementId, isSelected]) => `${elementId}:${isSelected ? "1" : "0"}`)
+    .join("\u001f");
 }

@@ -3,15 +3,30 @@ import { ImageOff, Layers, MessageSquareText, Send } from "lucide-react";
 
 import {
   codexFinalArtifactUrls,
+  isCodexFinalSourceProvider,
   sam2EdgeArtifactUrls,
+  workspaceAssetUrl,
   type WorkspaceElement,
 } from "../../domain/workspace";
+import {
+  fetchCodexFinalRequestMetadata,
+  type CodexFinalRequestInputImage,
+  type CodexFinalRequestMetadata,
+} from "../../domain/workspaceApi";
 import { isGenerateSelectableElement } from "../../domain/workspaceDerived";
 import {
   taskItemStatusLabel,
   taskStatusTone,
+  type WorkspaceTaskItem,
   type WorkspaceTaskItemIndex,
 } from "../../domain/workspaceTasks";
+import {
+  codexFinalAgentArtifactDetails,
+  codexFinalFailedCandidatePath,
+  codexFinalQualityArtifactBadge,
+  codexFinalRepairNote,
+} from "../../domain/workspaceTaskArtifacts";
+import { AssetTag } from "../../shared/ui/AssetTag";
 import { PreviewFigure } from "../segment/SegmentMaskReviewParts";
 
 type GenerateReviewPanelProps = {
@@ -26,6 +41,7 @@ type GenerateReviewPanelProps = {
 };
 
 const EMPTY_PROMPT_HINTS: Record<string, string> = {};
+const NO_CODEX_REQUEST_METADATA = "No previous Codex request metadata recorded for this asset.";
 
 export function GenerateReviewPanel({
   assetCacheKey,
@@ -50,10 +66,35 @@ export function GenerateReviewPanel({
     [activeElement, elements],
   );
   const [promptDraft, setPromptDraft] = useState("");
+  const [codexRequest, setCodexRequest] = useState<CodexFinalRequestMetadata | null>(null);
 
   useEffect(() => {
     setPromptDraft(activeElement ? promptHints[activeElement.id] ?? "" : "");
   }, [activeElement?.id, promptHints]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setCodexRequest(null);
+    if (!activeElement) {
+      return () => {
+        isCancelled = true;
+      };
+    }
+    void fetchCodexFinalRequestMetadata(activeElement.id, workspaceRunId)
+      .then((metadata) => {
+        if (!isCancelled) {
+          setCodexRequest(metadata);
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setCodexRequest(null);
+        }
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeElement?.id, workspaceRunId, activeElement?.sourcePrompt]);
 
   if (!activeElement) {
     return (
@@ -65,8 +106,21 @@ export function GenerateReviewPanel({
   }
 
   const sam2Urls = sam2EdgeArtifactUrls(activeElement, assetCacheKey, workspaceRunId);
-  const finalUrls = codexFinalArtifactUrls(activeElement, assetCacheKey, workspaceRunId);
   const taskItem = taskItemsByElementId[activeElement.id] ?? null;
+  const agentArtifactDetails = codexFinalAgentArtifactDetails(taskItem?.artifactPaths);
+  const qualityBadge = codexFinalQualityArtifactBadge(taskItem?.artifactPaths);
+  const finalCacheKey = codexFinalCacheKey(assetCacheKey, activeElement, taskItem);
+  const finalUrls = codexFinalArtifactUrls(
+    activeElement,
+    finalCacheKey,
+    workspaceRunId,
+  );
+  const failedCandidateUrl = workspaceAssetUrl(
+    codexFinalFailedCandidatePath(taskItem?.artifactPaths),
+    finalCacheKey,
+    workspaceRunId,
+  );
+  const repairNote = codexFinalRepairNote(taskItem?.artifactPaths);
   const promptChanged = (promptHints[activeElement.id] ?? "") !== (activeElement.sourcePromptHint ?? "");
 
   function savePromptDraft() {
@@ -97,12 +151,16 @@ export function GenerateReviewPanel({
           <h3>{activeElement.name}</h3>
         </div>
         <div className="generate-review-actions">
-          {taskItem ? (
-            <span className={`asset-task-badge ${taskStatusTone(taskItem.status)}`}>
+          {qualityBadge ? (
+            <AssetTag tone={qualityBadge.tone}>
+              {qualityBadge.label}
+            </AssetTag>
+          ) : taskItem ? (
+            <AssetTag tone={taskStatusTone(taskItem.status)}>
               {taskItemStatusLabel(taskItem.status)}
-            </span>
+            </AssetTag>
           ) : null}
-          {promptChanged ? <span className="asset-task-badge is-queued">Prompt changed</span> : null}
+          {promptChanged ? <AssetTag tone="queued">Prompt changed</AssetTag> : null}
         </div>
       </div>
 
@@ -130,9 +188,21 @@ export function GenerateReviewPanel({
             imageSrc={finalUrls.transparentAssetUrl ?? undefined}
             icon={Layers}
             placeholderLabel="No final yet"
-            status={activeElement.sourceProvider === "codex_cli" ? "Final ready" : "Waiting"}
+            status={codexFinalPreviewStatus(activeElement, taskItem)}
           />
         </div>
+        {failedCandidateUrl ? (
+          <section className="generate-failed-candidate-panel" aria-label="Failed candidate preview">
+            <PreviewFigure
+              caption="Failed candidate"
+              className="checkerboard-preview"
+              imageAlt={`${activeElement.name} failed candidate`}
+              imageSrc={failedCandidateUrl}
+              icon={Layers}
+              status="QA failed"
+            />
+          </section>
+        ) : null}
 
         <div className="generate-prompt-panel" role="group" aria-label="Generate prompt tools">
           {removedChildren.length > 0 ? (
@@ -140,6 +210,12 @@ export function GenerateReviewPanel({
               <span>Parent completion</span>
               <p>Fill the parent surface without bringing back: {removedChildren.map((child) => child.name).join(", ")}</p>
             </div>
+          ) : null}
+          {repairNote ? (
+            <section className="generate-repair-note" aria-label="QA repair note">
+              <strong>Repair note</strong>
+              <p>{repairNote}</p>
+            </section>
           ) : null}
           <label className="generate-prompt-hint-field">
             <span>
@@ -163,19 +239,209 @@ export function GenerateReviewPanel({
               </button>
             </span>
           </label>
-          <section className="generate-previous-prompt" aria-label="Prompt used last time">
-            <strong>Prompt used last time</strong>
-            {activeElement.sourcePrompt ? (
-              <pre>{activeElement.sourcePrompt}</pre>
-            ) : (
-              <p>No previous prompt has been recorded for this asset.</p>
-            )}
+          <section className="generate-request-panel" aria-label="Full request used last time">
+            <strong>Full request used last time</strong>
+            <pre>{codexRequest ? formatCodexRequest(codexRequest) : NO_CODEX_REQUEST_METADATA}</pre>
           </section>
+          {agentArtifactDetails.length > 0 ? (
+            <section className="generate-agent-artifacts" aria-label="Codex agent handoff artifacts">
+              <strong>Codex agent handoff</strong>
+              <dl>
+                {agentArtifactDetails.map((artifact) => (
+                  <div key={artifact.key}>
+                    <dt>{artifact.label}</dt>
+                    <dd>{artifact.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ) : null}
           {taskItem?.message ? <p className="generate-task-message">{taskItem.message}</p> : null}
         </div>
       </div>
     </section>
   );
+}
+
+function codexFinalPreviewStatus(
+  element: WorkspaceElement,
+  taskItem: WorkspaceTaskItem | null,
+): string {
+  if (isCodexFinalSourceProvider(element.sourceProvider) && ["ready", "exported"].includes(element.exportStatus)) {
+    return "Final ready";
+  }
+  if (taskItem?.status === "failed") {
+    return "Failed";
+  }
+  if (taskItem?.status === "running") {
+    return "Waiting for agent";
+  }
+  return "Waiting";
+}
+
+function formatCodexRequest(metadata: CodexFinalRequestMetadata): string {
+  return [
+    "REQUEST",
+    fieldLine("Provider", metadata.provider),
+    fieldLine("Created at", metadata.createdAt),
+    fieldLine("Generation profile", metadata.generationProfile),
+    fieldLine("Output path", metadata.assetPath),
+    fieldLine("Raw Codex output path", metadata.rawOutputPath),
+    fieldLine("Job id", metadata.jobId),
+    fieldLine("Codex thread", metadata.codexThreadId),
+    fieldLine("Job work dir", metadata.workDirPath),
+    fieldLine("Job output path", metadata.outputPath),
+    fieldLine("Prompt path", metadata.promptPath),
+    fieldLine("Brief image", metadata.briefImagePath),
+    fieldLine("Brief JSON", metadata.briefJsonPath),
+    fieldLine("Chroma key", formatChromaKey(metadata.chromaKey)),
+    fieldLine("Raw output seconds", formatTimingSeconds(metadata.timing?.rawOutputSeconds)),
+    fieldLine("Reference sha256", metadata.referenceSha256),
+    fieldLine("Raw output sha256", metadata.rawOutputSha256),
+    fieldLine("Output sha256", metadata.outputSha256),
+    fieldLine("Identical to mask sticker", formatBoolean(metadata.isOutputIdenticalToReference)),
+    fieldLine("Prompt hint", metadata.promptHint),
+    "",
+    "ATTACHED IMAGES, EXACT ORDER",
+    ...formatImageLines(metadata),
+    "",
+    "TEXT PROMPT SENT TO CODEX",
+    metadata.prompt?.trim() || "(empty prompt)",
+  ].join("\n");
+}
+
+function fieldLine(label: string, value: string | null | undefined): string {
+  return `${label}: ${value?.trim() || "-"}`;
+}
+
+function formatBoolean(value: boolean | null | undefined): string {
+  return typeof value === "boolean" ? String(value) : "-";
+}
+
+function formatChromaKey(value: [number, number, number] | null | undefined): string | null {
+  return value ? `rgb(${value[0]}, ${value[1]}, ${value[2]})` : null;
+}
+
+function formatTimingSeconds(value: unknown): string | null {
+  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(2)}s` : null;
+}
+
+function codexFinalCacheKey(
+  assetCacheKey: number,
+  element: WorkspaceElement,
+  taskItem: WorkspaceTaskItem | null,
+): string {
+  const taskVersion = [
+    taskItem?.status ?? "idle",
+    taskItem?.finishedAt ?? taskItem?.startedAt ?? "-",
+    taskItem?.message ?? "-",
+  ].join(":");
+  return `codex-final:${element.id}:${assetCacheKey}:${taskVersion}`;
+}
+
+function formatImageLines(metadata: CodexFinalRequestMetadata): string[] {
+  const images = codexFinalRequestImages(metadata);
+  if (images.length === 0) {
+    return ["(no attached images recorded)"];
+  }
+  let removedChildOrdinal = 0;
+  return images.map((image, index) => {
+    const role = imageRoleLabel(image, index, metadata, removedChildOrdinal);
+    const authority = imageAuthorityLabel(image.role, index);
+    if (image.role === "removed_child_mask") {
+      removedChildOrdinal += 1;
+    }
+    return [
+      String(index + 1).padEnd(3),
+      role.padEnd(22),
+      image.path.padEnd(58),
+      authority,
+    ].join(" ");
+  });
+}
+
+function codexFinalRequestImages(
+  metadata: CodexFinalRequestMetadata,
+): Array<CodexFinalRequestInputImage | { path: string; role: null }> {
+  if (metadata.inputImages.length > 0) {
+    return metadata.inputImages;
+  }
+  return metadata.inputImagePaths.map((path) => ({ path, role: null }));
+}
+
+function imageRoleLabel(
+  image: CodexFinalRequestInputImage | { path: string; role: null },
+  index: number,
+  metadata: CodexFinalRequestMetadata,
+  removedChildOrdinal: number,
+): string {
+  if (image.role) {
+    if (image.role === "removed_child_mask") {
+      return `removed_child_mask:${removedChildNameFor(image.path, metadata, removedChildOrdinal)}`;
+    }
+    return image.role;
+  }
+  return fallbackImageRoleLabel(index, metadata);
+}
+
+function fallbackImageRoleLabel(index: number, metadata: CodexFinalRequestMetadata): string {
+  if (index === 0) {
+    return "source_crop";
+  }
+  if (index === 1) {
+    return "transparent_cutout";
+  }
+  if (index === 2) {
+    return "mask";
+  }
+  const child = metadata.removedChildren[index - 3];
+  const childName = typeof child?.name === "string" && child.name.trim() ? child.name.trim() : `child_${index - 2}`;
+  return `removed_child_mask:${childName}`;
+}
+
+function imageAuthorityLabel(role: string | null, index: number): string {
+  // WHY: inputImages.role 是后端 prompt/input 协议的唯一权威；仅旧 metadata
+  // 缺少 role 时才退回历史 index 规则，避免 layout_guide 被误标成 removed child。
+  switch (role) {
+    case "source_crop":
+      return "source authority";
+    case "visual_generation_brief":
+      return "task map";
+    case "transparent_cutout":
+      return "mask output reference";
+    case "mask":
+      return "diagnostic mask";
+    case "layout_guide":
+      return "layout guide";
+    case "previous_final":
+      return "accepted final reference";
+    case "failed_candidate":
+      return "failed candidate";
+    case "removed_child_mask":
+      return "removed child mask";
+    default:
+      break;
+  }
+  if (index === 0) {
+    return "source authority";
+  }
+  if (index === 1) {
+    return "mask output reference";
+  }
+  if (index === 2) {
+    return "diagnostic mask";
+  }
+  return "removed child mask";
+}
+
+function removedChildNameFor(
+  path: string,
+  metadata: CodexFinalRequestMetadata,
+  ordinal: number,
+): string {
+  const pathMatchedChild = metadata.removedChildren.find((child) => child.maskPath === path);
+  const child = pathMatchedChild ?? metadata.removedChildren[ordinal];
+  return typeof child?.name === "string" && child.name.trim() ? child.name.trim() : `child_${ordinal + 1}`;
 }
 
 function removedChildrenFor(elements: WorkspaceElement[], parent: WorkspaceElement): WorkspaceElement[] {

@@ -16,6 +16,8 @@ type AppWorkflowStateInput = {
   canRunDetection: boolean;
   error: string | null;
   hasGenerateSelection: boolean;
+  hasPendingSegmentMasks: boolean;
+  hasTaskProgressSurface: boolean;
   hasUnsavedGeometryChanges: boolean;
   isAnnotating: boolean;
   isExporting: boolean;
@@ -64,11 +66,28 @@ function buildPrimaryWorkflowAction(input: AppWorkflowStateInput): PrimaryWorkfl
       return {
         label: "Generate Masks",
         help: "Use the current resource boxes as mask targets and start a SAM2 batch.",
-        disabled: input.hasUnsavedGeometryChanges || input.isSavingState || input.isSuggestingAllSegments,
-        isRunning: input.isSavingState || input.isSuggestingAllSegments,
+        disabled:
+          input.isAnnotating
+          || input.hasUnsavedGeometryChanges
+          || input.isSavingState
+          || input.isSuggestingAllSegments,
+        isRunning: input.isAnnotating || input.isSavingState || input.isSuggestingAllSegments,
         onRun: input.onRunStageMask,
       };
     case "mask":
+      if (input.hasPendingSegmentMasks) {
+        return {
+          label: "Generate Masks",
+          help: "Generate masks for assets that returned to Segment without a saved mask.",
+          disabled:
+            input.isAnnotating
+            || input.hasUnsavedGeometryChanges
+            || input.isSavingState
+            || input.isSuggestingAllSegments,
+          isRunning: input.isAnnotating || input.isSavingState || input.isSuggestingAllSegments,
+          onRun: input.onRunStageMask,
+        };
+      }
       return {
         label: "Generate",
         help: "Accept the current mask set and generate selected final assets with Codex CLI.",
@@ -121,12 +140,19 @@ function buildWorkflowToastState(input: AppWorkflowStateInput): WorkflowToastSta
   if (!busyMessage) {
     return null;
   }
+  if (input.hasTaskProgressSurface && isTaskBackedBusy(input)) {
+    return null;
+  }
 
   return {
     tone: "progress",
     title: input.status,
     message: busyMessage,
   };
+}
+
+function isTaskBackedBusy(input: AppWorkflowStateInput): boolean {
+  return input.isAnnotating || input.isSuggestingAllSegments || input.isStartingCodexFinalTask;
 }
 
 function currentBusyMessage(input: AppWorkflowStateInput): string | null {

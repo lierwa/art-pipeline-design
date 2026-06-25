@@ -46,6 +46,11 @@ export function PreviewFigure({
   className = "",
   frameTestId,
   isInteractive = false,
+  liveMaskOverlayActive = false,
+  liveMaskOverlayRef,
+  liveSelectionOperation,
+  liveSelectionOverlayActive = false,
+  liveSelectionOverlayRef,
   maskOverlaySrc,
   selectionOverlaySrc,
   selectionOperation,
@@ -65,6 +70,7 @@ export function PreviewFigure({
   onNativeGestureChange,
   onNativeGestureEnd,
   onNativeGestureStart,
+  onPointerCancel,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -79,6 +85,11 @@ export function PreviewFigure({
   className?: string;
   frameTestId?: string;
   isInteractive?: boolean;
+  liveMaskOverlayActive?: boolean;
+  liveMaskOverlayRef?: Ref<HTMLCanvasElement>;
+  liveSelectionOperation?: "add" | "subtract";
+  liveSelectionOverlayActive?: boolean;
+  liveSelectionOverlayRef?: Ref<HTMLCanvasElement>;
   maskOverlaySrc?: string;
   selectionOverlaySrc?: string;
   selectionOperation?: "add" | "subtract";
@@ -98,6 +109,7 @@ export function PreviewFigure({
   onNativeGestureChange?: (event: Event) => void;
   onNativeGestureEnd?: (event: Event) => void;
   onNativeGestureStart?: (event: Event) => void;
+  onPointerCancel?: (event: PointerEvent<HTMLDivElement>) => void;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void;
   onPointerMove?: (event: PointerEvent<HTMLDivElement>) => void;
   onPointerUp?: (event: PointerEvent<HTMLDivElement>) => void;
@@ -144,6 +156,12 @@ export function PreviewFigure({
   const sourceViewStyle = canvasBox && viewTransform
     ? canvasViewToFrameStyle(canvasBox, frameSize, viewTransform)
     : undefined;
+  const liveCanvasSize = canvasBox
+    ? {
+      width: Math.max(1, Math.round(canvasBox.w)),
+      height: Math.max(1, Math.round(canvasBox.h)),
+    }
+    : null;
   const imageNode = imageSrc ? (
     <img alt={imageAlt} draggable={false} onLoad={onImageLoad} ref={imageRef} src={imageSrc} />
   ) : (
@@ -166,6 +184,7 @@ export function PreviewFigure({
         data-testid={frameTestId}
         data-view-scale={viewTransform ? formatScale(viewTransform.scale) : undefined}
         onClick={onClick}
+        onPointerCancel={onPointerCancel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -174,7 +193,21 @@ export function PreviewFigure({
         {sourceViewStyle ? (
           <div className="segment-source-view" style={sourceViewStyle}>
             {imageNode}
-            {maskOverlaySrc ? (
+            {liveCanvasSize && liveMaskOverlayRef ? (
+              <canvas
+                aria-hidden="true"
+                className="segment-source-mask-overlay segment-source-live-mask-overlay"
+                data-active={liveMaskOverlayActive}
+                data-color="quick-mask-pink"
+                data-draft={liveMaskOverlayActive}
+                data-mask-display="background"
+                data-testid={liveMaskOverlayActive ? "segment-draft-mask-overlay" : undefined}
+                height={liveCanvasSize.height}
+                ref={liveMaskOverlayRef}
+                width={liveCanvasSize.width}
+              />
+            ) : null}
+            {maskOverlaySrc && !liveMaskOverlayActive ? (
               <img
                 alt=""
                 aria-hidden="true"
@@ -187,7 +220,21 @@ export function PreviewFigure({
                 src={maskOverlaySrc}
               />
             ) : null}
-            {selectionOverlaySrc ? (
+            {liveCanvasSize && liveSelectionOverlayRef ? (
+              <canvas
+                aria-hidden="true"
+                className="segment-selection-overlay segment-source-live-selection-overlay"
+                data-active={liveSelectionOverlayActive}
+                data-color="quick-mask-pink"
+                data-operation={liveSelectionOperation}
+                data-render="outline"
+                data-testid={liveSelectionOverlayActive ? "segment-selection-overlay" : undefined}
+                height={liveCanvasSize.height}
+                ref={liveSelectionOverlayRef}
+                width={liveCanvasSize.width}
+              />
+            ) : null}
+            {selectionOverlaySrc && !liveSelectionOverlayActive ? (
               <img
                 alt=""
                 aria-hidden="true"

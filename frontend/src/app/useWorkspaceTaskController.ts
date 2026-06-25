@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
 import {
   fetchWorkspaceTasks,
+  hasRunningCodexFinalTask,
   hasRunningWorkspaceTask,
   retryFailedWorkspaceTask,
   startCodexFinalTask,
   startSam2MaskTask,
+  stopCodexFinalTasks,
+  type Sam2MaskTaskRequest,
   type WorkspaceTask,
   type WorkspaceTaskEventPayload,
+  type WorkspacePendingTask,
 } from "../domain/workspaceTasks";
 import {
   normalizeWorkspaceState,
@@ -23,6 +27,7 @@ type UseWorkspaceTaskControllerInput = {
   setError: SetState<string | null>;
   setStatus: SetState<string>;
   setWorkspace: SetState<WorkspaceState>;
+  workspace: WorkspaceState;
   workspaceHasSource: boolean;
 };
 
@@ -32,16 +37,29 @@ export function useWorkspaceTaskController({
   setError,
   setStatus,
   setWorkspace,
+  workspace,
   workspaceHasSource,
 }: UseWorkspaceTaskControllerInput) {
   const [tasks, setTasks] = useState<WorkspaceTask[]>([]);
+  const [pendingTask, setPendingTask] = useState<WorkspacePendingTask | null>(null);
   const [isStartingSam2MaskTask, setIsStartingSam2MaskTask] = useState(false);
   const [isStartingCodexFinalTask, setIsStartingCodexFinalTask] = useState(false);
-  const hasActiveTask = useMemo(() => hasRunningWorkspaceTask(tasks), [tasks]);
+  const [isStoppingCodexFinalTask, setIsStoppingCodexFinalTask] = useState(false);
+  const workspaceAssetSignatureRef = useRef(workspaceAssetSignature(workspace));
+  const hasActiveTask = useMemo(() => pendingTask !== null || hasRunningWorkspaceTask(tasks), [pendingTask, tasks]);
+  const hasActiveCodexFinalTask = useMemo(
+    () => pendingTask?.type === "codex_final_batch" || hasRunningCodexFinalTask(tasks),
+    [pendingTask, tasks],
+  );
+
+  useEffect(() => {
+    workspaceAssetSignatureRef.current = workspaceAssetSignature(workspace);
+  }, [workspace]);
 
   useEffect(() => {
     if (!workspaceHasSource) {
       setTasks([]);
+      setPendingTask(null);
       return;
     }
     void refreshTasks({ silent: true });
@@ -71,6 +89,11 @@ export function useWorkspaceTaskController({
         return;
       }
       setTasks(payload.tasks);
+      setPendingTask((current) =>
+        current && payload.tasks.some((task) => task.type === current.type)
+          ? null
+          : current
+      );
       if (payload.changedElementIds.length > 0) {
         void refreshWorkspaceState();
       }
@@ -81,23 +104,30 @@ export function useWorkspaceTaskController({
     return () => events.close();
   }, [activeRunId, workspaceHasSource]);
 
-  async function handleStartSam2MaskTask() {
+  async function handleStartSam2MaskTask(request: Sam2MaskTaskRequest = {}) {
     if (isStartingSam2MaskTask) {
       return;
     }
+    const isForcedRerun = request.force === true;
     setIsStartingSam2MaskTask(true);
-    setStatus("Starting SAM2 mask batch...");
+    setPendingTask({
+      type: "sam2_mask_batch",
+      message: isForcedRerun ? "Rerunning selected SAM2 masks." : "Starting SAM2 mask batch.",
+    });
+    setStatus(isForcedRerun ? "Rerunning selected SAM2 masks..." : "Starting SAM2 mask batch...");
     setError(null);
     try {
-      const task = await startSam2MaskTask(activeRunId);
+      const task = await startSam2MaskTask(activeRunId, request);
+      setPendingTask(null);
       setTasks((current) => prependTask(task, current));
       if (!hasRunningWorkspaceTask([task])) {
         await refreshWorkspaceState();
       }
-      setStatus("SAM2 mask batch started.");
+      setStatus(isForcedRerun ? "SAM2 mask rerun started." : "SAM2 mask batch started.");
     } catch (taskError) {
-      setStatus("SAM2 mask batch failed to start.");
+      setStatus(isForcedRerun ? "SAM2 mask rerun failed to start." : "SAM2 mask batch failed to start.");
       setError(taskError instanceof Error ? taskError.message : "Could not start SAM2 mask task.");
+      setPendingTask(null);
     } finally {
       setIsStartingSam2MaskTask(false);
     }
@@ -108,10 +138,12 @@ export function useWorkspaceTaskController({
       return;
     }
     setIsStartingCodexFinalTask(true);
+    setPendingTask({ type: "codex_final_batch", message: "Starting Codex final batch." });
     setStatus("Starting Codex final batch...");
     setError(null);
     try {
       const task = await startCodexFinalTask(activeRunId);
+      setPendingTask(null);
       setTasks((current) => prependTask(task, current));
       if (!hasRunningWorkspaceTask([task])) {
         await refreshWorkspaceState();
@@ -120,6 +152,7 @@ export function useWorkspaceTaskController({
     } catch (taskError) {
       setStatus("Codex final batch failed to start.");
       setError(taskError instanceof Error ? taskError.message : "Could not start Codex final task.");
+      setPendingTask(null);
     } finally {
       setIsStartingCodexFinalTask(false);
     }
@@ -141,7 +174,33 @@ export function useWorkspaceTaskController({
     }
   }
 
+  async function handleStopCodexFinalTasks() {
+    if (isStoppingCodexFinalTask) {
+      return;
+    }
+    setIsStoppingCodexFinalTask(true);
+    setStatus("Stopping Codex generation...");
+    setError(null);
+    try {
+      const result = await stopCodexFinalTasks(activeRunId);
+      setPendingTask(null);
+      setTasks((current) => mergeStoppedTasks(result.tasks, current));
+      setStatus(
+        `Codex generation stopped. ${result.terminatedProcessCount} processes terminated, ${result.failedJobCount} jobs failed.`,
+      );
+      if (result.errors.length > 0) {
+        setError(result.errors.join("\n"));
+      }
+    } catch (taskError) {
+      setStatus("Codex generation stop failed.");
+      setError(taskError instanceof Error ? taskError.message : "Could not stop Codex generation.");
+    } finally {
+      setIsStoppingCodexFinalTask(false);
+    }
+  }
+
   async function handleTaskStarted(task: WorkspaceTask) {
+    setPendingTask(null);
     setTasks((current) => prependTask(task, current));
     if (!hasRunningWorkspaceTask([task])) {
       await refreshWorkspaceState();
@@ -176,21 +235,60 @@ export function useWorkspaceTaskController({
     if (!response.ok) {
       return;
     }
-    setWorkspace(normalizeWorkspaceState((await response.json()) as WorkspaceState));
-    setAssetCacheKey((current) => current + 1);
+    const nextWorkspace = normalizeWorkspaceState((await response.json()) as WorkspaceState);
+    const nextSignature = workspaceAssetSignature(nextWorkspace);
+    const shouldRefreshAssets = workspaceAssetSignatureRef.current !== nextSignature;
+    workspaceAssetSignatureRef.current = nextSignature;
+    setWorkspace(nextWorkspace);
+    if (shouldRefreshAssets) {
+      setAssetCacheKey((current) => current + 1);
+    }
   }
 
   return {
+    clearPendingTask: () => setPendingTask(null),
     handleRetryFailedTask,
+    handleStopCodexFinalTasks,
     handleStartCodexFinalTask,
     handleStartSam2MaskTask,
     handleTaskStarted,
     hasActiveTask,
+    hasActiveCodexFinalTask,
     isStartingCodexFinalTask,
     isStartingSam2MaskTask,
+    isStoppingCodexFinalTask,
+    pendingTask,
     refreshTasks,
+    startPendingTask: setPendingTask,
     tasks,
   };
+}
+
+function workspaceAssetSignature(state: WorkspaceState): string {
+  return JSON.stringify({
+    source: state.source?.path ?? null,
+    elements: state.elements.map((element) => ({
+      id: element.id,
+      thumbnail: element.thumbnail ?? null,
+      mask: element.mask ?? null,
+      sourceProvider: element.sourceProvider ?? null,
+      sourcePrompt: element.sourcePrompt ?? null,
+      sourcePromptHint: element.sourcePromptHint ?? null,
+      generationProfile: element.generationProfile ?? null,
+      exportStatus: element.exportStatus ?? null,
+    })),
+  });
+}
+
+function mergeStoppedTasks(stoppedTasks: WorkspaceTask[], tasks: WorkspaceTask[]): WorkspaceTask[] {
+  if (stoppedTasks.length === 0) {
+    return tasks;
+  }
+  const stoppedById = new Map(stoppedTasks.map((task) => [task.taskId, task]));
+  return [
+    ...stoppedTasks,
+    ...tasks.filter((task) => !stoppedById.has(task.taskId)),
+  ];
 }
 
 function prependTask(task: WorkspaceTask, tasks: WorkspaceTask[]): WorkspaceTask[] {

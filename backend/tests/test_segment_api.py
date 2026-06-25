@@ -234,6 +234,164 @@ def test_segment_suggest_subtracts_child_masks_from_parent_mask(tmp_path: Path) 
         assert written_mask.getpixel((8, 6)) == 255
 
 
+def test_segment_manual_parent_patch_keeps_user_drawn_child_area(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FakeSam2Provider(None)))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"] = [
+        {
+            **state["elements"][0],
+            "id": "parent",
+            "name": "wall cabinet",
+            "assetRole": "parent",
+            "bbox": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+        {
+            **state["elements"][0],
+            "id": "child",
+            "name": "plant + bottle",
+            "assetRole": "removable_child",
+            "parentId": "parent",
+            "removeFromParent": "parent",
+            "bbox": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "canvas": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "mask": "elements/child/sam2_edge/mask.png",
+            "segmentationStatus": "mask_accepted",
+            "segmentationQuality": None,
+        },
+    ]
+    child_dir = tmp_path / "workspace" / "elements" / "child" / "sam2_edge"
+    child_dir.mkdir(parents=True, exist_ok=True)
+    Image.new("L", (3, 2), 255).save(child_dir / "mask.png", format="PNG")
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+    response = client.patch(
+        "/api/workspace/elements/parent/segment/mask",
+        json={
+            "operation": "replace",
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 0, "y": 0, "w": 8, "h": 6},
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["element"]["segmentationQuality"]["selectedProfile"] == "manual_patch"
+    stage_dir = tmp_path / "workspace" / "elements" / "parent" / "sam2_edge"
+    with Image.open(stage_dir / "mask.png") as written_mask:
+        assert written_mask.getpixel((0, 0)) == 255
+        assert written_mask.getpixel((2, 2)) == 255
+
+
+def test_segment_accept_keeps_automatic_parent_blocked_until_child_mask_ready(
+    tmp_path: Path,
+) -> None:
+    parent_mask = Image.new("L", (12, 10), 0)
+    ImageDraw.Draw(parent_mask).rectangle((2, 1, 9, 6), fill=255)
+    provider = FakeSam2Provider(parent_mask)
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=provider))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"] = [
+        {
+            **state["elements"][0],
+            "id": "parent",
+            "name": "wall cabinet",
+            "assetRole": "parent",
+            "bbox": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+        {
+            **state["elements"][0],
+            "id": "child",
+            "name": "plant + bottle",
+            "assetRole": "removable_child",
+            "parentId": "parent",
+            "removeFromParent": "parent",
+            "bbox": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "canvas": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+    ]
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+    assert client.post("/api/workspace/elements/parent/segment/suggest").status_code == 200
+
+    response = client.post("/api/workspace/elements/parent/segment/accept")
+
+    assert response.status_code == 200
+    element = response.json()["element"]
+    assert element["status"] == "accepted"
+    assert element["mode"] == "visible_only"
+    assert element["repairStatus"] == "required"
+    assert element["exportStatus"] == "blocked"
+
+
+def test_segment_accept_manual_parent_patch_ignores_pending_child_mask(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path / "workspace", sam2_provider=FakeSam2Provider(None)))
+    _upload_scene_and_state(client)
+    state = client.get("/api/workspace/state").json()
+    state["elements"] = [
+        {
+            **state["elements"][0],
+            "id": "parent",
+            "name": "wall cabinet",
+            "assetRole": "parent",
+            "bbox": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "canvas": {"x": 2, "y": 1, "w": 8, "h": 6},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+        {
+            **state["elements"][0],
+            "id": "child",
+            "name": "plant + bottle",
+            "assetRole": "removable_child",
+            "parentId": "parent",
+            "removeFromParent": "parent",
+            "bbox": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "canvas": {"x": 4, "y": 3, "w": 3, "h": 2},
+            "mask": None,
+            "segmentationStatus": "not_started",
+            "segmentationQuality": None,
+        },
+    ]
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+    patch_response = client.patch(
+        "/api/workspace/elements/parent/segment/mask",
+        json={
+            "operation": "replace",
+            "shape": {
+                "type": "rectangle",
+                "coordinateSpace": "canvas",
+                "bbox": {"x": 0, "y": 0, "w": 8, "h": 6},
+            },
+        },
+    )
+    assert patch_response.status_code == 200
+
+    response = client.post("/api/workspace/elements/parent/segment/accept")
+
+    assert response.status_code == 200
+    element = response.json()["element"]
+    assert element["segmentationStatus"] == "mask_accepted"
+    assert element["status"] == "accepted"
+    assert element["mode"] == "visible_only"
+    assert element["repairStatus"] == "not_required"
+    assert element["exportStatus"] == "ready"
+
+
 def test_segment_suggest_expands_canvas_when_raw_mask_exceeds_canvas(tmp_path: Path) -> None:
     mask = Image.new("L", (12, 10), 0)
     ImageDraw.Draw(mask).rectangle((1, 0, 10, 8), fill=255)

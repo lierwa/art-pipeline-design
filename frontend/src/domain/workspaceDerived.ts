@@ -1,9 +1,4 @@
-import {
-  ElementStatus,
-  updateElement,
-  WorkspaceElement,
-  WorkspaceState,
-} from "./workspace";
+import { ElementStatus, isCodexFinalSourceProvider, updateElement, WorkspaceElement, WorkspaceState } from "./workspace";
 
 export const DEFAULT_MERGE_LABEL = "Merged Asset";
 
@@ -61,7 +56,7 @@ export function isSegmentableWorkbenchElement(element: WorkspaceElement): boolea
     return false;
   }
 
-  if (element.sourceProvider === "codex_cli") {
+  if (isCodexFinalSourceProvider(element.sourceProvider)) {
     // WHY: Codex final 已经越过传统 accepted/extract_ready 状态，仍需要复用分割抽屉展示参考图与正式重绘结果。
     return ["repair_complete", "qa_failed"].includes(element.status);
   }
@@ -69,7 +64,9 @@ export function isSegmentableWorkbenchElement(element: WorkspaceElement): boolea
   // WHY: 用户在 Detect 阶段手工拆分/合并后的框，一旦 accepted 就是后续 SAM2/Codex 流程的一等资产；
   // 不能按 source=manual 拦掉，否则历史 run 中已有 mask 的 tower、towel+basket 会点不开审核面板。
   if (isManualSourceElement(element) && !hasReviewableSegmentMask(element)) {
-    return false;
+    // WHY: 父级 mask 可能被错误 child mask 依赖卡住；允许 accepted parent 无 SAM2 artifact 时
+    // 直接进入手修，给人工 override 一条比自动父子扣除更高优先级的路径。
+    return element.assetRole === "parent" && element.visible && SEGMENT_WORKBENCH_STATUSES.includes(element.status);
   }
   return SEGMENT_WORKBENCH_STATUSES.includes(element.status);
 }
@@ -268,7 +265,7 @@ export function buildPersistedBackStep(
 export function isCodexFinalReadyElement(element: WorkspaceElement): boolean {
   return (
     isSegmentableWorkbenchElement(element)
-    && element.sourceProvider === "codex_cli"
+    && isCodexFinalSourceProvider(element.sourceProvider)
     && element.exportStatus === "ready"
   );
 }
@@ -276,7 +273,7 @@ export function isCodexFinalReadyElement(element: WorkspaceElement): boolean {
 export function isAcceptedMaskElement(element: WorkspaceElement): boolean {
   return (
     isSegmentableWorkbenchElement(element)
-    && element.sourceProvider !== "codex_cli"
+    && !isCodexFinalSourceProvider(element.sourceProvider)
     && element.segmentationStatus === "mask_accepted"
   );
 }
@@ -305,9 +302,9 @@ export function isPendingCodexFinalElement(element: WorkspaceElement): boolean {
     return false;
   }
 
-  // WHY: 当前正式链路默认所有验收后的 mask 都要经过 Codex CLI 重绘；
+  // WHY: 当前正式链路默认所有验收后的 mask 都要经过 Codex final 重绘；
   // SAM2/bbox_alpha 产物只能作为中间预览，不能被误判为最终可导出资产。
-  return !(element.sourceProvider === "codex_cli" && ["ready", "exported"].includes(element.exportStatus));
+  return !(isCodexFinalSourceProvider(element.sourceProvider) && ["ready", "exported"].includes(element.exportStatus));
 }
 
 export function isGenerateSelectableElement(element: WorkspaceElement): boolean {
@@ -389,7 +386,7 @@ export function isExportReadyElement(element: WorkspaceElement): boolean {
     return false;
   }
   return (
-    element.sourceProvider === "codex_cli"
+    isCodexFinalSourceProvider(element.sourceProvider)
     && isRepairGateSatisfied(element)
     && isBackendExportGateSatisfied(element)
   );

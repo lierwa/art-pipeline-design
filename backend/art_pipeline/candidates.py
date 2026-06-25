@@ -64,7 +64,7 @@ def filter_detection_results(
     for item in filtered:
         if any(
             item["label"] == existing["label"]
-            and _box_iou(item["bbox"], existing["bbox"]) > nms_iou_threshold
+            and box_iou(item["bbox"], existing["bbox"]) > nms_iou_threshold
             for existing in kept
         ):
             continue
@@ -72,7 +72,7 @@ def filter_detection_results(
     return kept
 
 
-def _box_iou(left: dict, right: dict) -> float:
+def box_iou(left: dict, right: dict) -> float:
     left_x1 = left["x"]
     left_y1 = left["y"]
     left_x2 = left["x"] + left["w"]

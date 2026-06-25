@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import cast
@@ -12,9 +13,6 @@ from PIL import Image
 
 from art_pipeline.annotations import (
     validate_workspace_state_geometry,
-)
-from art_pipeline.candidates import (
-    filter_detection_results,
 )
 from art_pipeline.click_detect import candidate_from_click_mask
 from art_pipeline.codex_assets import (
@@ -40,11 +38,10 @@ from art_pipeline.http.routes.workflow import (
 from art_pipeline.detection import (
     DetectionProvider,
     DetectionProviderNotConfigured,
-    DetectionResult,
 )
 from art_pipeline.detection_results import (
+    collect_detection_results as _collect_detection_results,
     detection_results_to_elements as _detection_results_to_elements,
-    validate_detection_results as _validate_detection_results,
 )
 from art_pipeline.elements import (
     SourceMetadata,
@@ -53,7 +50,6 @@ from art_pipeline.elements import (
 from art_pipeline.exporting.exporter import ExportWorkspaceRequest, export_workspace
 from art_pipeline.provider_config import (
     Sam2ClickProvider,
-    detection_filter_vocabulary as _detection_filter_vocabulary,
     detection_provider_factory_from_env as _detection_provider_factory_from_env,
     get_detection_provider as _get_detection_provider,
     get_sam2_provider as _get_sam2_provider,
@@ -101,6 +97,7 @@ ASSET_MEDIA_TYPES = {
 }
 
 _USE_ENV_DETECTION_PROVIDER = object()
+_CHECKPOINT_TITLE_SUFFIX = re.compile(r" - checkpoint(?: \d+)?$")
 
 
 def create_app(
@@ -227,6 +224,45 @@ def create_app(
         _upsert_run(base_root, run)
         return {
             "run": run.model_dump(mode="json"),
+            "state": state.model_dump(mode="json"),
+        }
+
+    @app.post("/api/workspace/runs/{run_id}/duplicate")
+    def duplicate_workspace_run(run_id: str) -> dict:
+        base_root = app.state.workspace_root
+        source_root = _run_root(base_root, run_id)
+        runs = _read_runs(base_root)
+        source_run = next((run for run in runs if run.id == run_id), None)
+        if source_run is None or not source_root.exists():
+            raise HTTPException(status_code=404, detail="Processing record not found.")
+
+        state = _read_state(source_root)
+        target_id = _next_run_id(
+            base_root,
+            f"{Path(source_run.sourceFilename).stem}-checkpoint.png",
+        )
+        target_root = _run_root(base_root, target_id)
+        # WHY: 另存为的价值是冻结当前 run 的完整产物树；目录级复制能保留
+        # state、source、mask、stage snapshots 与缩略图，不让 checkpoint 依赖重算。
+        shutil.copytree(source_root, target_root)
+
+        now = _utc_now()
+        duplicate_run = WorkspaceRunSummary(
+            id=target_id,
+            title=_next_checkpoint_title(source_run.title, runs),
+            sourceFilename=source_run.sourceFilename,
+            createdAt=now,
+            updatedAt=now,
+            status=_derive_run_status(target_root, state),
+            elementCount=len(state.elements),
+        )
+        _upsert_run(base_root, duplicate_run)
+        return {
+            "run": duplicate_run.model_dump(mode="json"),
+            "runs": [
+                run.model_dump(mode="json")
+                for run in _read_runs(base_root)
+            ],
             "state": state.model_dump(mode="json"),
         }
 
@@ -455,27 +491,11 @@ def create_app(
             raise HTTPException(status_code=400, detail="Upload a source image before detection.")
 
         source_image = _require_source_image(root)
-        vocabulary = state.detectionVocabulary
-        try:
-            raw_results = provider.detect(
-                source_image,
-                vocabulary,
-                ". ".join(vocabulary),
-            )
-        except Exception as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Detection provider {provider.name!r} failed: {exc}",
-            ) from exc
-
-        results = _validate_detection_results(source_image, raw_results)
-        filtered_results = [
-            DetectionResult.model_validate(item)
-            for item in filter_detection_results(
-                [result.model_dump(mode="json") for result in results],
-                _detection_filter_vocabulary(vocabulary),
-            )
-        ]
+        filtered_results = _collect_detection_results(
+            provider,
+            source_image,
+            state.detectionVocabulary,
+        )
         _clear_generated_workspace_outputs(root)
         generated = _detection_results_to_elements(
             root,
@@ -488,6 +508,17 @@ def create_app(
         return next_state
 
     return app
+
+
+def _next_checkpoint_title(title: str, runs: list[WorkspaceRunSummary]) -> str:
+    base_title = _CHECKPOINT_TITLE_SUFFIX.sub("", title).strip() or "Untitled source"
+    existing_titles = {run.title for run in runs}
+    candidate = f"{base_title} - checkpoint"
+    suffix = 2
+    while candidate in existing_titles:
+        candidate = f"{base_title} - checkpoint {suffix}"
+        suffix += 1
+    return candidate
 
 
 app = create_app()

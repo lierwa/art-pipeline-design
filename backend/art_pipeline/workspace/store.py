@@ -4,11 +4,14 @@ import json
 import os
 import re
 import shutil
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
+from uuid import uuid4
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from art_pipeline.elements import (
     DEFAULT_WORKSPACE_VOCABULARY,
@@ -17,6 +20,8 @@ from art_pipeline.elements import (
 )
 
 RUN_ID_PATTERN = re.compile(r"^run_[A-Za-z0-9_-]+$")
+_STATE_LOCKS: dict[str, threading.Lock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
 
 
 class WorkspaceRunSummary(BaseModel):
@@ -90,7 +95,7 @@ def read_runs(workspace_root: Path) -> list[WorkspaceRunSummary]:
 def write_runs(workspace_root: Path, runs: list[WorkspaceRunSummary]) -> None:
     index_path = runs_index_path(workspace_root)
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = index_path.with_suffix(".json.tmp")
+    temp_path = index_path.with_name(f"{index_path.name}.{uuid4().hex}.tmp")
     temp_path.write_text(
         json.dumps(
             {"runs": [run.model_dump(mode="json") for run in runs]},
@@ -119,9 +124,24 @@ def derive_run_status(workspace_root: Path, state: WorkspaceState) -> str:
 
 
 def write_state(workspace_root: Path, state: WorkspaceState) -> None:
+    with _state_lock(workspace_root):
+        _write_state_unlocked(workspace_root, state)
+
+
+def update_state(
+    workspace_root: Path,
+    updater: Callable[[WorkspaceState], WorkspaceState],
+) -> WorkspaceState:
+    with _state_lock(workspace_root):
+        next_state = updater(read_state(workspace_root))
+        _write_state_unlocked(workspace_root, next_state)
+        return next_state
+
+
+def _write_state_unlocked(workspace_root: Path, state: WorkspaceState) -> None:
     state_path = workspace_state_path(workspace_root)
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = state_path.with_suffix(".json.tmp")
+    temp_path = state_path.with_name(f"{state_path.name}.{uuid4().hex}.tmp")
     temp_path.write_text(
         json.dumps(state.model_dump(mode="json"), indent=2),
         encoding="utf-8",
@@ -130,11 +150,29 @@ def write_state(workspace_root: Path, state: WorkspaceState) -> None:
     maybe_update_run_index(workspace_root.resolve(), state)
 
 
+def _state_lock(workspace_root: Path) -> threading.Lock:
+    key = str(workspace_state_path(workspace_root).resolve())
+    with _STATE_LOCKS_GUARD:
+        if key not in _STATE_LOCKS:
+            # WHY: state.json 是整文件快照，agent 并发回传时必须串行 RMW；
+            # 否则后写的元素会覆盖先写 sibling 的完成状态。
+            _STATE_LOCKS[key] = threading.Lock()
+        return _STATE_LOCKS[key]
+
+
 def read_state(workspace_root: Path) -> WorkspaceState:
     state_path = workspace_state_path(workspace_root)
     if not state_path.exists():
         return WorkspaceState()
-    state = WorkspaceState.model_validate_json(state_path.read_text(encoding="utf-8"))
+    try:
+        state = WorkspaceState.model_validate_json(state_path.read_text(encoding="utf-8"))
+    except ValidationError as exc:
+        # WHY: 历史记录 state.json 一旦被旧进程或手工操作写坏，点击记录不能让
+        # ASGI 抛 500；收敛成可处理的 409，用户可以恢复备份或重跑该记录。
+        raise HTTPException(
+            status_code=409,
+            detail="Processing record state is corrupted. Restore from backup or rerun this record.",
+        ) from exc
     return migrate_workspace_state(state)
 
 

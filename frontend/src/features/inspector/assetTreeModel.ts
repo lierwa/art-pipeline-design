@@ -7,18 +7,24 @@ export type AssetTreeNode = {
   children: AssetTreeNode[];
 };
 
-export type AssetTreeDropIntent = "inside" | AssetTreeReorderPosition;
+export type AssetTreeMoveAction =
+  | { kind: "parent"; parentId: string | null }
+  | { kind: "reorder"; targetElementId: string; position: AssetTreeReorderPosition };
 
-export type AssetTreeDropPreview = {
-  targetId: string;
-  intent: AssetTreeDropIntent;
-};
-
-export type AssetTreeDropAction =
-  | { kind: "parent" }
-  | { kind: "reorder"; position: AssetTreeReorderPosition };
-
-const ASSET_TREE_REORDER_EDGE_RATIO = 0.28;
+export function isAssetTreeDropDisabled(
+  source: WorkspaceElement | null | undefined,
+  parent: WorkspaceElement | null | undefined,
+): boolean {
+  if (!source || !isActiveCandidate(source)) {
+    return true;
+  }
+  // WHY: react-arborist 会把根区域和部分虚拟 drop 位置表达成没有业务 element 的
+  // parent；这里把它收敛为“落回根层级”，避免外部库协议泄漏进资产状态判断。
+  if (!parent) {
+    return false;
+  }
+  return !isActiveCandidate(parent);
+}
 
 export function buildAssetTree(elements: WorkspaceElement[]): AssetTreeNode[] {
   const nodeById = new Map<string, AssetTreeNode>();
@@ -61,40 +67,58 @@ export function collectExpandableIds(nodes: AssetTreeNode[]): string[] {
   ]);
 }
 
-export function flattenVisibleAssetTreeIds(nodes: AssetTreeNode[], expandedIds: Set<string>): string[] {
-  return nodes.flatMap((node) => [
-    node.element.id,
-    ...(expandedIds.has(node.element.id) ? flattenVisibleAssetTreeIds(node.children, expandedIds) : []),
-  ]);
-}
-
-export function resolveAssetTreeDropAction(
+export function resolveAssetTreeMoveAction(
   elements: WorkspaceElement[],
   elementId: string,
-  targetElementId: string,
-  intent: AssetTreeDropIntent,
-): AssetTreeDropAction | null {
-  if (intent === "before" || intent === "after") {
-    if (!canReorderElementNearTarget(elements, elementId, targetElementId)) {
-      return null;
-    }
-    return { kind: "reorder", position: intent };
-  }
-
-  if (!canMoveElementToParent(elements, elementId, targetElementId)) {
+  parentId: string | null,
+  index: number,
+): AssetTreeMoveAction | null {
+  const byId = new Map(elements.map((element) => [element.id, element]));
+  const element = byId.get(elementId);
+  if (!element || !isActiveCandidate(element)) {
     return null;
   }
-  return { kind: "parent" };
-}
 
-export function getAssetTreeDropIntentFromOffset(offsetY: number, height: number): AssetTreeDropIntent {
-  if (offsetY <= height * ASSET_TREE_REORDER_EDGE_RATIO) {
-    return "before";
+  const normalizedParentId = normalizeParentId(parentId);
+  const currentParentId = normalizeParentId(element.parentId);
+  if (normalizedParentId !== currentParentId) {
+    if (normalizedParentId !== null && !canMoveElementToParent(elements, elementId, normalizedParentId)) {
+      return null;
+    }
+    // WHY: react-arborist 已经负责可靠判断“落到哪个父级”；这里仅把外部库协议
+    // 收敛成工作区唯一的父子关系 mutation，避免前端再维护第二套 hover 语义。
+    return { kind: "parent", parentId: normalizedParentId };
   }
-  if (offsetY >= height * (1 - ASSET_TREE_REORDER_EDGE_RATIO)) {
-    return "after";
+
+  const siblings = elements.filter(
+    (candidate) =>
+      candidate.id !== elementId
+      && candidate.mergedInto === null
+      && normalizeParentId(candidate.parentId) === currentParentId,
+  );
+  if (siblings.length === 0) {
+    return null;
   }
-  return "inside";
+
+  const clampedIndex = Math.max(0, Math.min(index, siblings.length));
+  if (clampedIndex === 0) {
+    const target = siblings[0];
+    return canReorderElementNearTarget(elements, elementId, target.id)
+      ? { kind: "reorder", targetElementId: target.id, position: "before" }
+      : null;
+  }
+
+  if (clampedIndex >= siblings.length) {
+    const target = siblings[siblings.length - 1];
+    return canReorderElementNearTarget(elements, elementId, target.id)
+      ? { kind: "reorder", targetElementId: target.id, position: "after" }
+      : null;
+  }
+
+  const target = siblings[clampedIndex];
+  return canReorderElementNearTarget(elements, elementId, target.id)
+    ? { kind: "reorder", targetElementId: target.id, position: "before" }
+    : null;
 }
 
 export function canReorderElementNearTarget(
@@ -181,7 +205,7 @@ export function formatAssetBadgeLabel(element: WorkspaceElement): string {
   if (element.segmentationStatus === "mask_accepted") {
     return "Mask ready";
   }
-  if (element.segmentationStatus === "mask_suggested") {
+  if (element.segmentationStatus === "mask_suggested" || element.segmentationStatus === "mask_editing") {
     return "Mask draft";
   }
 
@@ -221,17 +245,17 @@ export function formatAssetBadgeLabel(element: WorkspaceElement): string {
   return "Detected";
 }
 
-export function statusToneClass(status: WorkspaceElement["status"]): string {
+export function statusTagTone(status: WorkspaceElement["status"]): "success" | "danger" | "warning" | "info" {
   if (["accepted", "exported", "extract_ready", "extracted", "repair_complete"].includes(status)) {
-    return "asset-badge-success";
+    return "success";
   }
   if (["rejected", "qa_failed"].includes(status)) {
-    return "asset-badge-danger";
+    return "danger";
   }
   if (["edited", "child", "merged", "repair_pending"].includes(status)) {
-    return "asset-badge-warning";
+    return "warning";
   }
-  return "asset-badge-info";
+  return "info";
 }
 
 function normalizeParentId(parentId: string | null | undefined): string | null {

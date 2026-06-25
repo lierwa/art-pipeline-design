@@ -87,6 +87,23 @@ describe("workspaceDerived segment eligibility", () => {
     expect(isPendingSegmentMaskElement(acceptedManualWithoutMask)).toBe(true);
   });
 
+  it("opens manual parent boxes without masks so users can override broken child-dependent masks", () => {
+    const acceptedManualParentWithoutMask = {
+      ...baseElement,
+      id: "element_parent",
+      name: "bathroom cabinet",
+      status: "accepted",
+      assetRole: "parent",
+      segmentationStatus: "not_started",
+      mask: null,
+      source: "manual",
+      sourceProvider: "manual",
+    } satisfies WorkspaceElement;
+
+    expect(isSegmentableWorkbenchElement(acceptedManualParentWithoutMask)).toBe(true);
+    expect(isPendingSegmentMaskElement(acceptedManualParentWithoutMask)).toBe(true);
+  });
+
   it("keeps repair-pending parent masks reviewable from the asset tree", () => {
     const repairPendingParent = {
       ...baseElement,

@@ -24,14 +24,19 @@ import {
   SegmentEdgeBoard,
   type SegmentDraftHistoryStatus,
   type SegmentEdgeBoardHandle,
+  type SegmentMaskPatchMeta,
 } from "../segment/SegmentEdgeBoard";
 import { ExportPanel, ExtractionPreview, RepairComparison } from "../export/WorkspacePreviewPanels";
 import { GenerateReviewPanel } from "../generate/GenerateReviewPanel";
+import { WorkspaceTaskPanel } from "../tasks/WorkspaceTaskPanel";
+import type { WorkspacePendingTask, WorkspaceTask } from "../../domain/workspaceTasks";
 
 type AppCanvasWorkspaceProps = {
   acceptingSegmentElementId: string | null;
   activeRunId: string | null;
   assetCacheKey: number;
+  selectedElementAssetCacheKey: number;
+  selectedSegmentAssetCacheKey: number;
   canDrawMissingMask: boolean;
   canMergeSelectedElements: boolean;
   canRedo: boolean;
@@ -67,6 +72,8 @@ type AppCanvasWorkspaceProps = {
   sourceUrl: string | null;
   splitRegions: DraftRegion[];
   suggestingSegmentElementId: string | null;
+  pendingTask: WorkspacePendingTask | null;
+  tasks: WorkspaceTask[];
   tool: CanvasTool;
   workflowStage: WorkflowStage;
   workspace: WorkspaceState;
@@ -92,9 +99,15 @@ type AppCanvasWorkspaceProps = {
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
   onOverlayToggle: (key: keyof OverlayState) => void;
   onPanChange: (deltaX: number, deltaY: number) => void;
-  onPatchSegmentMask: (elementId: string, patch: SegmentMaskPatchRequest) => boolean | void | Promise<boolean | void>;
+  onPatchSegmentMask: (
+    elementId: string,
+    patch: SegmentMaskPatchRequest,
+    meta?: SegmentMaskPatchMeta,
+  ) => boolean | void | Promise<boolean | void>;
   onPromptBoardExpandedChange: (isExpanded: boolean) => void;
   onRedo: () => void;
+  onRetryFailedTask: (taskId: string) => void;
+  onRerunSegmentMasks: (elementIds: string[]) => void;
   onSaveDetectionVocabulary: (labels: string[]) => void;
   onSaveElement: () => void;
   onSelectElement: (
@@ -118,6 +131,8 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
     acceptingSegmentElementId,
     activeRunId,
     assetCacheKey,
+    selectedElementAssetCacheKey,
+    selectedSegmentAssetCacheKey,
     canDrawMissingMask,
     canMergeSelectedElements,
     canRedo,
@@ -153,6 +168,8 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
     sourceUrl,
     splitRegions,
     suggestingSegmentElementId,
+    pendingTask,
+    tasks,
     tool,
     workflowStage,
     workspace,
@@ -181,6 +198,8 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
     onPatchSegmentMask,
     onPromptBoardExpandedChange,
     onRedo,
+    onRetryFailedTask,
+    onRerunSegmentMasks,
     onSaveDetectionVocabulary,
     onSaveElement,
     onSelectElement,
@@ -195,6 +214,11 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
   } = props;
   const shouldShowSegmentDrawer = Boolean(selectedSegmentElement && workflowStage !== "generate");
   const shouldShowGenerateDrawer = Boolean(workflowStage === "generate" && workspace.source);
+  const hasRunningSam2Task = pendingTask?.type === "sam2_mask_batch"
+    || tasks.some((task) => task.type === "sam2_mask_batch" && (task.status === "queued" || task.status === "running"));
+  const segmentRerunTargetIds = selectedSegmentElement
+    ? (selectedElementIds.length > 0 ? selectedElementIds : [selectedSegmentElement.id])
+    : [];
 
   return (
     <section
@@ -207,7 +231,6 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
         hasSource={workspace.source !== null}
         canClickDetect={workspace.source !== null && !isAnnotating}
         hasSelection={selectedElement !== null}
-        canSplit={selectedElement !== null}
         canMerge={canMergeSelectedElements}
         canUndo={canUndo}
         canRedo={canRedo}
@@ -225,54 +248,61 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
         onTogglePanMode={onTogglePanMode}
       />
 
-      <CanvasStage
-        sourceUrl={sourceUrl}
-        source={workspace.source}
-        overlays={overlays}
-        overlayElements={canvasOverlayElements}
-        selectedElementId={selectedElementId}
-        selectedElementIds={selectedElementIds}
-        editingElementId={editingElementId}
-        mergePreview={mergePreview}
-        sourceDetails={sourceDetails}
-        tool={tool}
-        draftRegion={draftRegion}
-        splitRegions={splitRegions}
-        missingMaskRegion={missingMaskRegion}
-        assetCacheKey={assetCacheKey}
-        workspaceRunId={activeRunId}
-        canDrawMissingMask={canDrawMissingMask}
-        hasUnsavedBoxEdit={editingElementId === selectedElement?.id && hasUnsavedGeometryChanges}
-        zoomPercent={canvasZoom}
-        isPanMode={isCanvasPanMode}
-        panOffset={canvasPan}
-        focusRequest={canvasFocusRequest}
-        manualElementName={manualElementName}
-        renamingElementId={renamingElementId}
-        canCreateChildFromDraft={selectedElement !== null}
-        onSelectElement={onSelectElement}
-        onClearSelection={onClearSelection}
-        onOpenElementContextMenu={onOpenElementContextMenu}
-        onStartRenameElement={props.onStartInlineRenameElement}
-        onCommitRenameElement={onCommitRenameElement}
-        onCancelRenameElement={onCancelInlineRenameElement}
-        onBoxDraftChange={onBoxDraftChange}
-        onZoomByWheel={onZoomByWheel}
-        onZoomByGesture={onZoomByGesture}
-        onPanChange={onPanChange}
-        onDraftRegionChange={onDraftRegionChange}
-        onAddSplitRegion={onAddSplitRegion}
-        onMissingMaskRegionChange={onMissingMaskRegionChange}
-        onCompleteMissingMaskRegion={onCompleteMissingMaskRegion}
-        onManualElementNameChange={onManualElementNameChange}
-        onCreateElement={onCreateElement}
-        onCreateChildElement={onCreateChildElement}
-        onConfirmBoxEdit={onSaveElement}
-        onCancelBoxEdit={onCancelBoxEdit}
-        onClearDrafts={onClearDrafts}
-        onApplySplit={onApplySplit}
-        onClickDetectPoint={onClickDetectPoint}
-      />
+      <div className="canvas-stage-shell">
+        <CanvasStage
+          sourceUrl={sourceUrl}
+          source={workspace.source}
+          overlays={overlays}
+          overlayElements={canvasOverlayElements}
+          selectedElementId={selectedElementId}
+          selectedElementIds={selectedElementIds}
+          editingElementId={editingElementId}
+          mergePreview={mergePreview}
+          sourceDetails={sourceDetails}
+          tool={tool}
+          draftRegion={draftRegion}
+          splitRegions={splitRegions}
+          missingMaskRegion={missingMaskRegion}
+          assetCacheKey={assetCacheKey}
+          workspaceRunId={activeRunId}
+          canDrawMissingMask={canDrawMissingMask}
+          hasUnsavedBoxEdit={editingElementId === selectedElement?.id && hasUnsavedGeometryChanges}
+          zoomPercent={canvasZoom}
+          isPanMode={isCanvasPanMode}
+          panOffset={canvasPan}
+          focusRequest={canvasFocusRequest}
+          manualElementName={manualElementName}
+          renamingElementId={renamingElementId}
+          canCreateChildFromDraft={selectedElement !== null}
+          onSelectElement={onSelectElement}
+          onClearSelection={onClearSelection}
+          onOpenElementContextMenu={onOpenElementContextMenu}
+          onStartRenameElement={props.onStartInlineRenameElement}
+          onCommitRenameElement={onCommitRenameElement}
+          onCancelRenameElement={onCancelInlineRenameElement}
+          onBoxDraftChange={onBoxDraftChange}
+          onZoomByWheel={onZoomByWheel}
+          onZoomByGesture={onZoomByGesture}
+          onPanChange={onPanChange}
+          onDraftRegionChange={onDraftRegionChange}
+          onAddSplitRegion={onAddSplitRegion}
+          onMissingMaskRegionChange={onMissingMaskRegionChange}
+          onCompleteMissingMaskRegion={onCompleteMissingMaskRegion}
+          onManualElementNameChange={onManualElementNameChange}
+          onCreateElement={onCreateElement}
+          onCreateChildElement={onCreateChildElement}
+          onConfirmBoxEdit={onSaveElement}
+          onCancelBoxEdit={onCancelBoxEdit}
+          onClearDrafts={onClearDrafts}
+          onApplySplit={onApplySplit}
+          onClickDetectPoint={onClickDetectPoint}
+        />
+        <WorkspaceTaskPanel
+          pendingTask={pendingTask}
+          tasks={tasks}
+          onRetryFailedTask={onRetryFailedTask}
+        />
+      </div>
 
       {workspace.source ? (
         <DetectionPromptBoardDock
@@ -289,13 +319,16 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
           <SegmentEdgeBoard
             ref={segmentEdgeBoardRef}
             element={selectedSegmentElement}
-            assetCacheKey={assetCacheKey}
+            assetCacheKey={selectedSegmentAssetCacheKey}
             workspaceRunId={activeRunId}
             isSuggesting={suggestingSegmentElementId === selectedSegmentElement.id}
             isAccepting={acceptingSegmentElementId === selectedSegmentElement.id}
+            isRerunning={hasRunningSam2Task}
+            rerunMaskTargetCount={segmentRerunTargetIds.length}
             onAcceptMask={onAcceptSegmentMask}
             onDraftHistoryChange={onSegmentDraftHistoryChange}
             onPatchMask={onPatchSegmentMask}
+            onRerunMask={() => onRerunSegmentMasks(segmentRerunTargetIds)}
           />
         </FloatingStageDrawer>
       ) : null}
@@ -315,7 +348,7 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
           {selectedElement ? (
             <ExtractionPreview
               selectedElement={selectedElement}
-              assetCacheKey={assetCacheKey}
+              assetCacheKey={selectedElementAssetCacheKey}
               workspaceRunId={activeRunId}
             />
           ) : null}
@@ -323,7 +356,7 @@ export function AppCanvasWorkspace(props: AppCanvasWorkspaceProps) {
             selectedElement={selectedElement}
             qaReport={selectedRepairQaReport}
             repairMetadata={selectedRepairMetadata}
-            assetCacheKey={assetCacheKey}
+            assetCacheKey={selectedElementAssetCacheKey}
             workspaceRunId={activeRunId}
             hasMissingMaskPreview={selectedHasMissingMask}
           />

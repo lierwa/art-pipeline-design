@@ -89,6 +89,12 @@ export function buildAppWorkbenchProps({
   const canvasSourceUrl = shell.sourceUrl
     ?? (shell.workspace.source ? buildSourceUrl(shell.assetCacheKey, shell.activeRunId) : null);
   const taskItemsByElementId = buildTaskItemIndex(workspaceTasks.tasks, shell.workspace.elements);
+  const selectedElementAssetCacheKey = derived.selectedElement
+    ? shell.assetCacheKey + (shell.elementAssetCacheKeys[derived.selectedElement.id] ?? 0)
+    : shell.assetCacheKey;
+  const selectedSegmentAssetCacheKey = derived.selectedSegmentElement
+    ? shell.assetCacheKey + (shell.elementAssetCacheKeys[derived.selectedSegmentElement.id] ?? 0)
+    : shell.assetCacheKey;
 
   return {
     topBar: {
@@ -102,12 +108,16 @@ export function buildAppWorkbenchProps({
       secondaryActionHelp: workflow.secondaryWorkflowAction?.help ?? null,
       isSecondaryActionRunning: workflow.secondaryWorkflowAction?.isRunning ?? false,
       isSecondaryActionDisabled: workflow.secondaryWorkflowAction?.disabled ?? false,
+      canStopCodexGeneration: workspaceTasks.hasActiveCodexFinalTask,
+      isStoppingCodexGeneration: workspaceTasks.isStoppingCodexFinalTask,
       runs: shell.workspaceRuns,
       activeRunId: shell.activeRunId,
       onUpload: fileActions.handleUpload,
       onPrimaryAction: workflow.primaryWorkflowAction.onRun,
       onSecondaryAction: workflow.secondaryWorkflowAction?.onRun,
+      onStopCodexGeneration: () => void workspaceTasks.handleStopCodexFinalTasks(),
       onSelectRun: (runId) => void runController.handleSelectRun(runId),
+      onDuplicateRun: (runId) => void runController.handleDuplicateRun(runId),
       onDeleteRun: (runId) => void runController.handleDeleteRun(runId),
     },
     rail: {
@@ -125,6 +135,8 @@ export function buildAppWorkbenchProps({
       acceptingSegmentElementId: segment.acceptingSegmentElementId,
       activeRunId: shell.activeRunId,
       assetCacheKey: shell.assetCacheKey,
+      selectedElementAssetCacheKey,
+      selectedSegmentAssetCacheKey,
       canDrawMissingMask: derived.canDrawMissingMask,
       canMergeSelectedElements: derived.canMergeSelectedElements,
       canRedo: undoRedo.canRedoApp,
@@ -169,6 +181,8 @@ export function buildAppWorkbenchProps({
       sourceUrl: canvasSourceUrl,
       splitRegions: shell.splitRegions,
       suggestingSegmentElementId: segment.suggestingSegmentElementId,
+      pendingTask: workspaceTasks.pendingTask,
+      tasks: workspaceTasks.tasks,
       tool: shell.viewport.tool,
       workflowStage: workflowController.effectiveWorkflow.stage,
       workspace: shell.workspace,
@@ -201,6 +215,8 @@ export function buildAppWorkbenchProps({
       onPatchSegmentMask: segment.handlePatchSegmentMask,
       onPromptBoardExpandedChange: shell.setIsPromptBoardExpanded,
       onRedo: () => void undoRedo.handleRedo(),
+      onRetryFailedTask: (taskId) => void workspaceTasks.handleRetryFailedTask(taskId),
+      onRerunSegmentMasks: (elementIds) => void segment.handleRerunSegmentMasks(elementIds),
       onSaveDetectionVocabulary: (labels) => void detection.handleSaveDetectionVocabulary(labels),
       onSaveElement: () => void element.handleSaveElement(),
       onSelectElement: canvasInteraction.handleSelectElement,
@@ -252,6 +268,7 @@ export function buildAppWorkbenchProps({
       onMissingMaskDraftChange: repair.setMissingMaskDraft,
       onMoveElementToParent: (elementId, parentId) => void element.handleMoveElementToParent(elementId, parentId),
       onPatchElementRole: (elementId, patch) => void element.handlePatchElementRole(elementId, patch),
+      onRejectElement: (elementId) => void element.handleReject(elementId),
       onReExtract: () => void extraction.handleExtractSelected(
         derived.selectedElement,
         derived.canRunSelectedExtraction,
@@ -262,6 +279,8 @@ export function buildAppWorkbenchProps({
         position,
       ),
       generateSelection: workflowController.effectiveWorkflow.generateSelection,
+      onToggleAllGenerateSelection: (elementIds, isSelected) =>
+        void workflowController.handleToggleAllGenerateSelection(elementIds, isSelected),
       onToggleGenerateSelection: (elementId, isSelected) =>
         void workflowController.handleToggleGenerateSelection(elementId, isSelected),
       onReplaceMaskByCurrentShape: () => void extraction.handleReplaceMaskByCurrentShape(
@@ -312,8 +331,6 @@ export function buildAppWorkbenchProps({
       onRenameElement: (elementId) => void element.handleRenameElement(elementId),
       onSplitParent: split.handleStartSplitParent,
       onWorkflowToastDismiss: () => shell.setError(null),
-      tasks: workspaceTasks.tasks,
-      onRetryFailedTask: (taskId) => void workspaceTasks.handleRetryFailedTask(taskId),
     },
   };
 }

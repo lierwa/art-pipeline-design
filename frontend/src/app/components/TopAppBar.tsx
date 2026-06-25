@@ -1,8 +1,9 @@
 import { ChangeEvent } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { HelpCircle, Loader2, PackageOpen, Play, RefreshCw, Settings, Upload } from "lucide-react";
+import { CircleStop, HelpCircle, Loader2, PackageOpen, Play, RefreshCw, Settings, Upload } from "lucide-react";
 
 import { IconButton } from "../../shared/ui/IconButton";
+import { ConfirmActionDialog } from "../../shared/ui/ConfirmActionDialog";
 import { ProcessingRecordsPopover } from "./ProcessingRecordsPopover";
 import { SourceMetadata, WorkspaceRunSummary } from "../../domain/workspace";
 
@@ -17,12 +18,16 @@ type TopAppBarProps = {
   secondaryActionHelp?: string | null;
   isSecondaryActionRunning?: boolean;
   isSecondaryActionDisabled?: boolean;
+  canStopCodexGeneration: boolean;
+  isStoppingCodexGeneration: boolean;
   runs: WorkspaceRunSummary[];
   activeRunId: string | null;
   onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
   onPrimaryAction: () => void;
   onSecondaryAction?: () => void;
+  onStopCodexGeneration: () => void | Promise<void>;
   onSelectRun: (runId: string) => void;
+  onDuplicateRun: (runId: string) => void | Promise<void>;
   onDeleteRun: (runId: string) => void | Promise<void>;
 };
 
@@ -37,12 +42,16 @@ export function TopAppBar({
   secondaryActionHelp = null,
   isSecondaryActionRunning = false,
   isSecondaryActionDisabled = false,
+  canStopCodexGeneration,
+  isStoppingCodexGeneration,
   runs,
   activeRunId,
   onUpload,
   onPrimaryAction,
   onSecondaryAction,
+  onStopCodexGeneration,
   onSelectRun,
+  onDuplicateRun,
   onDeleteRun,
 }: TopAppBarProps) {
   return (
@@ -106,10 +115,35 @@ export function TopAppBar({
             )}
             {isPrimaryActionRunning ? "Working..." : primaryActionLabel}
           </button>
+          {canStopCodexGeneration ? (
+            <ConfirmActionDialog
+              title="Stop Codex generation"
+              description="Terminate active Codex generation processes and mark the current running Codex jobs failed. Saved source images, masks, and completed assets remain untouched."
+              confirmLabel="Stop Codex generation"
+              onConfirm={onStopCodexGeneration}
+              trigger={(
+                <button
+                  type="button"
+                  className="stop-codex-action"
+                  aria-label={isStoppingCodexGeneration ? "Stopping Codex generation" : "Stop Codex generation"}
+                  disabled={isStoppingCodexGeneration}
+                  title="Stop active Codex generation processes"
+                >
+                  {isStoppingCodexGeneration ? (
+                    <Loader2 size={15} className="is-spinning" aria-hidden="true" />
+                  ) : (
+                    <CircleStop size={15} aria-hidden="true" />
+                  )}
+                  {isStoppingCodexGeneration ? "Stopping..." : "Stop Codex"}
+                </button>
+              )}
+            />
+          ) : null}
           <ProcessingRecordsPopover
             runs={runs}
             activeRunId={activeRunId}
             onSelectRun={onSelectRun}
+            onDuplicateRun={onDuplicateRun}
             onDeleteRun={onDeleteRun}
           />
           <IconButton

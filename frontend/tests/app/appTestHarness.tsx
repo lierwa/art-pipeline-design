@@ -41,55 +41,6 @@ export function mockElementRect(element: Element, rect: { left: number; top: num
   });
 }
 
-export async function dragSortableAssetTreeItem(
-  sourceItem: HTMLElement,
-  targetPoint: { clientX: number; clientY: number },
-) {
-  const sourceButton = sourceItem.querySelector(".asset-tree-select");
-  if (!(sourceButton instanceof HTMLElement)) {
-    throw new Error("Missing asset tree drag handle");
-  }
-  const sourceRect = sourceItem.getBoundingClientRect();
-  const startX = sourceRect.left + sourceRect.width / 2;
-  const startY = sourceRect.top + sourceRect.height / 2;
-  const mouseBase = {
-    button: 0,
-    buttons: 1,
-  };
-
-  fireEvent.mouseDown(sourceButton, {
-    ...mouseBase,
-    clientX: startX,
-    clientY: startY,
-  });
-  fireEvent.mouseMove(window, {
-    ...mouseBase,
-    clientX: startX + 8,
-    clientY: startY + 8,
-  });
-  fireEvent.mouseMove(document, {
-    ...mouseBase,
-    clientX: startX + 8,
-    clientY: startY + 8,
-  });
-  fireEvent.mouseMove(window, {
-    ...mouseBase,
-    clientX: targetPoint.clientX,
-    clientY: targetPoint.clientY,
-  });
-  fireEvent.mouseMove(document, {
-    ...mouseBase,
-    clientX: targetPoint.clientX,
-    clientY: targetPoint.clientY,
-  });
-  fireEvent.mouseUp(document, {
-    ...mouseBase,
-    clientX: targetPoint.clientX,
-    clientY: targetPoint.clientY,
-  });
-  await Promise.resolve();
-}
-
 export function persistedWorkspaceState(state: unknown): WorkspaceState {
   // WHY: 持久化契约断言复用 workspace normalizer，避免测试 fixture 变成第二套默认字段来源。
   return normalizeWorkspaceState(state as WorkspaceState);

@@ -38,6 +38,7 @@ export function useAppShellState() {
   const [isPromptBoardExpanded, setIsPromptBoardExpanded] = useState(true);
   const [elementDraft, setElementDraft] = useState<ElementEditorDraft | null>(null);
   const [assetCacheKey, setAssetCacheKey] = useState(0);
+  const [elementAssetCacheKeys, setElementAssetCacheKeys] = useState<Record<string, number>>({});
   const viewport = useCanvasViewport();
   const [canvasFocusRequest, setCanvasFocusRequest] = useState<CanvasFocusRequest | null>(null);
   const [draftRegion, setDraftRegion] = useState<DraftRegion | null>(null);
@@ -61,6 +62,7 @@ export function useAppShellState() {
     canvasFocusRequest,
     draftRegion,
     elementDraft,
+    elementAssetCacheKeys,
     error,
     exportSummary,
     isExporting,
@@ -79,6 +81,7 @@ export function useAppShellState() {
     setCanvasFocusRequest,
     setDraftRegion,
     setElementDraft,
+    setElementAssetCacheKeys,
     setError,
     setExportSummary,
     setIsExporting,

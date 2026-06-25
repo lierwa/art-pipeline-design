@@ -11,10 +11,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from art_pipeline.workspace.task_events import notify_workspace_task_change
 
-TaskType = Literal["sam2_mask_batch", "codex_final_batch"]
+
+TaskType = Literal["detection_batch", "sam2_mask_batch", "codex_final_batch"]
 TaskStatus = Literal["queued", "running", "succeeded", "failed"]
-TaskItemStatus = Literal["queued", "running", "succeeded", "failed", "skipped"]
+TaskItemStatus = Literal["queued", "claimed", "running", "succeeded", "failed", "skipped"]
 
 
 class WorkspaceTaskItem(BaseModel):
@@ -38,6 +40,7 @@ class WorkspaceTask(BaseModel):
     failed: int = 0
     skipped: int = 0
     items: list[WorkspaceTaskItem]
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 _LOCKS: dict[str, threading.Lock] = {}
@@ -102,6 +105,32 @@ def update_workspace_task(
         return summarized
 
 
+def replace_task_items(
+    workspace_root: Path,
+    task_id: str,
+    items: list[WorkspaceTaskItem],
+) -> WorkspaceTask:
+    return update_workspace_task(
+        workspace_root,
+        task_id,
+        lambda task: task.model_copy(update={"items": items, "total": len(items)}),
+    )
+
+
+def append_task_item(
+    workspace_root: Path,
+    task_id: str,
+    item: WorkspaceTaskItem,
+) -> WorkspaceTask:
+    return update_workspace_task(
+        workspace_root,
+        task_id,
+        lambda task: task.model_copy(
+            update={"items": [*task.items, item], "total": len(task.items) + 1}
+        ),
+    )
+
+
 def summarize_workspace_task(task: WorkspaceTask) -> WorkspaceTask:
     done = sum(1 for item in task.items if item.status == "succeeded")
     failed = sum(1 for item in task.items if item.status == "failed")
@@ -109,7 +138,7 @@ def summarize_workspace_task(task: WorkspaceTask) -> WorkspaceTask:
     terminal = done + failed + skipped
     if terminal >= task.total:
         status: TaskStatus = "failed" if failed > 0 else "succeeded"
-    elif any(item.status == "running" for item in task.items):
+    elif any(item.status in {"claimed", "running"} for item in task.items):
         status = "running"
     else:
         status = "queued"
@@ -141,7 +170,7 @@ def set_task_item_status(
                 items.append(item)
                 continue
             started_at = item.startedAt
-            if status == "running" and not started_at:
+            if status in {"claimed", "running"} and not started_at:
                 started_at = now
             finished_at = item.finishedAt
             if status in {"succeeded", "failed", "skipped"}:
@@ -180,6 +209,7 @@ def _write_task_unlocked(workspace_root: Path, task: WorkspaceTask) -> None:
     temp_path = path.with_suffix(".json.tmp")
     temp_path.write_text(json.dumps(task.model_dump(mode="json"), indent=2), encoding="utf-8")
     os.replace(temp_path, path)
+    notify_workspace_task_change(workspace_root)
 
 
 def _read_task_unlocked(workspace_root: Path, task_id: str) -> WorkspaceTask:

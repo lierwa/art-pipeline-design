@@ -1,6 +1,6 @@
 import { Undo2 } from "lucide-react";
 
-import type { ExportSummary, SourceMetadata, WorkflowStage, WorkspaceElement } from "../../domain/workspace";
+import { isCodexFinalSourceProvider, type ExportSummary, type SourceMetadata, type WorkflowStage, type WorkspaceElement } from "../../domain/workspace";
 
 type PipelineRailProps = {
   source: SourceMetadata | null;
@@ -183,7 +183,7 @@ function hasSegmentationReady(element: WorkspaceElement): boolean {
 
 function hasCodexFinalReady(element: WorkspaceElement): boolean {
   return isSegmentableElement(element)
-    && element.sourceProvider === "codex_cli"
+    && isCodexFinalSourceProvider(element.sourceProvider)
     && ["ready", "exported"].includes(element.exportStatus);
 }
 

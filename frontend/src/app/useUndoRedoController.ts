@@ -62,26 +62,20 @@ export function useUndoRedoController({
   setWorkspaceHistory,
   workspaceHistory,
 }: UseUndoRedoControllerInput) {
-  const hasPendingSegmentDraftHistory = segmentDraftHistoryStatus.hasDirtyDraft;
-  const canUndoApp =
-    (hasPendingSegmentDraftHistory && segmentDraftHistoryStatus.canUndo)
-    || canUndoBoxEdit
-    || canUndoHistory(workspaceHistory);
-  const canRedoApp =
-    (hasPendingSegmentDraftHistory && segmentDraftHistoryStatus.canRedo)
-    || canRedoBoxEdit
-    || canRedoHistory(workspaceHistory);
+  const canUndoSegmentDraft = segmentDraftHistoryStatus.canUndo;
+  const canRedoSegmentDraft = segmentDraftHistoryStatus.canRedo;
+  const canUndoApp = canUndoSegmentDraft || canUndoBoxEdit || canUndoHistory(workspaceHistory);
+  const canRedoApp = canRedoSegmentDraft || canRedoBoxEdit || canRedoHistory(workspaceHistory);
   const canGoBack =
     canUndoApp
     || canResetDetectionStage
     || persistedBackStep !== null;
 
   async function handleUndo() {
-    // WHY: mask 笔刷/魔棒已经是自动保存操作；保存完成后必须交给 workspace history，
-    // 否则本地 draft 栈会挡住 Ctrl+Z，导致界面状态和已持久化状态不同步。
+    // WHY: Segment mask 的权威结果是后端写出的 PNG artifact。workspace history 只能回滚
+    // JSON 状态，不能恢复 sam2_edge/mask.png，所以只要本地 mask 栈还在就必须优先写回 mask。
     if (
-      hasPendingSegmentDraftHistory
-      && segmentDraftHistoryStatus.canUndo
+      canUndoSegmentDraft
       && segmentEdgeBoardRef.current?.undoDraft()
     ) {
       setStatus("Mask edit undone.");
@@ -118,10 +112,9 @@ export function useUndoRedoController({
   }
 
   async function handleRedo() {
-    // WHY: redo 同样只处理尚未落到全局历史的本地草稿，已保存操作由 workspace redo 恢复。
+    // WHY: redo 和 undo 一样要恢复 PNG artifact；不能用 workspace redo 替代 mask patch。
     if (
-      hasPendingSegmentDraftHistory
-      && segmentDraftHistoryStatus.canRedo
+      canRedoSegmentDraft
       && segmentEdgeBoardRef.current?.redoDraft()
     ) {
       setStatus("Mask edit redone.");

@@ -1,21 +1,62 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Protocol
+from pathlib import Path, PurePosixPath
+from typing import Any, Protocol, Sequence, cast
+from uuid import uuid4
 
-from PIL import Image
-
+from art_pipeline.codex_final_brief import (
+    CodexFinalBriefRemovedChild,
+    render_codex_final_brief,
+)
+from art_pipeline.codex_final_prompt import (
+    CodexFinalPromptRemovedChild,
+    build_codex_final_prompt,
+    normalize_codex_prompt_hint,
+)
+from art_pipeline.codex_final_inputs import (
+    LAYOUT_GUIDE_ROLE,
+    MASK_ROLE,
+    SOURCE_CROP_ROLE,
+    TRANSPARENT_CUTOUT_ROLE,
+    CodexFinalInputImage,
+    build_codex_final_input_images,
+    codex_final_input_images_from_job_inputs,
+    required_input_path,
+    resolve_codex_final_input_paths,
+)
+from art_pipeline.codex_final_layout import render_codex_final_layout_guide
+from art_pipeline.codex_final_quality import (
+    assess_codex_final_candidate,
+    write_codex_final_quality_report,
+)
+from art_pipeline.codex_final_repair_inputs import (
+    CODEX_FINAL_CANDIDATE_FILENAME,
+    discover_codex_final_repair_input_paths,
+)
+from art_pipeline.codex_final_jobs import CodexFinalJob
+from art_pipeline.codex_final_paths import (
+    CODEX_FINAL_STAGE,
+    codex_final_asset_path,
+    codex_final_paths,
+    has_codex_final_asset,
+    read_codex_final_request_metadata,
+)
+from art_pipeline.codex_final_sources import (
+    copy_codex_source_crop,
+    materialize_codex_selected_source,
+)
+from art_pipeline.codex_postprocess import (
+    choose_chroma_key,
+    finalize_codex_raw_output,
+    promote_codex_final_candidate,
+)
 from art_pipeline.elements import ElementRecord, GenerationProfile, WorkspaceState
 from art_pipeline.exporting.files import resolve_workspace_path
 from art_pipeline.segment.assets import sam2_edge_paths
-
-
-CODEX_FINAL_STAGE = "codex_final"
-CODEX_FINAL_METADATA_FILENAME = "generation.json"
-CODEX_FINAL_PROVIDER = "codex_cli"
 
 
 @dataclass(frozen=True)
@@ -27,8 +68,40 @@ class CodexAssetRequest:
     mask_path: Path
     image_paths: tuple[Path, ...]
     output_path: Path
+    raw_output_path: Path
     work_dir: Path
+    chroma_key: tuple[int, int, int]
     prompt: str
+
+
+@dataclass(frozen=True)
+class PreparedCodexFinalJob:
+    element: ElementRecord
+    generation_profile: GenerationProfile
+    removed_children: tuple["RemovedChildContext", ...]
+    prompt_hint: str | None
+    paths: dict[str, str]
+    source_crop_workspace_path: str
+    reference_asset_workspace_path: str
+    mask_workspace_path: str
+    input_images: tuple[CodexFinalInputImage, ...]
+    reference_asset_path: Path
+    source_crop_path: Path
+    mask_path: Path
+    analysis_mask_path: Path
+    layout_guide_path: Path
+    quality_report_path: Path
+    final_asset_path: Path
+    final_source_crop_path: Path
+    work_dir: Path
+    output_path: Path
+    raw_output_path: Path
+    prompt_path: Path
+    brief_image_path: Path
+    brief_json_path: Path
+    chroma_key: tuple[int, int, int]
+    prompt: str
+    request: CodexAssetRequest
 
 
 @dataclass(frozen=True)
@@ -46,25 +119,8 @@ CodexPromptHint = str | None
 class CodexAssetProvider(Protocol):
     name: str
 
-    def generate(self, request: CodexAssetRequest) -> None:
+    def generate(self, request: CodexAssetRequest) -> dict[str, Any] | None:
         ...
-
-
-def codex_final_paths(element_id: str) -> dict[str, str]:
-    base = f"elements/{element_id}/{CODEX_FINAL_STAGE}"
-    return {
-        "sourceCropPath": f"{base}/source_crop.png",
-        "assetPath": f"{base}/transparent_asset.png",
-        "metadataPath": f"{base}/{CODEX_FINAL_METADATA_FILENAME}",
-    }
-
-
-def codex_final_asset_path(element: ElementRecord) -> str:
-    return codex_final_paths(element.id)["assetPath"]
-
-
-def has_codex_final_asset(workspace_root: Path, element: ElementRecord) -> bool:
-    return resolve_workspace_path(workspace_root, codex_final_asset_path(element)).exists()
 
 
 def generate_codex_final_asset(
@@ -74,8 +130,28 @@ def generate_codex_final_asset(
     provider: CodexAssetProvider,
     prompt_hint: CodexPromptHint = None,
 ) -> tuple[WorkspaceState, ElementRecord, dict[str, Any]]:
+    prepared = prepare_codex_final_job(workspace_root, state, element_id, prompt_hint)
+    request_started_ns = time.time_ns()
+    provider_metadata = provider.generate(prepared.request) or {}
+    return finalize_codex_final_job(
+        workspace_root,
+        state,
+        prepared,
+        prepared.raw_output_path,
+        provider.name,
+        provider_metadata,
+        request_started_ns=request_started_ns,
+    )
+
+
+def prepare_codex_final_job(
+    workspace_root: Path,
+    state: WorkspaceState,
+    element_id: str,
+    prompt_hint: CodexPromptHint = None,
+) -> PreparedCodexFinalJob:
     element = _find_element(state, element_id)
-    removed_children = _removed_child_contexts(workspace_root, state, element)
+    removed_children = tuple(_removed_child_contexts(workspace_root, state, element))
     generation_profile = _generation_profile(element, removed_children)
     reference_asset_path = sam2_edge_paths(element.id)["assetPath"]
     source_crop_path = sam2_edge_paths(element.id)["sourceCropPath"]
@@ -93,15 +169,57 @@ def generate_codex_final_asset(
     paths = codex_final_paths(element.id)
     final_asset_file = resolve_workspace_path(workspace_root, paths["assetPath"])
     final_source_crop_file = resolve_workspace_path(workspace_root, paths["sourceCropPath"])
-    work_dir = resolve_workspace_path(workspace_root, f"elements/{element.id}/{CODEX_FINAL_STAGE}/job")
+    job_id = _new_codex_job_id()
+    work_dir = resolve_workspace_path(workspace_root, f"elements/{element.id}/{CODEX_FINAL_STAGE}/job/{job_id}")
     work_dir.mkdir(parents=True, exist_ok=True)
-    output_file = work_dir / "final_asset.png"
-    if output_file.exists():
-        # WHY: 语义补全会反复重跑问题元素；先清掉旧 job 输出，避免 CLI 未写新图时误用 stale PNG。
-        output_file.unlink()
-    prompt = _default_codex_prompt(element, generation_profile, removed_children, prompt_hint)
-    extra_image_paths = _existing_removed_child_masks(workspace_root, removed_children)
-    image_paths = (source_crop_file, reference_asset_file, mask_file, *extra_image_paths)
+    repair_input_paths = discover_codex_final_repair_input_paths(workspace_root, element.id)
+    output_file = work_dir / CODEX_FINAL_CANDIDATE_FILENAME
+    raw_output_file = work_dir / "codex_raw.png"
+    prompt_file = work_dir / "prompt.md"
+    brief_image_file = work_dir / "generation_brief.png"
+    brief_json_file = work_dir / "generation_brief.json"
+    analysis_mask_file = work_dir / "analysis_mask.png"
+    layout_guide_file = work_dir / "layout_guide.png"
+    quality_report_file = work_dir / "quality_report.json"
+    chroma_key = choose_chroma_key(source_crop_file)
+    render_codex_final_brief(
+        workspace_root,
+        source_crop_path=source_crop_path,
+        rough_cutout_path=reference_asset_path,
+        mask_path=mask_path,
+        target_canvas=(element.canvas or element.bbox).model_dump(mode="json"),
+        removed_children=_brief_removed_children(removed_children),
+        image_path=brief_image_file,
+        json_path=brief_json_file,
+    )
+    render_codex_final_layout_guide(
+        source_crop_file=source_crop_file,
+        mask_file=mask_file,
+        analysis_mask_file=analysis_mask_file,
+        guide_file=layout_guide_file,
+    )
+    input_images = build_codex_final_input_images(
+        source_crop_path=source_crop_path,
+        brief_image_path=_workspace_relative_path(workspace_root, brief_image_file),
+        transparent_cutout_path=reference_asset_path,
+        mask_path=mask_path,
+        layout_guide_path=_workspace_relative_path(workspace_root, layout_guide_file),
+        previous_final_path=repair_input_paths.previous_final_path,
+        failed_candidate_path=repair_input_paths.failed_candidate_path,
+        removed_child_mask_paths=tuple(child.mask_path for child in removed_children),
+    )
+    # WHY: prompt 的编号必须跟实际发送给 Codex 的 input_images 完全一致。
+    # 这里让 input_images 成为唯一顺序来源，避免 optional repair roles 缺省时错位。
+    prompt = build_codex_final_prompt(
+        element,
+        generation_profile,
+        _prompt_removed_children(removed_children),
+        input_images,
+        prompt_hint,
+        chroma_key,
+    )
+    prompt_file.write_text(prompt, encoding="utf-8")
+    image_paths = resolve_codex_final_input_paths(workspace_root, input_images)
 
     request = CodexAssetRequest(
         element_id=element.id,
@@ -111,119 +229,267 @@ def generate_codex_final_asset(
         mask_path=mask_file,
         image_paths=image_paths,
         output_path=output_file,
+        raw_output_path=raw_output_file,
         work_dir=work_dir,
+        chroma_key=chroma_key,
         prompt=prompt,
     )
-    provider.generate(request)
-    _write_normalized_final_asset(output_file, final_asset_file, reference_asset_file)
-    _copy_source_crop(source_crop_file, final_source_crop_file)
+    return PreparedCodexFinalJob(
+        element=element,
+        generation_profile=generation_profile,
+        removed_children=removed_children,
+        prompt_hint=normalize_codex_prompt_hint(prompt_hint),
+        paths=paths,
+        source_crop_workspace_path=source_crop_path,
+        reference_asset_workspace_path=reference_asset_path,
+        mask_workspace_path=mask_path,
+        input_images=input_images,
+        reference_asset_path=reference_asset_file,
+        source_crop_path=source_crop_file,
+        mask_path=mask_file,
+        analysis_mask_path=analysis_mask_file,
+        layout_guide_path=layout_guide_file,
+        quality_report_path=quality_report_file,
+        final_asset_path=final_asset_file,
+        final_source_crop_path=final_source_crop_file,
+        work_dir=work_dir,
+        output_path=output_file,
+        raw_output_path=raw_output_file,
+        prompt_path=prompt_file,
+        brief_image_path=brief_image_file,
+        brief_json_path=brief_json_file,
+        chroma_key=chroma_key,
+        prompt=prompt,
+        request=request,
+    )
+
+
+def prepared_codex_final_job_from_manifest_job(
+    workspace_root: Path,
+    state: WorkspaceState,
+    job: CodexFinalJob,
+) -> PreparedCodexFinalJob:
+    element = _find_element(state, job.elementId)
+    input_images = codex_final_input_images_from_job_inputs(job.inputImages)
+    source_crop_path = required_input_path(input_images, SOURCE_CROP_ROLE.role)
+    reference_asset_path = required_input_path(input_images, TRANSPARENT_CUTOUT_ROLE.role)
+    mask_path = required_input_path(input_images, MASK_ROLE.role)
+    layout_guide_path = _optional_input_path(input_images, LAYOUT_GUIDE_ROLE.role) or _job_artifact_path(
+        job,
+        "layout_guide.png",
+        job.layoutGuidePath,
+    )
+    analysis_mask_path = _job_artifact_path(job, "analysis_mask.png", job.analysisMaskPath)
+    quality_report_path = _job_artifact_path(job, "quality_report.json", job.qualityReportPath)
+    source_crop_file = resolve_workspace_path(workspace_root, source_crop_path)
+    reference_asset_file = resolve_workspace_path(workspace_root, reference_asset_path)
+    mask_file = resolve_workspace_path(workspace_root, mask_path)
+    layout_guide_file = resolve_workspace_path(workspace_root, layout_guide_path)
+    prompt_file = resolve_workspace_path(workspace_root, job.promptPath)
+    prompt = prompt_file.read_text(encoding="utf-8")
+    paths = codex_final_paths(element.id)
+    request = CodexAssetRequest(
+        element_id=element.id,
+        element_name=element.name,
+        reference_image_path=reference_asset_file,
+        source_crop_path=source_crop_file,
+        mask_path=mask_file,
+        image_paths=resolve_codex_final_input_paths(workspace_root, input_images),
+        output_path=resolve_workspace_path(workspace_root, job.finalOutputPath),
+        raw_output_path=resolve_workspace_path(workspace_root, job.rawOutputPath),
+        work_dir=resolve_workspace_path(workspace_root, job.workDirPath),
+        chroma_key=choose_chroma_key(source_crop_file),
+        prompt=prompt,
+    )
+    return PreparedCodexFinalJob(
+        element=element,
+        generation_profile=cast(GenerationProfile, job.generationProfile),
+        removed_children=_removed_child_contexts_from_manifest(state, job),
+        prompt_hint=normalize_codex_prompt_hint(job.promptHint),
+        paths=paths,
+        source_crop_workspace_path=source_crop_path,
+        reference_asset_workspace_path=reference_asset_path,
+        mask_workspace_path=mask_path,
+        input_images=input_images,
+        reference_asset_path=reference_asset_file,
+        source_crop_path=source_crop_file,
+        mask_path=mask_file,
+        analysis_mask_path=resolve_workspace_path(workspace_root, analysis_mask_path),
+        layout_guide_path=layout_guide_file,
+        quality_report_path=resolve_workspace_path(workspace_root, quality_report_path),
+        final_asset_path=resolve_workspace_path(workspace_root, paths["assetPath"]),
+        final_source_crop_path=resolve_workspace_path(workspace_root, paths["sourceCropPath"]),
+        work_dir=request.work_dir,
+        output_path=request.output_path,
+        raw_output_path=request.raw_output_path,
+        prompt_path=prompt_file,
+        brief_image_path=resolve_workspace_path(workspace_root, job.briefImagePath),
+        brief_json_path=resolve_workspace_path(workspace_root, job.briefJsonPath),
+        chroma_key=request.chroma_key,
+        prompt=prompt,
+        request=request,
+    )
+
+
+def finalize_codex_final_job(
+    workspace_root: Path,
+    state: WorkspaceState,
+    prepared: PreparedCodexFinalJob,
+    selected_source_path: Path,
+    provider_name: str,
+    provider_metadata: dict[str, Any] | None = None,
+    *,
+    request_started_ns: int | None = None,
+) -> tuple[WorkspaceState, ElementRecord, dict[str, Any]]:
+    finalize_started = time.perf_counter()
+    step_started = time.perf_counter()
+    materialize_codex_selected_source(
+        workspace_root,
+        selected_source_path,
+        prepared.raw_output_path,
+        request_started_ns,
+    )
+    timing: dict[str, float] = {
+        "materializeRawSeconds": _elapsed_seconds(step_started),
+    }
+    step_started = time.perf_counter()
+    output_diagnostics = finalize_codex_raw_output(
+        prepared.raw_output_path,
+        prepared.output_path,
+        prepared.reference_asset_path,
+        prepared.chroma_key,
+    )
+    quality_report = assess_codex_final_candidate(
+        candidate_file=prepared.output_path,
+        reference_file=prepared.reference_asset_path,
+        analysis_mask_file=prepared.analysis_mask_path,
+        chroma_key=prepared.chroma_key,
+    )
+    write_codex_final_quality_report(prepared.quality_report_path, quality_report)
+    if quality_report.has_blocking_errors:
+        raise RuntimeError("Codex final candidate failed quality gate: " + quality_report.summary)
+    promote_codex_final_candidate(prepared.output_path, prepared.final_asset_path)
+    timing["transparentFinalizeSeconds"] = _elapsed_seconds(step_started)
+    step_started = time.perf_counter()
+    copy_codex_source_crop(prepared.source_crop_path, prepared.final_source_crop_path)
+    timing["copySourceCropSeconds"] = _elapsed_seconds(step_started)
 
     metadata = {
-        "provider": provider.name,
+        "provider": provider_name,
         "createdAt": datetime.now(timezone.utc).isoformat(),
-        "referenceAssetPath": reference_asset_path,
-        "sourceCropPath": source_crop_path,
-        "maskPath": mask_path,
-        "inputImagePaths": [
-            source_crop_path,
-            reference_asset_path,
-            mask_path,
-            *[child.mask_path for child in removed_children],
-        ],
-        "assetPath": paths["assetPath"],
-        "generationProfile": generation_profile,
-        "removedChildren": [_removed_child_metadata(child) for child in removed_children],
-        "promptHint": _normalize_prompt_hint(prompt_hint),
-        "prompt": prompt,
+        "jobId": prepared.work_dir.name,
+        "workDirPath": _workspace_relative_path(workspace_root, prepared.work_dir),
+        "outputPath": _workspace_relative_path(workspace_root, prepared.output_path),
+        "rawOutputPath": _workspace_relative_path(workspace_root, prepared.raw_output_path),
+        "promptPath": _workspace_relative_path(workspace_root, prepared.prompt_path),
+        "briefImagePath": _workspace_relative_path(workspace_root, prepared.brief_image_path),
+        "briefJsonPath": _workspace_relative_path(workspace_root, prepared.brief_json_path),
+        "analysisMaskPath": _workspace_relative_path(workspace_root, prepared.analysis_mask_path),
+        "layoutGuidePath": _workspace_relative_path(workspace_root, prepared.layout_guide_path),
+        "qualityReportPath": _workspace_relative_path(workspace_root, prepared.quality_report_path),
+        "referenceAssetPath": prepared.reference_asset_workspace_path,
+        "sourceCropPath": prepared.source_crop_workspace_path,
+        "maskPath": prepared.mask_workspace_path,
+        "inputImagePaths": [image.path for image in prepared.input_images],
+        "inputImages": _input_image_metadata(prepared.input_images),
+        "assetPath": prepared.paths["assetPath"],
+        "generationProfile": prepared.generation_profile,
+        "chromaKey": list(prepared.chroma_key),
+        "removedChildren": [_removed_child_metadata(child) for child in prepared.removed_children],
+        "promptHint": prepared.prompt_hint,
+        "prompt": prepared.prompt,
+        **(provider_metadata or {}),
+        **output_diagnostics,
+        "qualityStatus": quality_report.status,
+        "qualityErrors": list(quality_report.errors),
+        "qualityWarnings": list(quality_report.warnings),
+        "repairNote": quality_report.repair_note,
+        "timing": timing,
     }
-    metadata_file = resolve_workspace_path(workspace_root, paths["metadataPath"])
+    metadata_file = resolve_workspace_path(workspace_root, prepared.paths["metadataPath"])
+    metadata_file.parent.mkdir(parents=True, exist_ok=True)
+    # WHY: generation.json 自身需要包含 metadata 写入耗时。精确自描述会变成
+    # 无限递归更新；这里用一次小文件写入作为稳定近似，再写入最终统计。
+    metadata["timing"] = {
+        **timing,
+        "metadataWriteSeconds": 0.0,
+        "finalizeTotalSeconds": 0.0,
+    }
+    step_started = time.perf_counter()
+    metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    timing["metadataWriteSeconds"] = _elapsed_seconds(step_started)
+    timing["finalizeTotalSeconds"] = _elapsed_seconds(finalize_started)
+    metadata["timing"] = timing
     metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
+    element = prepared.element
     updated = element.model_copy(
         update={
             "status": "repair_complete",
             "repairStatus": "repair_complete",
             "exportStatus": "ready",
-            "sourceProvider": provider.name,
-            "sourcePrompt": prompt,
-            "sourcePromptHint": _normalize_prompt_hint(prompt_hint),
-            "generationProfile": generation_profile,
+            "sourceProvider": provider_name,
+            "sourcePrompt": prepared.prompt,
+            "sourcePromptHint": prepared.prompt_hint,
+            "generationProfile": prepared.generation_profile,
         }
     )
     next_state = WorkspaceState(
         source=state.source,
-        elements=[updated if current.id == element_id else current for current in state.elements],
+        elements=[updated if current.id == element.id else current for current in state.elements],
         detectionVocabulary=state.detectionVocabulary,
     )
     generation = {
-        **paths,
-        "provider": provider.name,
-        "referenceAssetPath": reference_asset_path,
+        **prepared.paths,
+        "provider": provider_name,
+        "referenceAssetPath": prepared.reference_asset_workspace_path,
+        "outputPath": metadata["outputPath"],
+        "rawOutputPath": metadata["rawOutputPath"],
+        "workDirPath": metadata["workDirPath"],
+        "promptPath": metadata["promptPath"],
+        "briefImagePath": metadata["briefImagePath"],
+        "briefJsonPath": metadata["briefJsonPath"],
+        "analysisMaskPath": metadata["analysisMaskPath"],
+        "layoutGuidePath": metadata["layoutGuidePath"],
+        "qualityReportPath": metadata["qualityReportPath"],
+        "jobId": metadata["jobId"],
+        "codexThreadId": metadata.get("codexThreadId"),
+        "timing": metadata.get("timing"),
+        "chromaKey": metadata["chromaKey"],
+        "referenceSha256": metadata["referenceSha256"],
+        "rawOutputSha256": metadata["rawOutputSha256"],
+        "outputSha256": metadata["outputSha256"],
+        "isOutputIdenticalToReference": metadata["isOutputIdenticalToReference"],
+        "qualityStatus": metadata["qualityStatus"],
+        "qualityErrors": metadata["qualityErrors"],
+        "qualityWarnings": metadata["qualityWarnings"],
+        "repairNote": metadata["repairNote"],
         "inputImagePaths": metadata["inputImagePaths"],
-        "generationProfile": generation_profile,
+        "inputImages": metadata["inputImages"],
+        "generationProfile": prepared.generation_profile,
         "removedChildren": metadata["removedChildren"],
         "promptHint": metadata["promptHint"],
-        "prompt": prompt,
+        "prompt": prepared.prompt,
     }
     return next_state, updated, generation
 
 
-def _default_codex_prompt(
-    element: ElementRecord,
-    profile: GenerationProfile,
-    removed_children: list[RemovedChildContext],
-    prompt_hint: CodexPromptHint,
-) -> str:
-    label = element.label or element.name
-    lines = [
-        "$imagegen",
-        "Use the attached images as diagnostic context for semantic completion: source crop first, transparent cutout second, mask third.",
-        "Create one production-ready transparent PNG game sticker from the subject, not a literal copy of the cutout artifacts.",
-        f"Subject: {label}.",
-        *_profile_prompt_lines(profile, removed_children),
-        "Keep the same object identity, pose, cute isometric/cartoon material style, and approximate canvas framing.",
-        "Infer and complete the whole canonical subject when edges, corners, caps, legs, or bottoms are missing.",
-        "If the subject touches a crop, cutout, or mask boundary, synthesize plausible hidden surfaces so the asset reads as physically complete.",
-        "Prefer a complete self-contained sticker over strict copying of the damaged silhouette.",
-        "Do not preserve truncated cut lines, flat sliced sides, missing caps, missing bases, or accidental holes.",
-        "Remove unrelated neighboring object fragments that are not part of the subject label.",
-        "Remove all cutout artifacts: no ragged alpha edge, no black speckles, no interior holes, no checkerboard, no shadow background.",
-    ]
-    hint = _normalize_prompt_hint(prompt_hint)
-    if hint:
-        # WHY: 用户提示只能补充审美/角度细节；profile 约束是父子语义的系统事实，不能被覆盖。
-        lines.append(f"User prompt hint, subordinate to the rules above: {hint}")
-    lines.append("Output must be a clean transparent-background PNG saved exactly as final_asset.png in the current working directory.")
-    return "\n".join(lines)
-
-
-def _profile_prompt_lines(
-    profile: GenerationProfile,
-    removed_children: list[RemovedChildContext],
-) -> list[str]:
-    if profile == "child_standalone":
-        return [
-            "This is a removable child asset. Generate only this child object as a standalone sticker.",
-            "Do not include its parent container, shelf, cabinet, wall, floor, or nearby support surface unless it is part of the child itself.",
-        ]
-    if profile == "parent_inpaint_without_children":
-        child_names = ", ".join(child.name for child in removed_children)
-        return [
-            "This is a parent asset with removable child objects already cut away from its mask.",
-            f"Removed child objects: {child_names}.",
-            "The dark holes or missing silhouettes inside the parent indicate removed child occupancy, not damaged subject parts.",
-            "Do not regenerate the removed child objects. Do not draw them back into the final asset.",
-            "Inpaint and complete only the parent structure: shelves, cabinet panels, edges, interior surfaces, walls, wood grain, and supporting geometry.",
-        ]
+def _input_image_metadata(input_images: Sequence[CodexFinalInputImage]) -> list[dict[str, Any]]:
+    # WHY: input role 顺序是 prompt / review UI 的协议事实；metadata 必须保留
+    # role，而不是让前端从 index 反推，避免 layout_guide / repair refs 错位。
     return [
-        "The transparent cutout may be clipped, occluded, or contaminated by nearby objects.",
-        "Complete the selected subject itself, while excluding objects that are not part of the subject label.",
+        {
+            "path": image.path,
+            "role": image.role,
+            "required": image.required,
+        }
+        for image in input_images
     ]
 
 
 def _generation_profile(
     element: ElementRecord,
-    removed_children: list[RemovedChildContext],
+    removed_children: Sequence[RemovedChildContext],
 ) -> GenerationProfile:
     if element.assetRole == "removable_child":
         return "child_standalone"
@@ -261,15 +527,44 @@ def _removed_child_contexts(
     ]
 
 
-def _existing_removed_child_masks(
-    workspace_root: Path,
-    removed_children: list[RemovedChildContext],
-) -> tuple[Path, ...]:
-    paths = [
-        resolve_workspace_path(workspace_root, child.mask_path)
+def _removed_child_contexts_from_manifest(
+    state: WorkspaceState,
+    job: CodexFinalJob,
+) -> tuple[RemovedChildContext, ...]:
+    contexts: list[RemovedChildContext] = []
+    for removed_child in job.removedChildren:
+        element = _find_element(state, removed_child.elementId)
+        contexts.append(
+            RemovedChildContext(
+                element_id=removed_child.elementId,
+                name=removed_child.name,
+                mask_path=removed_child.maskPath,
+                bbox=element.bbox.model_dump(mode="json"),
+                canvas=element.canvas.model_dump(mode="json"),
+            )
+        )
+    return tuple(contexts)
+
+
+def _brief_removed_children(
+    removed_children: Sequence[RemovedChildContext],
+) -> tuple[CodexFinalBriefRemovedChild, ...]:
+    return tuple(
+        CodexFinalBriefRemovedChild(
+            element_id=child.element_id,
+            name=child.name,
+            mask_path=child.mask_path,
+            bbox=child.bbox,
+            canvas=child.canvas,
+        )
         for child in removed_children
-    ]
-    return tuple(path for path in paths if path.exists())
+    )
+
+
+def _prompt_removed_children(
+    removed_children: Sequence[RemovedChildContext],
+) -> tuple[CodexFinalPromptRemovedChild, ...]:
+    return tuple(CodexFinalPromptRemovedChild(name=child.name) for child in removed_children)
 
 
 def _removed_child_metadata(child: RemovedChildContext) -> dict[str, Any]:
@@ -282,53 +577,34 @@ def _removed_child_metadata(child: RemovedChildContext) -> dict[str, Any]:
     }
 
 
-def _normalize_prompt_hint(prompt_hint: CodexPromptHint) -> str | None:
-    if prompt_hint is None:
-        return None
-    normalized = prompt_hint.strip()
-    return normalized or None
+def _optional_input_path(
+    input_images: Sequence[CodexFinalInputImage],
+    role: str,
+) -> str | None:
+    for image in input_images:
+        if image.role == role:
+            return image.path
+    return None
 
 
-def _write_normalized_final_asset(source_file: Path, target_file: Path, reference_file: Path) -> None:
-    if not source_file.exists():
-        raise RuntimeError("Codex CLI did not create final_asset.png.")
-    with Image.open(source_file) as image:
-        image.load()
-        rgba = image.convert("RGBA")
-    with Image.open(reference_file) as reference:
-        reference.load()
-        target_size = reference.size
-    if rgba.getchannel("A").getbbox() is None:
-        raise RuntimeError("Codex final asset has empty alpha.")
-    if rgba.size != target_size:
-        rgba = _fit_to_semantic_canvas(rgba, target_size)
-    # WHY: 下游导出从 alpha 派生 mask；这里统一重写 PNG，避免 Codex 输出模式或编码差异扩散到导出层。
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    rgba.save(target_file, format="PNG")
+def _job_artifact_path(job: CodexFinalJob, filename: str, explicit_path: str) -> str:
+    if explicit_path:
+        return explicit_path
+    # WHY: 早期 manifest 没有独立 layout/analysis 字段；job work dir 是该批
+    # 中间产物的唯一持久边界；PurePosixPath 避免手写斜杠在尾 slash/平台上漂移。
+    return (PurePosixPath(job.workDirPath) / filename).as_posix()
 
 
-def _fit_to_semantic_canvas(
-    image: Image.Image,
-    size: tuple[int, int],
-) -> Image.Image:
-    source_bbox = image.getchannel("A").getbbox()
-    cropped = image.crop(source_bbox) if source_bbox else image.copy()
-    fitted = cropped.copy()
-    fitted.thumbnail(size, Image.Resampling.LANCZOS)
-    canvas = Image.new("RGBA", size, (0, 0, 0, 0))
-    left = max((size[0] - fitted.width) // 2, 0)
-    top = max((size[1] - fitted.height) // 2, 0)
-    # WHY: 语义补全需要能长回缺失边角；这里只约束到元素 canvas，避免旧 SAM2 alpha bbox 把补全再次裁掉。
-    canvas.alpha_composite(fitted, (left, top))
-    return canvas
+def _new_codex_job_id() -> str:
+    return f"job_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}_{uuid4().hex[:8]}"
 
 
-def _copy_source_crop(source_file: Path, target_file: Path) -> None:
-    with Image.open(source_file) as image:
-        image.load()
-        rgba = image.convert("RGBA")
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    rgba.save(target_file, format="PNG")
+def _workspace_relative_path(workspace_root: Path, path: Path) -> str:
+    return path.resolve().relative_to(workspace_root.resolve()).as_posix()
+
+
+def _elapsed_seconds(started: float) -> float:
+    return round(time.perf_counter() - started, 6)
 
 
 def _find_element(state: WorkspaceState, element_id: str) -> ElementRecord:

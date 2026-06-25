@@ -1,4 +1,4 @@
-import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, dragSortableAssetTreeItem, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
+import { App, assetSelectButton, completionState, confirmMergeDialog, createGestureEvent, createdChildElement, createdManualElement, describe, detectedElement, detectedState, drawRectangle, duplicateMergeNameState, expect, exportReadyState, exportSummary, extractedState, extractMergedState, fireEvent, installFetchMock, it, jsonResponse, legacyStatusRejectedState, loadedState, loadedStateWithoutElements, mergeSourceState, mergedState, mockElementRect, mockRect, openAssetContextMenu, overlappingMergeState, partiallyReviewedState, persistedWorkspaceState, pipelineStage, rejectedTreeState, render, repairCompleteState, repairPendingState, screen, setCanvasRect, splitState, toggleAssetSelection, treeState, userEvent, vi, waitFor, within } from "./appTestHarness";
 
 describe("App flow 07", () => {
   it("adds a numeric suffix to default merge names when the joined label already exists", async () => {
@@ -15,8 +15,8 @@ describe("App flow 07", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("button", { name: /select bottle$/i }));
-      fireEvent.click(screen.getByRole("button", { name: /select plant$/i }), { shiftKey: true });
+      fireEvent.click(assetSelectButton(/^select bottle$/i));
+      fireEvent.click(assetSelectButton(/^select plant$/i), { shiftKey: true });
       await user.click(screen.getByRole("button", { name: /^merge$/i }));
 
       const dialog = await screen.findByRole("dialog", { name: /name merged asset/i });
@@ -280,7 +280,8 @@ describe("App flow 07", () => {
       render(<App />);
       await screen.findByText(/original\.png - 120 x 90/i);
 
-      await user.click(screen.getByRole("button", { name: /split selected/i }));
+      const contextMenu = openAssetContextMenu({ x: 80, y: 120 });
+      await user.click(within(contextMenu).getByRole("menuitem", { name: /^split asset$/i }));
       const surface = screen.getByTestId("canvas-drawing-surface");
       await drawRectangle(surface, { x: 60, y: 80 }, { x: 130, y: 240 });
       await drawRectangle(surface, { x: 130, y: 80 }, { x: 210, y: 240 });
@@ -366,7 +367,8 @@ describe("App flow 07", () => {
     }
   });
 
-  it("undoes and redoes auto-saved Segment mask edits from workspace history", async () => {
+  it("undoes and redoes auto-saved Segment mask edits by restoring the mask artifact", async () => {
+    const user = userEvent.setup();
     const segmentMaskState = {
       source: loadedState.source,
       elements: [
@@ -391,23 +393,25 @@ describe("App flow 07", () => {
         },
       ],
     };
-    const savedStates: unknown[] = [];
+    let maskPatchCount = 0;
+    let workspaceStatePuts = 0;
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
         return jsonResponse(segmentMaskState);
       }
 
       if (input === "/api/workspace/elements/element_001/segment/mask" && init?.method === "PATCH") {
+        maskPatchCount += 1;
+        const nextState = maskPatchCount === 2 ? segmentMaskState : editedSegmentMaskState;
         return jsonResponse({
-          element: editedSegmentMaskState.elements[0],
-          state: editedSegmentMaskState,
+          element: nextState.elements[0],
+          state: nextState,
         });
       }
 
       if (input === "/api/workspace/state" && init?.method === "PUT") {
-        const parsed = JSON.parse(String(init.body));
-        savedStates.push(parsed);
-        return jsonResponse(parsed);
+        workspaceStatePuts += 1;
+        return jsonResponse(JSON.parse(String(init.body)));
       }
 
       throw new Error(`Unexpected fetch call: ${String(input)}`);
@@ -425,26 +429,325 @@ describe("App flow 07", () => {
       expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
       const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
       await waitFor(() => {
+        expect(screen.getAllByText(/mask edit applied\./i).length).toBeGreaterThan(0);
+      });
+      await waitFor(() => {
+        expect(maskPatchCount).toBe(1);
+      });
+      expect(workspaceStatePuts).toBe(0);
+      await waitFor(() => {
         expect(within(canvasToolbar).getByRole("button", { name: /undo/i })).toBeEnabled();
       });
-      expect(screen.getAllByText(/mask edit applied\./i).length).toBeGreaterThan(0);
 
-      fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+      await user.keyboard("{Control>}z{/Control}");
 
+      await waitFor(() => {
+        expect(maskPatchCount).toBe(2);
+      });
+      expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+      fireEvent.load(await screen.findByTestId("segment-committed-mask-preload"));
       await waitFor(() => {
         expect(within(sourceFrame).queryByTestId("segment-draft-mask-overlay")).not.toBeInTheDocument();
       });
-      expect(screen.getAllByText(/undone\./i).length).toBeGreaterThan(0);
+      expect(workspaceStatePuts).toBe(0);
+      expect(screen.getAllByText(/mask edit undone\./i).length).toBeGreaterThan(0);
 
-      fireEvent.keyDown(window, { key: "z", ctrlKey: true, shiftKey: true });
+      await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
 
       await waitFor(() => {
-        expect(screen.getAllByText(/redone\./i).length).toBeGreaterThan(0);
+        expect(maskPatchCount).toBe(3);
       });
-      expect(savedStates).toEqual([
-        persistedWorkspaceState(segmentMaskState),
-        persistedWorkspaceState(editedSegmentMaskState),
-      ]);
+      expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+      fireEvent.load(await screen.findByTestId("segment-committed-mask-preload"));
+      await waitFor(() => {
+        expect(within(sourceFrame).queryByTestId("segment-draft-mask-overlay")).not.toBeInTheDocument();
+      });
+      expect(workspaceStatePuts).toBe(0);
+      expect(screen.getAllByText(/mask edit redone\./i).length).toBeGreaterThan(0);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("keeps source-crop magic wand mask edits out of global asset refreshes and undoable", async () => {
+    const user = userEvent.setup();
+    const segmentMaskState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...mergeSourceState.elements[0],
+          status: "accepted",
+          mask: "elements/element_001/sam2_edge/mask.png",
+          segmentationStatus: "mask_suggested" as const,
+          sourceProvider: "sam2",
+          repairStatus: "not_required",
+          exportStatus: "not_ready",
+        },
+        {
+          ...mergeSourceState.elements[1],
+          status: "accepted",
+          mask: "elements/element_002/sam2_edge/mask.png",
+          segmentationStatus: "mask_suggested" as const,
+          sourceProvider: "sam2",
+          repairStatus: "not_required",
+          exportStatus: "not_ready",
+        },
+      ],
+    };
+    const editedSegmentMaskState = {
+      ...segmentMaskState,
+      elements: [
+        {
+          ...segmentMaskState.elements[0],
+          segmentationStatus: "mask_editing" as const,
+        },
+        segmentMaskState.elements[1],
+      ],
+    };
+    let maskPatchCount = 0;
+    let workspaceStatePuts = 0;
+    let runRequests = 0;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/runs") {
+        runRequests += 1;
+        throw new Error("Use legacy workspace state in this regression test.");
+      }
+
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(segmentMaskState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/segment/mask" && init?.method === "PATCH") {
+        maskPatchCount += 1;
+        const nextState = maskPatchCount === 2 ? segmentMaskState : editedSegmentMaskState;
+        return jsonResponse({
+          element: nextState.elements[0],
+          state: nextState,
+        });
+      }
+
+      if (input === "/api/workspace/state" && init?.method === "PUT") {
+        workspaceStatePuts += 1;
+        return jsonResponse(JSON.parse(String(init.body)));
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    function readThumbSources() {
+      return Array.from(document.querySelectorAll("img"))
+        .map((image) => image.getAttribute("src") ?? "")
+        .filter((src) => src.includes("/thumb.png"))
+        .sort();
+    }
+
+    try {
+      render(<App />);
+      await screen.findByRole("button", { name: /select region 2/i });
+
+      const sourceFrame = await screen.findByTestId("segment-source-frame");
+      const sourceCrop = within(sourceFrame).getByAltText("Region 1 source crop");
+      const runsAfterLoad = runRequests;
+      const thumbSourcesBefore = readThumbSources();
+      const unchangedThumbBefore = screen.getByRole("img", { name: /region 2 thumbnail/i });
+      expect(thumbSourcesBefore).toHaveLength(2);
+      expect(sourceCrop).toHaveAttribute(
+        "src",
+        expect.stringContaining("/api/workspace/assets/elements/element_001/sam2_edge/source_crop.png?cache=0"),
+      );
+
+      await user.click(within(sourceFrame).getByRole("button", { name: /magic wand add/i }));
+      mockElementRect(sourceFrame, { left: 10, top: 20, width: 460, height: 480 });
+      fireEvent.click(sourceFrame, { clientX: 210, clientY: 240 });
+
+      await waitFor(() => {
+        expect(screen.getAllByText(/mask edit applied\./i).length).toBeGreaterThan(0);
+      });
+      await waitFor(() => {
+        expect(maskPatchCount).toBe(1);
+      });
+      expect(workspaceStatePuts).toBe(0);
+      expect(runRequests).toBe(runsAfterLoad);
+      expect(readThumbSources()).toEqual(thumbSourcesBefore);
+      expect(screen.getByRole("img", { name: /region 2 thumbnail/i })).toBe(unchangedThumbBefore);
+      expect(sourceCrop).toHaveAttribute(
+        "src",
+        expect.stringContaining("/api/workspace/assets/elements/element_001/sam2_edge/source_crop.png?cache=1"),
+      );
+      expect(within(sourceFrame).getByTestId("segment-draft-mask-overlay")).toBeInTheDocument();
+      fireEvent.load(await screen.findByTestId("segment-committed-mask-preload"));
+      await waitFor(() => {
+        expect(within(sourceFrame).queryByTestId("segment-draft-mask-overlay")).not.toBeInTheDocument();
+      });
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      await waitFor(() => {
+        expect(within(canvasToolbar).getByRole("button", { name: /undo/i })).toBeEnabled();
+      });
+      expect(within(canvasToolbar).getByRole("button", { name: /redo/i })).toBeDisabled();
+
+      await user.keyboard("{Control>}z{/Control}");
+      await waitFor(() => {
+        expect(maskPatchCount).toBe(2);
+      });
+      expect(workspaceStatePuts).toBe(0);
+      expect(screen.getAllByText(/mask edit undone\./i).length).toBeGreaterThan(0);
+      expect(runRequests).toBe(runsAfterLoad);
+      expect(screen.getByRole("img", { name: /region 2 thumbnail/i })).toBe(unchangedThumbBefore);
+      expect(within(canvasToolbar).getByRole("button", { name: /redo/i })).toBeEnabled();
+
+      await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
+      await waitFor(() => {
+        expect(maskPatchCount).toBe(3);
+      });
+      expect(workspaceStatePuts).toBe(0);
+      expect(screen.getAllByText(/mask edit redone\./i).length).toBeGreaterThan(0);
+      expect(runRequests).toBe(runsAfterLoad);
+      expect(screen.getByRole("img", { name: /region 2 thumbnail/i })).toBe(unchangedThumbBefore);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("enables Segment mask undo and redo while the auto-save request is still pending", async () => {
+    const user = userEvent.setup();
+    const segmentMaskState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          status: "accepted",
+          mask: "elements/element_001/sam2_edge/mask.png",
+          segmentationStatus: "mask_suggested" as const,
+          sourceProvider: "sam2",
+          repairStatus: "not_required",
+          exportStatus: "not_ready",
+        },
+      ],
+    };
+    const editedSegmentMaskState = {
+      ...segmentMaskState,
+      elements: [
+        {
+          ...segmentMaskState.elements[0],
+          mask: "elements/element_001/sam2_edge/mask-edited.png",
+          segmentationStatus: "mask_editing" as const,
+        },
+      ],
+    };
+    let patchCount = 0;
+    let resolveFirstPatch: (() => void) | null = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(segmentMaskState);
+      }
+
+      if (input === "/api/workspace/elements/element_001/segment/mask" && init?.method === "PATCH") {
+        patchCount += 1;
+        if (patchCount === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveFirstPatch = () => resolve(jsonResponse({
+              element: editedSegmentMaskState.elements[0],
+              state: editedSegmentMaskState,
+            }));
+          });
+        }
+        return jsonResponse({
+          element: segmentMaskState.elements[0],
+          state: segmentMaskState,
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      const sourceFrame = await screen.findByTestId("segment-source-frame");
+      await userEvent.click(within(sourceFrame).getByRole("button", { name: /brush add/i }));
+      mockElementRect(sourceFrame, { left: 10, top: 20, width: 460, height: 480 });
+      fireEvent.pointerDown(sourceFrame, { clientX: 210, clientY: 240, pointerId: 55 });
+      fireEvent.pointerUp(sourceFrame, { clientX: 210, clientY: 240, pointerId: 55 });
+
+      const canvasToolbar = screen.getByRole("toolbar", { name: /canvas tools/i });
+      const undoButton = within(canvasToolbar).getByRole("button", { name: /undo/i });
+      const redoButton = within(canvasToolbar).getByRole("button", { name: /redo/i });
+      await waitFor(() => expect(undoButton).toBeEnabled());
+
+      await user.keyboard("{Control>}z{/Control}");
+
+      await waitFor(() => expect(redoButton).toBeEnabled());
+      expect(screen.getAllByText(/mask edit undone\./i).length).toBeGreaterThan(0);
+
+      resolveFirstPatch?.();
+      await waitFor(() => expect(patchCount).toBeGreaterThanOrEqual(2));
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("reruns the current Segment mask through a forced SAM2 task", async () => {
+    const user = userEvent.setup();
+    const segmentMaskState = {
+      source: loadedState.source,
+      elements: [
+        {
+          ...loadedState.elements[0],
+          status: "accepted",
+          mask: "elements/element_001/sam2_edge/mask.png",
+          segmentationStatus: "mask_suggested" as const,
+          sourceProvider: "sam2",
+          repairStatus: "not_required",
+          exportStatus: "not_ready",
+        },
+      ],
+    };
+    let sam2TaskBody: unknown = null;
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse(segmentMaskState);
+      }
+
+      if (input === "/api/workspace/tasks/sam2-masks" && init?.method === "POST") {
+        sam2TaskBody = JSON.parse(String(init.body));
+        return jsonResponse({
+          taskId: "task_rerun_sam2",
+          type: "sam2_mask_batch",
+          status: "running",
+          createdAt: "2026-06-22T00:00:00Z",
+          updatedAt: "2026-06-22T00:00:00Z",
+          total: 1,
+          done: 0,
+          failed: 0,
+          skipped: 0,
+          items: [
+            {
+              elementId: "element_001",
+              name: "Region 1",
+              status: "running",
+              message: "Running SAM2 mask.",
+              startedAt: null,
+              finishedAt: null,
+              artifactPaths: {},
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
+    try {
+      render(<App />);
+
+      await screen.findByTestId("segment-source-frame");
+      await user.click(screen.getByRole("button", { name: /^rerun mask$/i }));
+
+      await waitFor(() => {
+        expect(sam2TaskBody).toEqual({ elementIds: ["element_001"], force: true });
+      });
+      expect(screen.getAllByText(/sam2 mask rerun started\./i).length).toBeGreaterThan(0);
     } finally {
       restoreFetch();
     }

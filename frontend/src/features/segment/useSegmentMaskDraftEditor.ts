@@ -18,8 +18,11 @@ import {
   buildBrushSelection,
   buildSelectionOverlayDataUrl,
   buildStickerPreviewDataUrl,
+  beginLiveBrushStroke,
   canvasToDataUrl,
-  drawBrushIntoDraft,
+  clearLiveBrushCanvas,
+  drawLiveBrushStroke,
+  finishLiveBrushStroke,
   floodFillSelection,
   getCanvas2dContext,
   mergeSelectionIntoDraft,
@@ -27,6 +30,7 @@ import {
   removeSmallDraftFragments,
   thresholdMaskCanvas,
   type CanvasPoint,
+  type LiveBrushStroke,
   type MaskViewTransform,
 } from "./segmentMaskDraft";
 
@@ -50,6 +54,10 @@ export type SegmentMaskPatchRequest = {
       maskData: string;
       cleanupMinArea?: number;
     };
+};
+
+export type SegmentMaskPatchMeta = {
+  historyAction?: "edit" | "undo" | "redo";
 };
 
 export type SegmentDraftHistoryStatus = {
@@ -97,6 +105,7 @@ export function useSegmentMaskDraftEditor({
   activeTool,
   brushSize,
   canPatchMask,
+  maskAssetVersion,
   maskImageRef,
   onDraftHistoryChange,
   onPatchMask,
@@ -107,26 +116,41 @@ export function useSegmentMaskDraftEditor({
   activeTool: MaskEditTool | null;
   brushSize: number;
   canPatchMask: boolean;
+  maskAssetVersion: string;
   maskImageRef: RefObject<HTMLImageElement | null>;
   onDraftHistoryChange?: (status: SegmentDraftHistoryStatus) => void;
-  onPatchMask?: (elementId: string, patch: SegmentMaskPatchRequest) => boolean | void | Promise<boolean | void>;
+  onPatchMask?: (
+    elementId: string,
+    patch: SegmentMaskPatchRequest,
+    meta?: SegmentMaskPatchMeta,
+  ) => boolean | void | Promise<boolean | void>;
   sourceImageRef: RefObject<HTMLImageElement | null>;
   wandTolerance: number;
 }) {
   const [draftMask, setDraftMask] = useState<DraftMaskState | null>(null);
   const [maskDisplayOverlaySrc, setMaskDisplayOverlaySrc] = useState<string | null>(null);
   const [isBrushDragging, setIsBrushDragging] = useState(false);
+  const [liveBrushDraft, setLiveBrushDraft] = useState<{
+    active: boolean;
+    operation: "add" | "subtract" | null;
+  }>({ active: false, operation: null });
   const [sourceViewTransform, setSourceViewTransform] = useState<MaskViewTransform>(DEFAULT_SOURCE_VIEW);
   const [toolDock, setToolDock] = useState<MaskToolDock>(DEFAULT_PALETTE_SNAP);
   const [cursorPoint, setCursorPoint] = useState<CanvasPoint | null>(null);
   const [historyStatus, setHistoryStatus] = useState<SegmentDraftHistoryStatus>(DEFAULT_DRAFT_HISTORY_STATUS);
+  const [committedDraftVersion, setCommittedDraftVersion] = useState<string | null>(null);
   const draftCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const liveMaskOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const liveSelectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const historyRef = useRef<{ past: MaskDraftSnapshot[]; future: MaskDraftSnapshot[] }>({
     past: [],
     future: [],
   });
   const isBrushDraggingRef = useRef(false);
   const brushStrokeStartRef = useRef<MaskDraftSnapshot | null>(null);
+  const brushStrokeRef = useRef<LiveBrushStroke | null>(null);
+  const pendingBrushPointsRef = useRef<CanvasPoint[]>([]);
+  const brushAnimationFrameRef = useRef<number | null>(null);
   const gestureScaleRef = useRef(1);
   const isSourcePanningRef = useRef(false);
   const isSpacePanningRef = useRef(false);
@@ -134,19 +158,29 @@ export function useSegmentMaskDraftEditor({
   const submitQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
+    cancelBrushAnimationFrame(false);
     setDraftMask(null);
     setMaskDisplayOverlaySrc(null);
     setIsBrushDragging(false);
+    setLiveBrushDraft({ active: false, operation: null });
     setCursorPoint(null);
     setSourceViewTransform(DEFAULT_SOURCE_VIEW);
     isBrushDraggingRef.current = false;
     brushStrokeStartRef.current = null;
+    brushStrokeRef.current = null;
+    clearLiveBrushCanvas(liveMaskOverlayCanvasRef.current);
+    clearLiveBrushCanvas(liveSelectionCanvasRef.current);
     isSourcePanningRef.current = false;
     panStartRef.current = null;
     draftCanvasRef.current = null;
+    setCommittedDraftVersion(null);
     historyRef.current = { past: [], future: [] };
     setHistoryStatus(DEFAULT_DRAFT_HISTORY_STATUS);
   }, [activeElement.id]);
+
+  useEffect(() => () => {
+    cancelBrushAnimationFrame(false);
+  }, []);
 
   useEffect(() => {
     onDraftHistoryChange?.(historyStatus);
@@ -214,7 +248,7 @@ export function useSegmentMaskDraftEditor({
     setIsBrushDragging(true);
     isBrushDraggingRef.current = true;
     brushStrokeStartRef.current = currentDraftSnapshot(true);
-    paintBrushDraft(point, activeTool === "brush-add" ? "add" : "subtract");
+    beginBrushDraft(point, activeTool === "brush-add" ? "add" : "subtract");
   }
 
   function handleSourcePointerMove(event: PointerEvent<HTMLDivElement>) {
@@ -243,7 +277,7 @@ export function useSegmentMaskDraftEditor({
     if (!isBrushDraggingRef.current) {
       return;
     }
-    paintBrushDraft(point, activeTool === "brush-add" ? "add" : "subtract");
+    queueBrushPoints(readSourcePoints(event.currentTarget, event));
   }
 
   function handleSourcePointerUp(event: PointerEvent<HTMLDivElement>) {
@@ -256,14 +290,28 @@ export function useSegmentMaskDraftEditor({
     if (!isBrushDraggingRef.current && !isBrushDragging) {
       return;
     }
+    queueBrushPoints(readSourcePoints(event.currentTarget, event));
     setIsBrushDragging(false);
     isBrushDraggingRef.current = false;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
-    if (brushStrokeStartRef.current) {
-      const before = brushStrokeStartRef.current;
-      brushStrokeStartRef.current = null;
-      commitMaskOperation(draftCanvasRef.current, before);
+    finishBrushDraft();
+  }
+
+  function handleSourcePointerCancel(event: PointerEvent<HTMLDivElement>) {
+    if (isSourcePanningRef.current) {
+      isSourcePanningRef.current = false;
+      panStartRef.current = null;
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+      return;
     }
+    if (!isBrushDraggingRef.current && !isBrushDragging) {
+      return;
+    }
+    queueBrushPoints(readSourcePoints(event.currentTarget, event));
+    setIsBrushDragging(false);
+    isBrushDraggingRef.current = false;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    finishBrushDraft();
   }
 
   function handleSourceWheel(event: WheelEvent<HTMLDivElement>) {
@@ -276,6 +324,15 @@ export function useSegmentMaskDraftEditor({
     if (image) {
       setMaskDisplayOverlaySrc(buildBackgroundMaskOverlayDataUrl(image, activeElement.canvas));
     }
+  }
+
+  function handleCommittedMaskAssetLoad() {
+    if (draftMask?.displayOverlayDataUrl) {
+      setMaskDisplayOverlaySrc(draftMask.displayOverlayDataUrl);
+    }
+    draftCanvasRef.current = null;
+    setDraftMask(null);
+    setCommittedDraftVersion(null);
   }
 
   function cleanDraftFragments() {
@@ -296,6 +353,7 @@ export function useSegmentMaskDraftEditor({
   function clearDraftHistory() {
     setDraftMask(null);
     draftCanvasRef.current = null;
+    setCommittedDraftVersion(null);
     setCursorPoint(null);
     historyRef.current = { past: [], future: [] };
     publishHistoryStatus(false);
@@ -341,6 +399,22 @@ export function useSegmentMaskDraftEditor({
     return readCanvasPointFromFrame(frame, clientX, clientY, activeElement.canvas, sourceViewTransform);
   }
 
+  function readSourcePoints(frame: HTMLDivElement, event: PointerEvent<HTMLDivElement>): CanvasPoint[] {
+    const nativeEvent = event.nativeEvent;
+    const pointerEvents = typeof nativeEvent.getCoalescedEvents === "function"
+      ? nativeEvent.getCoalescedEvents()
+      : [];
+    const samples = pointerEvents.length > 0 ? pointerEvents : [nativeEvent];
+    const points: CanvasPoint[] = [];
+    for (const sample of samples) {
+      const point = readSourcePoint(frame, sample.clientX, sample.clientY);
+      if (point) {
+        points.push(point);
+      }
+    }
+    return points;
+  }
+
   function applyMagicWandDraft(point: CanvasPoint, operation: "add" | "subtract"): HTMLCanvasElement {
     const canvas = ensureDraftCanvas();
     const selection = buildMagicWandSelection(point)
@@ -350,10 +424,77 @@ export function useSegmentMaskDraftEditor({
     return canvas;
   }
 
-  function paintBrushDraft(point: CanvasPoint, operation: "add" | "subtract") {
+  function beginBrushDraft(point: CanvasPoint, operation: "add" | "subtract") {
     const canvas = ensureDraftCanvas();
-    drawBrushIntoDraft(canvas, point, brushSize, operation);
-    updateDraftFromCanvas(canvas, buildBrushSelection(point, brushSize, canvas.width, canvas.height), point, operation);
+    brushStrokeRef.current = beginLiveBrushStroke({
+      maskCanvas: canvas,
+      overlayCanvas: liveMaskOverlayCanvasRef.current,
+      selectionCanvas: liveSelectionCanvasRef.current,
+      operation,
+      size: brushSize,
+    });
+    setLiveBrushDraft({ active: true, operation });
+    queueBrushPoints([point]);
+  }
+
+  function queueBrushPoints(points: CanvasPoint[]) {
+    if (!points.length) {
+      return;
+    }
+    pendingBrushPointsRef.current.push(...points);
+    if (brushAnimationFrameRef.current !== null) {
+      return;
+    }
+    if (typeof window.requestAnimationFrame !== "function") {
+      flushBrushPoints();
+      return;
+    }
+    brushAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      brushAnimationFrameRef.current = null;
+      flushBrushPoints();
+    });
+  }
+
+  function flushBrushPoints() {
+    const stroke = brushStrokeRef.current;
+    if (!stroke || !pendingBrushPointsRef.current.length) {
+      pendingBrushPointsRef.current = [];
+      return;
+    }
+    const points = pendingBrushPointsRef.current;
+    pendingBrushPointsRef.current = [];
+    drawLiveBrushStroke(stroke, points);
+  }
+
+  function cancelBrushAnimationFrame(keepPendingPoints: boolean) {
+    if (brushAnimationFrameRef.current !== null && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(brushAnimationFrameRef.current);
+    }
+    brushAnimationFrameRef.current = null;
+    if (!keepPendingPoints) {
+      pendingBrushPointsRef.current = [];
+    }
+  }
+
+  function finishBrushDraft() {
+    cancelBrushAnimationFrame(true);
+    flushBrushPoints();
+    const stroke = brushStrokeRef.current;
+    const before = brushStrokeStartRef.current;
+    brushStrokeRef.current = null;
+    brushStrokeStartRef.current = null;
+    setLiveBrushDraft({ active: false, operation: null });
+    if (!stroke || !before) {
+      clearLiveBrushCanvas(liveMaskOverlayCanvasRef.current);
+      clearLiveBrushCanvas(liveSelectionCanvasRef.current);
+      return;
+    }
+    const selectionCanvas = cloneCanvas(stroke.selectionCanvas);
+    const canvas = finishLiveBrushStroke(stroke);
+    updateDraftFromCanvas(canvas, selectionCanvas, stroke.lastPoint, stroke.operation);
+    clearLiveBrushCanvas(liveMaskOverlayCanvasRef.current);
+    clearLiveBrushCanvas(liveSelectionCanvasRef.current);
+    commitMaskOperation(canvas, before);
   }
 
   function commitMaskOperation(canvas: HTMLCanvasElement | null, before: MaskDraftSnapshot) {
@@ -362,16 +503,16 @@ export function useSegmentMaskDraftEditor({
     }
     pushPastSnapshot(before);
     historyRef.current.future = [];
-    // WHY: Segment 画笔/魔棒结束后会立即自动保存；快捷键撤销应由 workspace history
-    // 接管。这里保留本地快照给失败回滚/组件级测试，但不再把它标成待处理草稿。
-    publishHistoryStatus(false);
-    queueMaskSubmit(canvas, before, { rollbackLastHistory: true });
+    // WHY: 自动保存请求返回前 workspace history 还没有入栈；这段窗口必须暴露本地
+    // draft history，让用户可以立刻撤销/重做，避免慢 PATCH 时工具栏像失效一样不可用。
+    publishHistoryStatus(true);
+    queueMaskSubmit(canvas, before, { historyAction: "edit", rollbackLastHistory: true });
   }
 
   function queueMaskSubmit(
     canvas: HTMLCanvasElement | null,
     before: MaskDraftSnapshot,
-    options: { rollbackLastHistory?: boolean } = {},
+    options: { historyAction?: SegmentMaskPatchMeta["historyAction"]; rollbackLastHistory?: boolean } = {},
   ) {
     if (!canvas || !onPatchMask) {
       return;
@@ -379,7 +520,9 @@ export function useSegmentMaskDraftEditor({
     const elementId = activeElement.id;
     const maskData = canvasToDataUrl(canvas);
     submitQueueRef.current = submitQueueRef.current.then(async () => {
-      const ok = await submitMaskData(elementId, maskData);
+      const ok = await submitMaskData(elementId, maskData, {
+        historyAction: options.historyAction ?? "edit",
+      });
       if (!ok) {
         if (options.rollbackLastHistory) {
           historyRef.current.past.pop();
@@ -388,15 +531,24 @@ export function useSegmentMaskDraftEditor({
         publishHistoryStatus(false);
         return;
       }
-      // WHY: 自动保存成功后，后端 workspace state 才是权威 mask。继续保留本地 draft
-      // 会让全局 undo/redo 后仍看到旧草稿覆盖层，和资源状态脱节。
-      draftCanvasRef.current = null;
-      setDraftMask(null);
+      // WHY: 新 artifact 图片加载完成前继续显示本地提交结果，避免旧 mask 在 cache 切换窗口闪回。
+      // 同时保留 history snapshots，后续 Ctrl+Z/Ctrl+Shift+Z 还要用这些快照重新 PATCH mask 文件。
+      setDraftMask((current) => current ? {
+        ...current,
+        dirty: false,
+        selectionDataUrl: null,
+        selectionOperation: null,
+      } : null);
+      setCommittedDraftVersion(maskAssetVersion);
       publishHistoryStatus(false);
     });
   }
 
-  async function submitMaskData(elementId: string, maskData: string): Promise<boolean> {
+  async function submitMaskData(
+    elementId: string,
+    maskData: string,
+    meta: SegmentMaskPatchMeta,
+  ): Promise<boolean> {
     try {
       const result = await onPatchMask?.(elementId, {
         operation: "replace",
@@ -405,7 +557,7 @@ export function useSegmentMaskDraftEditor({
           coordinateSpace: "canvas",
           maskData,
         },
-      });
+      }, meta);
       return result !== false;
     } catch {
       return false;
@@ -496,7 +648,7 @@ export function useSegmentMaskDraftEditor({
     }
     restoreDraftSnapshot(target, true);
     publishHistoryStatus(true);
-    queueMaskSubmit(target.canvas, current);
+    queueMaskSubmit(target.canvas, current, { historyAction: "undo" });
     return true;
   }
 
@@ -512,7 +664,7 @@ export function useSegmentMaskDraftEditor({
     }
     restoreDraftSnapshot(target, true);
     publishHistoryStatus(true);
-    queueMaskSubmit(target.canvas, current);
+    queueMaskSubmit(target.canvas, current, { historyAction: "redo" });
     return true;
   }
 
@@ -549,17 +701,27 @@ export function useSegmentMaskDraftEditor({
     cleanDraftFragments,
     draftMask,
     fitSourceView,
+    handleCommittedMaskAssetLoad,
     handleSourceClick,
     handleSourceGestureChange,
     handleSourceGestureEnd,
     handleSourceGestureStart,
     handleSourcePointerDown,
     handleSourcePointerMove,
+    handleSourcePointerCancel,
     handleSourcePointerUp,
     handleSourceWheel,
+    liveBrushDraft,
+    liveMaskOverlayCanvasRef,
+    liveSelectionCanvasRef,
     maskDisplayOverlaySrc,
     refreshMaskDisplayOverlay,
     setToolDock,
+    shouldPreloadCommittedMask: Boolean(
+      draftMask
+      && committedDraftVersion
+      && committedDraftVersion !== maskAssetVersion,
+    ),
     sourceViewTransform,
     toolDock,
     undoDraft,
