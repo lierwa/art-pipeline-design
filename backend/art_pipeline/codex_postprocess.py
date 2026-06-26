@@ -4,10 +4,14 @@ import hashlib
 import math
 import os
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+import numpy as np
 from PIL import Image
+from skimage.measure import label, regionprops
+from skimage.morphology import binary_dilation, remove_small_objects
 
 CHROMA_KEY_CANDIDATES: tuple[tuple[int, int, int], ...] = (
     (0, 255, 0),
@@ -16,7 +20,25 @@ CHROMA_KEY_CANDIDATES: tuple[tuple[int, int, int], ...] = (
     (255, 0, 0),
 )
 CODEX_FINAL_OUTPUT_PADDING_PX = 64
-CODEX_FINAL_CONTENT_ALPHA_THRESHOLD = 48
+CODEX_FINAL_FOREGROUND_ALPHA_THRESHOLD = 48
+CODEX_FINAL_MIN_COMPONENT_AREA_PX = 16
+CODEX_FINAL_COMPONENT_AREA_RATIO = 0.001
+CODEX_FINAL_REMOVED_AREA_WARNING_RATIO = 0.01
+CODEX_FINAL_REMOVED_COMPONENT_WARNING_COUNT = 10
+CODEX_FINAL_RETAINED_COMPONENT_WARNING_COUNT = 8
+
+
+@dataclass(frozen=True)
+class SubjectAlphaCleanup:
+    image: Image.Image
+    raw_foreground_bbox: tuple[int, int, int, int] | None
+    cleaned_foreground_bbox: tuple[int, int, int, int] | None
+    retained_component_count: int
+    retained_component_area: int
+    removed_component_count: int
+    removed_component_area: int
+    warnings: tuple[str, ...]
+
 
 def choose_chroma_key(source_file: Path) -> tuple[int, int, int]:
     with Image.open(source_file) as image:
@@ -40,32 +62,35 @@ def finalize_codex_raw_output(
     candidate_file: Path,
     reference_file: Path,
     chroma_key: tuple[int, int, int],
-) -> dict[str, str | bool | int | list[int]]:
+) -> dict[str, object]:
     if not raw_file.exists():
         raise RuntimeError("Codex CLI did not create codex_raw.png.")
     with Image.open(raw_file) as image:
         image.load()
         raw_rgba = image.convert("RGBA")
 
-    transparent = _clear_low_alpha_residue(
-        _remove_chroma_key(raw_rgba, chroma_key),
-        CODEX_FINAL_CONTENT_ALPHA_THRESHOLD,
-    )
-    visible_bbox = _content_bbox(transparent, CODEX_FINAL_CONTENT_ALPHA_THRESHOLD)
-    crop_bbox = _padded_bbox(visible_bbox, CODEX_FINAL_OUTPUT_PADDING_PX)
-    output = _crop_with_transparent_margin(transparent, crop_bbox) if crop_bbox else transparent
+    transparent = _remove_chroma_key(raw_rgba, chroma_key)
+    cleaned = _clean_subject_alpha(transparent)
+    crop_bbox = _padded_bbox(cleaned.cleaned_foreground_bbox, CODEX_FINAL_OUTPUT_PADDING_PX)
+    output = _crop_with_transparent_margin(cleaned.image, crop_bbox) if crop_bbox else cleaned.image
 
     # WHY: Codex 现在只负责生成 RGB 内容；透明、尺寸与 mask 语义必须由本地确定性代码完成。
-    # 这里先过滤低透明背景残留，再保留可调安全边距，避免噪点撑大框或最小框裁得过紧。
+    # 这里用连通域而不是单像素阈值决定主体，避免远处残留点撑大最终裁剪框。
     candidate_file.parent.mkdir(parents=True, exist_ok=True)
     output.save(candidate_file, format="PNG")
     return {
         "referenceSha256": _sha256_file(reference_file),
         "rawOutputSha256": _sha256_file(raw_file),
         "outputSha256": _sha256_file(candidate_file),
+        "rawForegroundBbox": _bbox_list(cleaned.raw_foreground_bbox),
+        "cleanedForegroundBbox": _bbox_list(cleaned.cleaned_foreground_bbox),
         "trimmedOutputBbox": list(crop_bbox) if crop_bbox else [],
         "outputWidth": output.width,
         "outputHeight": output.height,
+        "retainedComponentCount": cleaned.retained_component_count,
+        "removedComponentCount": cleaned.removed_component_count,
+        "removedComponentArea": cleaned.removed_component_area,
+        "postprocessWarnings": list(cleaned.warnings),
         "isOutputIdenticalToReference": False,
     }
 
@@ -111,26 +136,115 @@ def _remove_chroma_key(image: Image.Image, chroma_key: tuple[int, int, int]) -> 
     return result
 
 
-def _content_bbox(image: Image.Image, alpha_threshold: int) -> tuple[int, int, int, int] | None:
-    alpha = image.getchannel("A")
-    mask = Image.new("L", alpha.size, 0)
-    source = alpha.load()
-    target = mask.load()
-    width, height = alpha.size
-    for y in range(height):
-        for x in range(width):
-            if source[x, y] >= alpha_threshold:
-                target[x, y] = 255
-    return mask.getbbox()
+def _clean_subject_alpha(image: Image.Image) -> SubjectAlphaCleanup:
+    alpha = np.array(image.getchannel("A"), dtype=np.uint8)
+    seed_mask = alpha >= CODEX_FINAL_FOREGROUND_ALPHA_THRESHOLD
+    raw_bbox = _mask_bbox(seed_mask)
+    if raw_bbox is None:
+        cleaned = image.copy()
+        cleaned.putalpha(Image.new("L", image.size, 0))
+        return SubjectAlphaCleanup(
+            image=cleaned,
+            raw_foreground_bbox=None,
+            cleaned_foreground_bbox=None,
+            retained_component_count=0,
+            retained_component_area=0,
+            removed_component_count=0,
+            removed_component_area=0,
+            warnings=(),
+        )
+
+    labeled = label(seed_mask, connectivity=2)
+    components = regionprops(labeled)
+    largest_area = max(int(component.area) for component in components)
+    min_component_area = max(
+        CODEX_FINAL_MIN_COMPONENT_AREA_PX,
+        round(largest_area * CODEX_FINAL_COMPONENT_AREA_RATIO),
+    )
+    retained_labels = {
+        component.label
+        for component in components
+        if int(component.area) >= min_component_area
+    }
+    retained_seed = remove_small_objects(seed_mask, min_size=min_component_area, connectivity=2)
+    removed_components = [
+        component
+        for component in components
+        if component.label not in retained_labels
+    ]
+    removed_area = sum(int(component.area) for component in removed_components)
+    retained_area = sum(
+        int(component.area)
+        for component in components
+        if component.label in retained_labels
+    )
+    if retained_area <= 0:
+        subject_mask = np.zeros(alpha.shape, dtype=bool)
+    else:
+        # WHY: seed mask 用较高 alpha 排除背景噪点，但主体边缘的抗锯齿可能低于阈值。
+        # 对保留组件膨胀 1px 后再和原始 alpha 相交，可以只带回贴近主体的透明边缘。
+        subject_mask = (
+            binary_dilation(retained_seed, footprint=np.ones((3, 3), dtype=bool))
+            & (alpha > 0)
+        )
+
+    cleaned_alpha = np.where(subject_mask, alpha, 0).astype(np.uint8)
+    cleaned = image.copy()
+    cleaned.putalpha(Image.fromarray(cleaned_alpha))
+    cleaned_bbox = _mask_bbox(subject_mask)
+    warnings = _postprocess_warnings(
+        removed_component_count=len(removed_components),
+        removed_component_area=removed_area,
+        retained_component_count=len(retained_labels),
+        retained_component_area=retained_area,
+    )
+    return SubjectAlphaCleanup(
+        image=cleaned,
+        raw_foreground_bbox=raw_bbox,
+        cleaned_foreground_bbox=cleaned_bbox,
+        retained_component_count=len(retained_labels),
+        retained_component_area=retained_area,
+        removed_component_count=len(removed_components),
+        removed_component_area=removed_area,
+        warnings=warnings,
+    )
 
 
-def _clear_low_alpha_residue(image: Image.Image, alpha_threshold: int) -> Image.Image:
-    pixels: list[tuple[int, int, int, int]] = []
-    for red, green, blue, alpha in image.getdata():
-        pixels.append((red, green, blue, 0) if alpha < alpha_threshold else (red, green, blue, alpha))
-    cleaned = Image.new("RGBA", image.size)
-    cleaned.putdata(pixels)
-    return cleaned
+def _mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    ys, xs = np.nonzero(mask)
+    if xs.size == 0 or ys.size == 0:
+        return None
+    return (
+        int(xs.min()),
+        int(ys.min()),
+        int(xs.max()) + 1,
+        int(ys.max()) + 1,
+    )
+
+
+def _postprocess_warnings(
+    *,
+    removed_component_count: int,
+    removed_component_area: int,
+    retained_component_count: int,
+    retained_component_area: int,
+) -> tuple[str, ...]:
+    warnings: list[str] = []
+    if removed_component_count >= CODEX_FINAL_REMOVED_COMPONENT_WARNING_COUNT:
+        warnings.append("small_components_removed")
+    if (
+        retained_component_area > 0
+        and removed_component_area / retained_component_area
+        >= CODEX_FINAL_REMOVED_AREA_WARNING_RATIO
+    ):
+        warnings.append("small_components_removed")
+    if retained_component_count > CODEX_FINAL_RETAINED_COMPONENT_WARNING_COUNT:
+        warnings.append("many_subject_components")
+    return tuple(dict.fromkeys(warnings))
+
+
+def _bbox_list(bbox: tuple[int, int, int, int] | None) -> list[int]:
+    return list(bbox) if bbox else []
 
 
 def _padded_bbox(
@@ -148,7 +262,10 @@ def _padded_bbox(
     )
 
 
-def _crop_with_transparent_margin(image: Image.Image, bbox: tuple[int, int, int, int]) -> Image.Image:
+def _crop_with_transparent_margin(
+    image: Image.Image,
+    bbox: tuple[int, int, int, int],
+) -> Image.Image:
     left, top, right, bottom = bbox
     output = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
     source_box = (
@@ -159,11 +276,17 @@ def _crop_with_transparent_margin(image: Image.Image, bbox: tuple[int, int, int,
     )
     if source_box[0] >= source_box[2] or source_box[1] >= source_box[3]:
         return output
-    output.alpha_composite(image.crop(source_box), (source_box[0] - left, source_box[1] - top))
+    output.alpha_composite(
+        image.crop(source_box),
+        (source_box[0] - left, source_box[1] - top),
+    )
     return output
 
 
-def _dominant_border_color(image: Image.Image, fallback: tuple[int, int, int]) -> tuple[int, int, int]:
+def _dominant_border_color(
+    image: Image.Image,
+    fallback: tuple[int, int, int],
+) -> tuple[int, int, int]:
     width, height = image.size
     if width == 0 or height == 0:
         return fallback

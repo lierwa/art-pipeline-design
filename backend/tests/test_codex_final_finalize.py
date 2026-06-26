@@ -109,6 +109,58 @@ def test_finalize_writes_candidate_before_promoting_canonical_final(
     assert (workspace_root / generation["assetPath"]).exists()
 
 
+def test_finalize_merges_postprocess_warnings_into_generation_and_quality_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
+    _write_mask_aligned_rgb_output(prepared.raw_output_path, prepared)
+
+    def finalize_with_warning(
+        raw_file: Path,
+        candidate_file: Path,
+        reference_file: Path,
+        chroma_key: tuple[int, int, int],
+    ) -> dict[str, object]:
+        Image.new("RGBA", (8, 7), (12, 180, 90, 255)).save(candidate_file, format="PNG")
+        return {
+            "referenceSha256": "reference-sha",
+            "rawOutputSha256": "raw-sha",
+            "outputSha256": "output-sha",
+            "rawForegroundBbox": [0, 0, 20, 20],
+            "cleanedForegroundBbox": [5, 5, 15, 15],
+            "trimmedOutputBbox": [0, 0, 8, 7],
+            "outputWidth": 8,
+            "outputHeight": 7,
+            "retainedComponentCount": 1,
+            "removedComponentCount": 20,
+            "removedComponentArea": 20,
+            "postprocessWarnings": ["small_components_removed"],
+            "isOutputIdenticalToReference": False,
+        }
+
+    monkeypatch.setattr(codex_assets, "finalize_codex_raw_output", finalize_with_warning)
+
+    _next_state, _updated, generation = codex_assets.finalize_codex_final_job(
+        workspace_root,
+        state,
+        prepared,
+        prepared.raw_output_path,
+        "codex_agent",
+    )
+
+    metadata = json.loads((workspace_root / generation["metadataPath"]).read_text(encoding="utf-8"))
+    quality_report = json.loads(prepared.quality_report_path.read_text(encoding="utf-8"))
+    assert generation["postprocessWarnings"] == ["small_components_removed"]
+    assert "small_components_removed" in generation["qualityWarnings"]
+    assert metadata["postprocessWarnings"] == ["small_components_removed"]
+    assert "small_components_removed" in metadata["qualityWarnings"]
+    assert "small_components_removed" in quality_report["warnings"]
+
+
 def test_generate_codex_final_asset_requires_provider_raw_output_for_normal_asset(
     tmp_path: Path,
 ) -> None:

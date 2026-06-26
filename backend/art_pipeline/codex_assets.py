@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, Sequence, cast
@@ -343,6 +343,7 @@ def finalize_codex_final_job(
         analysis_mask_file=prepared.analysis_mask_path,
         chroma_key=prepared.chroma_key,
     )
+    quality_report = _merge_postprocess_warnings(quality_report, output_diagnostics)
     write_codex_final_quality_report(prepared.quality_report_path, quality_report)
     if quality_report.has_blocking_errors:
         raise RuntimeError("Codex final candidate failed quality gate: " + quality_report.summary)
@@ -469,6 +470,15 @@ def _complete_codex_final_success(
         "qualityErrors": metadata["qualityErrors"],
         "qualityWarnings": metadata["qualityWarnings"],
         "repairNote": metadata["repairNote"],
+        "rawForegroundBbox": metadata.get("rawForegroundBbox", []),
+        "cleanedForegroundBbox": metadata.get("cleanedForegroundBbox", []),
+        "trimmedOutputBbox": metadata.get("trimmedOutputBbox", []),
+        "outputWidth": metadata.get("outputWidth"),
+        "outputHeight": metadata.get("outputHeight"),
+        "retainedComponentCount": metadata.get("retainedComponentCount"),
+        "removedComponentCount": metadata.get("removedComponentCount"),
+        "removedComponentArea": metadata.get("removedComponentArea"),
+        "postprocessWarnings": metadata.get("postprocessWarnings", []),
         "inputImagePaths": metadata["inputImagePaths"],
         "inputImages": metadata["inputImages"],
         "generationProfile": prepared.generation_profile,
@@ -477,6 +487,26 @@ def _complete_codex_final_success(
         "prompt": prepared.prompt,
     }
     return next_state, updated, generation
+
+
+def _merge_postprocess_warnings(
+    quality_report: CodexFinalQualityReport,
+    output_diagnostics: dict[str, Any],
+) -> CodexFinalQualityReport:
+    warnings = output_diagnostics.get("postprocessWarnings")
+    if not isinstance(warnings, list):
+        return quality_report
+    merged = tuple(
+        dict.fromkeys(
+            [
+                *quality_report.warnings,
+                *(warning for warning in warnings if isinstance(warning, str)),
+            ]
+        )
+    )
+    if merged == quality_report.warnings:
+        return quality_report
+    return replace(quality_report, warnings=merged)
 
 
 def _input_image_metadata(input_images: Sequence[CodexFinalInputImage]) -> list[dict[str, Any]]:
