@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import sqrt
+from pathlib import Path
 
 from PIL import Image
 
@@ -52,6 +53,16 @@ def build_codex_final_analysis_mask(image: Image.Image) -> CodexFinalAnalysisMas
         removed_component_count=len(components) - len(kept_components),
         image=output,
     )
+
+
+def write_codex_final_analysis_mask(mask_file: Path, output_file: Path) -> CodexFinalAnalysisMask:
+    with Image.open(mask_file) as mask:
+        analysis = build_codex_final_analysis_mask(mask)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    # WHY: analysis mask 是质量门的几何事实源；单独落盘而不再生成 layout guide，
+    # 可以保留 QA 可复现性，同时避免把施工图重新喂回生图链路。
+    analysis.image.save(output_file, format="PNG")
+    return analysis
 
 
 def _to_binary_mask(image: Image.Image) -> Image.Image:

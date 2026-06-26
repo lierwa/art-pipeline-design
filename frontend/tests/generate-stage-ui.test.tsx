@@ -190,9 +190,9 @@ describe("generate stage UI", () => {
     const panel = screen.getByRole("region", { name: /generate final review/i });
     const actions = panel.querySelector(".generate-review-actions");
     expect(actions).not.toBeNull();
-    expect(within(actions as HTMLElement).getByText("QA failed")).toBeInTheDocument();
+    expect(within(actions as HTMLElement).getByText("Blocking checks failed")).toBeInTheDocument();
     expect(within(actions as HTMLElement).queryByText("Done")).not.toBeInTheDocument();
-    expect(within(panel).getByRole("region", { name: /qa repair note/i })).toHaveTextContent(
+    expect(within(panel).getByRole("region", { name: /blocking check repair note/i })).toHaveTextContent(
       "Candidate appears clipped at the output edge.",
     );
 

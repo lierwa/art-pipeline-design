@@ -223,7 +223,7 @@ describe("workspace task progress UI", () => {
     expect(taskPanel).not.toHaveTextContent(/codex_raw\.png/i);
   });
 
-  it("marks QA failed Codex final rows without exposing long candidate artifact paths", async () => {
+  it("marks failed Codex final blocking checks without exposing long candidate artifact paths", async () => {
     const task = taskFixture({
       taskId: "task_202606250940000000_codex-final-batch",
       type: "codex_final_batch",
@@ -258,7 +258,7 @@ describe("workspace task progress UI", () => {
     await userEvent.click(within(taskPanel).getByRole("button", { name: /expand task progress/i }));
 
     const row = within(taskPanel).getByRole("listitem");
-    expect(within(row).getByText("QA failed")).toBeInTheDocument();
+    expect(within(row).getByText("Blocking checks failed")).toBeInTheDocument();
     expect(within(row).queryByText("Done")).not.toBeInTheDocument();
     expect(taskPanel).not.toHaveTextContent(/final_asset\.png/i);
     expect(taskPanel).not.toHaveTextContent(/quality_report\.json/i);

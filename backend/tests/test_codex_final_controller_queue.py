@@ -22,6 +22,7 @@ from art_pipeline.codex_final_controller_launcher import (
 from test_codex_final_task_api import (
     FakeCodexProvider,
     SelectiveSam2Provider,
+    _force_parent_repair_targets,
     _item,
     _manifest_job,
     _wait_for_task,
@@ -211,6 +212,7 @@ def test_codex_final_batch_launches_cli_controllers_even_when_legacy_provider_is
     sam2_task = client.post("/api/workspace/tasks/sam2-masks").json()
     _wait_for_task(client, sam2_task["taskId"])
     assert client.post("/api/workspace/elements/element_001/segment/accept").status_code == 200
+    _force_parent_repair_targets(client, workspace_root, ("element_001",))
 
     response = client.post("/api/workspace/tasks/codex-finals")
 
@@ -294,6 +296,7 @@ def test_codex_final_batch_marks_jobs_failed_when_no_controller_launches(
     sam2_task = client.post("/api/workspace/tasks/sam2-masks").json()
     _wait_for_task(client, sam2_task["taskId"])
     assert client.post("/api/workspace/elements/element_001/segment/accept").status_code == 200
+    _force_parent_repair_targets(client, workspace_root, ("element_001",))
 
     response = client.post("/api/workspace/tasks/codex-finals")
 
@@ -328,6 +331,7 @@ def test_manual_controller_start_marks_jobs_failed_when_no_controller_launches(
     sam2_task = client.post("/api/workspace/tasks/sam2-masks").json()
     _wait_for_task(client, sam2_task["taskId"])
     assert client.post("/api/workspace/elements/element_001/segment/accept").status_code == 200
+    _force_parent_repair_targets(client, workspace_root, ("element_001",))
     create_response = client.post("/api/workspace/tasks/codex-finals")
     assert create_response.status_code == 200
     task_id = create_response.json()["taskId"]
@@ -371,6 +375,11 @@ def _prepare_codex_final_queue(
     _wait_for_task(client, sam2_task["taskId"])
     for index in range(1, element_count + 1):
         assert client.post(f"/api/workspace/elements/element_{index:03d}/segment/accept").status_code == 200
+    _force_parent_repair_targets(
+        client,
+        workspace_root,
+        tuple(f"element_{index:03d}" for index in range(1, element_count + 1)),
+    )
     response = client.post("/api/workspace/tasks/codex-finals")
     assert response.status_code == 200
     task_id = response.json()["taskId"]

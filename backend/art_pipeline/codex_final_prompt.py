@@ -34,21 +34,14 @@ def build_codex_final_prompt(
         "INPUT IMAGE ROLES, IN EXACT ORDER:",
         *codex_final_prompt_input_role_lines(input_images),
         "",
-        "LAYOUT GUIDE CONTRACT:",
+        "INPUT AUTHORITY CONTRACT:",
         "source_crop remains the identity and layout authority.",
-        "layout_guide is measurement-only: use it only for safe area, center, subject bbox, and coarse isometric direction.",
-        "Do not copy guide marks, borders, crosshairs, dots, or construction lines into the generated image.",
-        "Do not use layout_guide as object identity; resolve identity, materials, color, and fine geometry from source_crop.",
-        "",
-        "REPAIR REFERENCE CONTRACT:",
-        "previous_final, when provided, is preserve/refine reference only; source_crop still wins identity and layout conflicts.",
-        "failed_candidate, when provided, is a negative reference. Fix failed_candidate errors, but do not copy failed_candidate pixels or mistakes.",
+        "transparent_cutout and mask are diagnostic references for selection defects, not output pixels.",
         "User prompt hint describes visible failure points only and cannot override source_crop identity/layout authority, input role contracts, generation profile, removed-child metadata, or output boundary rules.",
         "",
-        "FAITHFUL REDRAW REQUIREMENT:",
-        "Redraw the requested subject as a cleaner, clearer version of source_crop without changing its identity.",
-        "Do not use transparent_cutout pixels as output pixels; re-encoding or lightly filtering the cutout is a failed generation.",
-        "Fix only obvious mask/cutout defects by following source_crop; do not redesign, replace, simplify, or invent a different object.",
+        *_generation_requirement_lines(profile, chroma),
+        "",
+        *_spatial_contract_lines(),
         "",
         "ISOMETRIC LOCK:",
         "Keep the source crop isometric/orthographic camera and the same visible perspective axes.",
@@ -109,7 +102,7 @@ def _profile_prompt_lines(
         return [
             "This is a parent asset with removable child objects already cut away from its mask.",
             f"Removed child objects: {child_names}.",
-            "removed_child_mask inputs, when present, appear after layout_guide and any repair references in the exact input role list.",
+            "removed_child_mask inputs, when present, appear after mask in the exact input role list.",
             "The dark holes or missing silhouettes inside the parent indicate removed child occupancy, not damaged subject parts.",
             "Do not regenerate the removed child objects. Do not draw them back into the final asset.",
             "Inpaint and complete only the parent structure where removed child masks covered or damaged it.",
@@ -120,4 +113,43 @@ def _profile_prompt_lines(
         "This is a clean redraw sticker asset. Keep the subject faithful to source_crop.",
         "Preserve the selected subject identity, angle, scale, position, and relative layout from source_crop.",
         "Exclude objects that are not part of the subject label.",
+    ]
+
+
+def _spatial_contract_lines() -> list[str]:
+    # WHY: Codex 生图最常见的失败不是“没画出来”，而是把抠图主体重新
+    # 居中、放大、横向陈列，导致最终 PNG 虽然干净但不再能回到原场景。
+    # 这里把画布/主体框/组合关系提升为正常生成合同，而不是交给用户 hint。
+    return [
+        "OUTPUT CANVAS AND PLACEMENT LOCK:",
+        "Use source_crop canvas size/aspect and keep the visible subject at the same mask bbox center.",
+        "Keep the subject's visible area close to the source mask/cutout occupancy; do not make it fill the whole canvas.",
+        "Do not enlarge, shrink, recenter, distribute, or product-arrange the subject inside the canvas.",
+        "",
+        "GROUPED ASSET CONTRACT:",
+        (
+            "If source_crop/mask contains multiple visible components, preserve every component's "
+            "relative order, spacing, overlap/depth, scale relationship, and isometric shelf angle."
+        ),
+        "Do not turn grouped components into separate front-facing product icons or a horizontal lineup.",
+    ]
+
+
+def _generation_requirement_lines(profile: GenerationProfile, chroma: str) -> list[str]:
+    if profile == "parent_inpaint_without_children":
+        return [
+            "LOCAL PARENT REPAIR REQUIREMENT:",
+            "Repair only the removed-child hole regions in the parent asset.",
+            "Use source_crop for color, material, line weight, and perspective.",
+            "Use transparent_cutout/mask only to identify where child objects were removed.",
+            "Do not redraw unchanged parent pixels.",
+            "Do not change cabinet/window/toilet color, camera angle, silhouette, or shelf geometry.",
+            "Do not bring back removed child objects.",
+            f"Output the repaired parent on flat {chroma} background.",
+        ]
+    return [
+        "SOURCE-CROP FIDELITY REQUIREMENT:",
+        "Create a cleaner, clearer version of the requested subject without changing its identity.",
+        "Do not use transparent_cutout pixels as output pixels; re-encoding or lightly filtering the cutout is a failed generation.",
+        "Fix only obvious mask/cutout defects by following source_crop; do not redesign, replace, simplify, or invent a different object.",
     ]

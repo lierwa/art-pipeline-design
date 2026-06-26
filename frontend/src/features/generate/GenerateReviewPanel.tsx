@@ -199,7 +199,7 @@ export function GenerateReviewPanel({
               imageAlt={`${activeElement.name} failed candidate`}
               imageSrc={failedCandidateUrl}
               icon={Layers}
-              status="QA failed"
+              status="Blocking checks failed"
             />
           </section>
         ) : null}
@@ -212,7 +212,7 @@ export function GenerateReviewPanel({
             </div>
           ) : null}
           {repairNote ? (
-            <section className="generate-repair-note" aria-label="QA repair note">
+            <section className="generate-repair-note" aria-label="Blocking check repair note">
               <strong>Repair note</strong>
               <p>{repairNote}</p>
             </section>

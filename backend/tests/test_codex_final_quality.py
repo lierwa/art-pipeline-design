@@ -28,44 +28,18 @@ def test_quality_blocks_empty_alpha(tmp_path: Path) -> None:
     assert report.has_blocking_errors is True
 
 
-def test_quality_blocks_small_edge_clipped_candidate(tmp_path: Path) -> None:
+def test_quality_does_not_block_spatial_mismatch_after_effective_bounds_crop(tmp_path: Path) -> None:
     candidate, reference, mask = _quality_files(tmp_path)
-    _write_rgba(candidate, [_rect(0, 5, 8, 15, (12, 180, 90, 255))])
+    _write_rgba(candidate, [_rect(0, 0, 8, 7, (12, 180, 90, 255))], size=(8, 7))
     _write_rgba(reference, [_rect(5, 5, 15, 15, (220, 90, 40, 255))])
     _write_mask(mask, _rect(5, 5, 15, 15, 255))
 
     report = assess_codex_final_candidate(candidate, reference, mask, CHROMA_KEY)
 
-    assert report.status == "failed"
-    assert "subject_clipped_at_output_edge" in report.errors
-    assert report.repair_note == "Candidate appears clipped at the output edge."
-
-
-def test_quality_blocks_output_bbox_side_too_small(tmp_path: Path) -> None:
-    candidate, reference, mask = _quality_files(tmp_path)
-    _write_rgba(candidate, [_rect(8, 5, 11, 15, (12, 180, 90, 255))])
-    _write_rgba(reference, [_rect(5, 5, 15, 15, (220, 90, 40, 255))])
-    _write_mask(mask, _rect(5, 5, 15, 15, 255))
-
-    report = assess_codex_final_candidate(candidate, reference, mask, CHROMA_KEY)
-
-    assert report.status == "failed"
-    assert "bbox_side_too_small" in report.errors
-    assert report.metrics["candidateBboxWidth"] == 3
-    assert report.metrics["analysisBboxWidth"] == 10
-
-
-def test_quality_blocks_visible_area_extreme_outlier(tmp_path: Path) -> None:
-    candidate, reference, mask = _quality_files(tmp_path)
-    _write_rgba(candidate, [_rect(0, 0, 20, 20, (12, 180, 90, 255))])
-    _write_rgba(reference, [_rect(5, 5, 15, 15, (220, 90, 40, 255))])
-    _write_mask(mask, _rect(5, 5, 15, 15, 255))
-
-    report = assess_codex_final_candidate(candidate, reference, mask, CHROMA_KEY)
-
-    assert report.status == "failed"
-    assert "visible_area_extreme_outlier" in report.errors
-    assert report.metrics["visibleAreaRatio"] == 4.0
+    assert report.status == "passed"
+    assert report.errors == ()
+    assert report.metrics["candidateWidth"] == 8
+    assert report.metrics["candidateHeight"] == 7
 
 
 def test_quality_blocks_visible_chroma_residue_outside_subject(tmp_path: Path) -> None:
@@ -84,7 +58,7 @@ def test_quality_blocks_visible_chroma_residue_outside_subject(tmp_path: Path) -
 
     assert report.status == "failed"
     assert "visible_chroma_residue" in report.errors
-    assert report.metrics["visibleChromaResiduePixels"] == 15
+    assert report.metrics["visibleChromaResiduePixels"] == 16
 
 
 def test_quality_blocks_non_chroma_background_alpha_pollution(tmp_path: Path) -> None:
@@ -139,9 +113,22 @@ def test_quality_blocks_near_copy_of_sam2_cutout(tmp_path: Path) -> None:
     assert report.metrics["alphaIou"] == 1.0
 
 
+def test_quality_blocks_cropped_near_copy_of_sam2_cutout(tmp_path: Path) -> None:
+    candidate, reference, mask = _quality_files(tmp_path)
+    _write_rgba(candidate, [_rect(0, 0, 10, 10, (220, 90, 40, 255))], size=(10, 10))
+    _write_rgba(reference, [_rect(5, 5, 15, 15, (220, 90, 40, 255))])
+    _write_mask(mask, _rect(5, 5, 15, 15, 255))
+
+    report = assess_codex_final_candidate(candidate, reference, mask, CHROMA_KEY)
+
+    assert report.status == "failed"
+    assert "near_copy_of_sam2_cutout" in report.errors
+    assert report.metrics["alphaIou"] == 1.0
+
+
 def test_quality_warnings_do_not_block_candidate(tmp_path: Path) -> None:
     candidate, reference, mask = _quality_files(tmp_path)
-    _write_rgba(candidate, [_rect(7, 4, 19, 16, (12, 180, 90, 255))])
+    _write_rgba(candidate, [_rect(4, 4, 16, 16, (12, 180, 90, 255))])
     _write_rgba(reference, [_rect(5, 5, 15, 15, (220, 90, 40, 255))])
     _write_mask(mask, _rect(5, 5, 15, 15, 255))
 
@@ -149,8 +136,6 @@ def test_quality_warnings_do_not_block_candidate(tmp_path: Path) -> None:
 
     assert report.status == "passed"
     assert report.errors == ()
-    assert "bbox_center_shifted" in report.warnings
-    assert "visible_area_differs" in report.warnings
     assert report.repair_note is None
 
 
@@ -198,8 +183,10 @@ def _rect(
 def _write_rgba(
     path: Path,
     rects: list[tuple[int, int, int, int, tuple[int, int, int, int] | int]],
+    *,
+    size: tuple[int, int] = (20, 20),
 ) -> None:
-    image = Image.new("RGBA", (20, 20), (0, 0, 0, 0))
+    image = Image.new("RGBA", size, (0, 0, 0, 0))
     pixels = image.load()
     for left, top, right, bottom, fill in rects:
         assert isinstance(fill, tuple)
@@ -211,13 +198,13 @@ def _write_rgba(
 
 def _write_mask(
     path: Path,
-    rect: tuple[int, int, int, int, tuple[int, int, int, int] | int],
+    *rects: tuple[int, int, int, int, tuple[int, int, int, int] | int],
 ) -> None:
     image = Image.new("L", (20, 20), 0)
     pixels = image.load()
-    left, top, right, bottom, fill = rect
-    assert isinstance(fill, int)
-    for x in range(left, right):
-        for y in range(top, bottom):
-            pixels[x, y] = fill
+    for left, top, right, bottom, fill in rects:
+        assert isinstance(fill, int)
+        for x in range(left, right):
+            for y in range(top, bottom):
+                pixels[x, y] = fill
     image.save(path, format="PNG")

@@ -71,11 +71,13 @@ def test_codex_final_batch_defers_near_copy_validation_to_ingest(tmp_path: Path)
     task = _wait_for_queued_codex_task(client, response.json()["taskId"])
     assert task["status"] == "queued"
     assert task["failed"] == 0
-    assert _item(task, "element_001")["status"] == "queued"
-    assert _item(task, "element_001")["message"] == "Queued for Codex controller."
+    item = _item(task, "element_001")
+    assert item["status"] == "queued"
+    assert item["message"] == "Queued for Codex controller."
+    assert item["artifactPaths"]["rawOutputPath"].endswith("/codex_raw.png")
     assert codex_provider.requests == []
     next_state = client.get("/api/workspace/state").json()
-    assert next_state["elements"][0]["sourceProvider"] != "codex_cli"
+    assert next_state["elements"][0]["sourceProvider"] is None
 
 
 def _wait_for_task(client: TestClient, task_id: str) -> dict[str, Any]:

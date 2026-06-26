@@ -19,6 +19,7 @@ from art_pipeline.codex_final_jobs import (
 from art_pipeline.elements import WorkspaceState
 from codex_final_fixtures import (
     write_accepted_sam2_reference,
+    write_parent_child_sam2_references,
     write_semantic_rgb_output,
 )
 
@@ -30,7 +31,7 @@ def test_finalize_codex_final_job_accepts_prepared_raw_output_path(
     write_accepted_sam2_reference(workspace_root)
     state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
     prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
-    write_semantic_rgb_output(prepared.raw_output_path, prepared.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(prepared.raw_output_path, prepared)
 
     next_state, updated, generation = codex_assets.finalize_codex_final_job(
         workspace_root,
@@ -48,7 +49,11 @@ def test_finalize_codex_final_job_accepts_prepared_raw_output_path(
     assert generation["promptPath"] == prepared.prompt_path.relative_to(workspace_root).as_posix()
     assert generation["briefImagePath"] == prepared.brief_image_path.relative_to(workspace_root).as_posix()
     assert generation["briefJsonPath"] == prepared.brief_json_path.relative_to(workspace_root).as_posix()
-    assert generation["inputImagePaths"][1] == generation["briefImagePath"]
+    assert generation["inputImagePaths"] == [
+        "elements/element_001/sam2_edge/source_crop.png",
+        "elements/element_001/sam2_edge/transparent_asset.png",
+        "elements/element_001/sam2_edge/mask.png",
+    ]
     assert generation["codexThreadId"] == "thread_codex_123"
 
 
@@ -59,7 +64,7 @@ def test_finalize_codex_final_job_records_raw_and_transparency_timing(
     write_accepted_sam2_reference(workspace_root)
     state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
     prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
-    write_semantic_rgb_output(prepared.raw_output_path, prepared.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(prepared.raw_output_path, prepared)
 
     _next_state, _updated, generation = codex_assets.finalize_codex_final_job(
         workspace_root,
@@ -90,7 +95,7 @@ def test_finalize_writes_candidate_before_promoting_canonical_final(
     write_accepted_sam2_reference(workspace_root)
     state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
     prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
-    write_semantic_rgb_output(prepared.raw_output_path, prepared.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(prepared.raw_output_path, prepared)
 
     _next_state, _updated, generation = codex_assets.finalize_codex_final_job(
         workspace_root,
@@ -104,6 +109,68 @@ def test_finalize_writes_candidate_before_promoting_canonical_final(
     assert (workspace_root / generation["assetPath"]).exists()
 
 
+def test_generate_codex_final_asset_requires_provider_raw_output_for_normal_asset(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_accepted_sam2_reference(workspace_root)
+    state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
+    provider = _MaskAlignedOutputProvider()
+
+    next_state, updated, generation = codex_assets.generate_codex_final_asset(
+        workspace_root,
+        state,
+        "element_001",
+        provider,
+    )
+
+    assert provider.request_count == 1
+    assert updated.sourceProvider == "codex_agent"
+    assert next_state.elements[0].sourceProvider == "codex_agent"
+    assert generation["provider"] == "codex_agent"
+    assert generation["rawOutputPath"].endswith("/codex_raw.png")
+    assert Path(generation["outputPath"]).name == "candidate_asset.png"
+    with Image.open(workspace_root / generation["assetPath"]) as final:
+        padding = codex_postprocess.CODEX_FINAL_OUTPUT_PADDING_PX
+        assert final.convert("RGBA").size == (6 + padding * 2, 4 + padding * 2)
+        assert final.getchannel("A").getbbox() == (padding, padding, padding + 6, padding + 4)
+
+
+def test_parent_finalize_promotes_trimmed_raw_without_local_candidate_rewrite(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    write_parent_child_sam2_references(workspace_root)
+    state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
+    prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "parent_001")
+    write_semantic_rgb_output(prepared.raw_output_path, prepared.chroma_key, (22, 22))
+
+    _next_state, _updated, generation = codex_assets.finalize_codex_final_job(
+        workspace_root,
+        state,
+        prepared,
+        prepared.raw_output_path,
+        "codex_agent",
+    )
+
+    with Image.open(workspace_root / generation["assetPath"]) as final_file:
+        final = final_file.convert("RGBA")
+    with Image.open(prepared.output_path) as candidate_file:
+        candidate = candidate_file.convert("RGBA")
+
+    padding = codex_postprocess.CODEX_FINAL_OUTPUT_PADDING_PX
+    assert final.size == (11 + padding * 2, 11 + padding * 2)
+    assert candidate.size == final.size
+    assert final.getchannel("A").getbbox() == (padding, padding, padding + 11, padding + 11)
+    assert final.getpixel((0, 0))[3] == 0
+    assert final.getpixel((padding, padding)) == (40, 90, 220, 255)
+    assert generation["outputPath"] == prepared.output_path.relative_to(workspace_root).as_posix()
+    metadata = json.loads((workspace_root / generation["metadataPath"]).read_text(encoding="utf-8"))
+    assert "parentRepairBasePath" not in metadata
+    assert "parentRepairRawCandidatePath" not in metadata
+    assert "spatialNormalized" not in metadata
+
+
 def test_finalize_does_not_overwrite_previous_final_when_candidate_quality_fails(
     tmp_path: Path,
 ) -> None:
@@ -115,7 +182,7 @@ def test_finalize_does_not_overwrite_previous_final_when_candidate_quality_fails
     final_asset_path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGBA", (8, 6), (90, 40, 210, 255)).save(final_asset_path, format="PNG")
     previous_bytes = final_asset_path.read_bytes()
-    _write_edge_touching_rgb_output(prepared.raw_output_path, prepared.chroma_key, (8, 6))
+    Image.new("RGB", (8, 6), prepared.chroma_key).save(prepared.raw_output_path, format="PNG")
 
     with pytest.raises(RuntimeError, match="Codex final candidate failed quality gate"):
         codex_assets.finalize_codex_final_job(
@@ -130,8 +197,8 @@ def test_finalize_does_not_overwrite_previous_final_when_candidate_quality_fails
     quality_report_path = prepared.work_dir / "quality_report.json"
     quality_report = json.loads(quality_report_path.read_text(encoding="utf-8"))
     assert quality_report["status"] == "failed"
-    assert "subject_clipped_at_output_edge" in quality_report["errors"]
-    assert quality_report["repairNote"] == "Candidate appears clipped at the output edge."
+    assert "empty_alpha" in quality_report["errors"]
+    assert quality_report["repairNote"] == "Candidate has no visible subject."
 
 
 def test_promote_candidate_keeps_previous_final_when_replace_fails(
@@ -173,7 +240,7 @@ def test_finalize_codex_final_job_rejects_workspace_relative_selected_source(
     state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
     prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
     selected_source = workspace_root / "scratch" / "agent_selected.png"
-    write_semantic_rgb_output(selected_source, prepared.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(selected_source, prepared)
 
     with pytest.raises(RuntimeError, match="outside allowed Codex source roots"):
         codex_assets.finalize_codex_final_job(
@@ -242,7 +309,7 @@ def test_finalize_codex_final_job_accepts_generated_images_source(
     state = WorkspaceState.model_validate_json((workspace_root / "state.json").read_text(encoding="utf-8"))
     prepared = codex_assets.prepare_codex_final_job(workspace_root, state, "element_001")
     selected_source = codex_home / "generated_images" / "thread_001" / "image.png"
-    write_semantic_rgb_output(selected_source, prepared.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(selected_source, prepared)
     os.utime(selected_source, (1, 1))
 
     _next_state, updated, generation = codex_assets.finalize_codex_final_job(
@@ -279,7 +346,7 @@ def test_manifest_job_reconstructs_prepared_job_for_finalize_without_prepare(
         state,
         loaded_job,
     )
-    write_semantic_rgb_output(reconstructed.raw_output_path, reconstructed.chroma_key, (8, 6))
+    _write_mask_aligned_rgb_output(reconstructed.raw_output_path, reconstructed)
     _next_state, updated, generation = codex_assets.finalize_codex_final_job(
         workspace_root,
         state,
@@ -345,14 +412,36 @@ def _manifest_job_from_prepared(
     )
 
 
-def _write_edge_touching_rgb_output(
+class _MaskAlignedOutputProvider:
+    name = "codex_agent"
+
+    def __init__(self) -> None:
+        self.request_count = 0
+
+    def generate(self, request: codex_assets.CodexAssetRequest) -> dict[str, object]:
+        self.request_count += 1
+        request.raw_output_path.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(request.mask_path) as mask_file:
+            mask = mask_file.convert("L")
+        image = Image.new("RGB", mask.size, request.chroma_key)
+        for y in range(mask.height):
+            for x in range(mask.width):
+                if mask.getpixel((x, y)) > 0:
+                    image.putpixel((x, y), (40, 90, 220))
+        image.save(request.raw_output_path, format="PNG")
+        return {"codexThreadId": "thread_codex_provider"}
+
+
+def _write_mask_aligned_rgb_output(
     path: Path,
-    chroma_key: tuple[int, int, int],
-    size: tuple[int, int],
+    prepared: codex_assets.PreparedCodexFinalJob,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    image = Image.new("RGB", size, chroma_key)
-    for x in range(0, size[0] // 2):
-        for y in range(1, size[1] - 1):
-            image.putpixel((x, y), (12, 180, 90))
+    with Image.open(prepared.mask_path) as mask_file:
+        mask = mask_file.convert("L")
+    image = Image.new("RGB", mask.size, prepared.chroma_key)
+    for y in range(mask.height):
+        for x in range(mask.width):
+            if mask.getpixel((x, y)) > 0:
+                image.putpixel((x, y), (40, 90, 220))
     image.save(path, format="PNG")

@@ -10,6 +10,8 @@ from art_pipeline.exporting.files import resolve_workspace_path
 
 CODEX_FINAL_STAGE = "codex_final"
 CODEX_FINAL_METADATA_FILENAME = "generation.json"
+CODEX_FINAL_CANDIDATE_FILENAME = "candidate_asset.png"
+CODEX_FINAL_QUALITY_REPORT_FILENAME = "quality_report.json"
 
 
 def codex_final_paths(element_id: str) -> dict[str, str]:

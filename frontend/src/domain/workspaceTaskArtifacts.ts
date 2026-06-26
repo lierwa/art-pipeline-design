@@ -41,15 +41,15 @@ export function codexFinalQualityArtifactBadge(
   if (!status) {
     return null;
   }
-  // WHY: qualityStatus 是最终候选的 QA 协议状态；即使任务 item 本身 succeeded，
-  // failed 候选也需要以修复语义呈现，避免操作员误读成可导出的 Done。
+  // WHY: qualityStatus 只代表阻塞检查，不代表美术审核通过；UI 必须避免把
+  // passed 文案呈现成用户已经认可生成质量。
   switch (status) {
     case "failed":
-      return { label: "QA failed", status, tone: "danger" };
+      return { label: "Blocking checks failed", status, tone: "danger" };
     case "passed":
-      return { label: "QA passed", status, tone: "success" };
+      return { label: "Blocking checks passed", status, tone: "success" };
     case "pending":
-      return { label: "QA pending", status, tone: "queued" };
+      return { label: "Blocking checks pending", status, tone: "queued" };
   }
 }
 

@@ -37,6 +37,7 @@ from art_pipeline.segment.assets import (
     suggest_sam2_edge_mask,
 )
 from art_pipeline.workspace.codex_final_tasks import (
+    CODEX_FINAL_QUEUED_MESSAGE,
     CODEX_FINAL_LEASE_SECONDS,
     CodexFinalClaimRequest,
     CodexFinalFailRequest,
@@ -581,6 +582,15 @@ def _run_codex_final_task(
     run_id: str | None = None,
 ) -> None:
     run_codex_final_agent_task(root, task_id, _codex_skip_reason, force)
+    task = read_workspace_task(root, task_id)
+    # WHY: skip / prepare failure 可能让 task 没有可 claim 的 job；此时启动
+    # controller 只会制造误导性的后台进程和空 recovery monitor。
+    has_controller_jobs = any(
+        item.status == "queued" and item.message == CODEX_FINAL_QUEUED_MESSAGE
+        for item in task.items
+    )
+    if not has_controller_jobs:
+        return
     if controller_api_base_url is not None:
         try:
             controllers = start_codex_final_controllers(

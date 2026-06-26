@@ -28,19 +28,15 @@ def test_prepare_codex_final_job_writes_visual_brief(tmp_path: Path) -> None:
     assert prepared.brief_json_path.exists()
     assert [path.name for path in prepared.request.image_paths] == [
         "source_crop.png",
-        "generation_brief.png",
         "transparent_asset.png",
         "mask.png",
-        "layout_guide.png",
         "mask.png",
         "mask.png",
     ]
     assert [input_image.role for input_image in prepared.input_images] == [
         "source_crop",
-        "visual_generation_brief",
         "transparent_cutout",
         "mask",
-        "layout_guide",
         "removed_child_mask",
         "removed_child_mask",
     ]
@@ -51,14 +47,13 @@ def test_prepare_codex_final_job_writes_visual_brief(tmp_path: Path) -> None:
         path.name for path in prepared.request.image_paths
     ]
     assert "1. source_crop is the highest-authority reference" in prepared.prompt
-    assert "2. visual_generation_brief is a local deterministic task map" in prepared.prompt
-    assert "3. transparent_cutout is a rough silhouette guide" in prepared.prompt
-    assert "4. mask is diagnostic only" in prepared.prompt
-    assert "5. layout_guide is a measurement-only construction reference" in prepared.prompt
-    assert "6+. removed_child_mask" in prepared.prompt
-    assert "6. previous_final" not in prepared.prompt
-    assert "7. failed_candidate" not in prepared.prompt
-    assert "8+. removed_child_mask" not in prepared.prompt
+    assert "2. transparent_cutout is a rough silhouette guide" in prepared.prompt
+    assert "3. mask is diagnostic only" in prepared.prompt
+    assert "4+. removed_child_mask" in prepared.prompt
+    assert "visual_generation_brief" not in prepared.prompt
+    assert "layout_guide" not in prepared.prompt
+    assert "previous_final" not in prepared.prompt
+    assert "failed_candidate" not in prepared.prompt
     brief = json.loads(prepared.brief_json_path.read_text(encoding="utf-8"))
     assert brief["sourceCropPath"] == "elements/parent_001/sam2_edge/source_crop.png"
     assert brief["roughCutoutPath"] == "elements/parent_001/sam2_edge/transparent_asset.png"

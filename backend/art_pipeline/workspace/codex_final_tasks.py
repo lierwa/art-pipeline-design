@@ -622,7 +622,7 @@ def _codex_final_job_from_prepared(
         briefImagePath=_workspace_relative_path(workspace_root, prepared.brief_image_path),
         briefJsonPath=_workspace_relative_path(workspace_root, prepared.brief_json_path),
         analysisMaskPath=_workspace_relative_path(workspace_root, prepared.analysis_mask_path),
-        layoutGuidePath=_workspace_relative_path(workspace_root, prepared.layout_guide_path),
+        layoutGuidePath="",
         qualityReportPath=_workspace_relative_path(workspace_root, prepared.quality_report_path),
         rawOutputPath=_workspace_relative_path(workspace_root, prepared.raw_output_path),
         finalOutputPath=_workspace_relative_path(workspace_root, prepared.output_path),
@@ -661,7 +661,6 @@ def _codex_final_task_artifacts(
         "briefImagePath": job.briefImagePath,
         "briefJsonPath": job.briefJsonPath,
         "analysisMaskPath": job.analysisMaskPath,
-        "layoutGuidePath": job.layoutGuidePath,
         "qualityReportPath": job.qualityReportPath,
         "qualityStatus": job.qualityStatus,
         "qualityErrors": job.qualityErrors,
@@ -678,6 +677,8 @@ def _codex_final_task_artifacts(
     }
     if job.controllerId:
         artifacts["controllerId"] = job.controllerId
+    if job.layoutGuidePath:
+        artifacts["layoutGuidePath"] = job.layoutGuidePath
     if job.leaseExpiresAt:
         artifacts["leaseExpiresAt"] = job.leaseExpiresAt
     if job.claimedAt:

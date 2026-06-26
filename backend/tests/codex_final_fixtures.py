@@ -85,7 +85,7 @@ def write_semantic_rgb_output(path: Path, chroma_key: tuple[int, int, int], size
     image = Image.new("RGB", size, chroma_key)
     for x in range(size[0] // 4, size[0] * 3 // 4):
         for y in range(size[1] // 4, size[1] * 3 // 4):
-            image.putpixel((x, y), (12, 180, 90))
+            image.putpixel((x, y), (40, 90, 220))
     image.save(path, format="PNG")
 
 

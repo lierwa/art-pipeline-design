@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, Sequence, cast
 from uuid import uuid4
 
+from art_pipeline.codex_final_analysis_mask import write_codex_final_analysis_mask
 from art_pipeline.codex_final_brief import (
     CodexFinalBriefRemovedChild,
     render_codex_final_brief,
@@ -18,7 +19,6 @@ from art_pipeline.codex_final_prompt import (
     normalize_codex_prompt_hint,
 )
 from art_pipeline.codex_final_inputs import (
-    LAYOUT_GUIDE_ROLE,
     MASK_ROLE,
     SOURCE_CROP_ROLE,
     TRANSPARENT_CUTOUT_ROLE,
@@ -28,17 +28,14 @@ from art_pipeline.codex_final_inputs import (
     required_input_path,
     resolve_codex_final_input_paths,
 )
-from art_pipeline.codex_final_layout import render_codex_final_layout_guide
 from art_pipeline.codex_final_quality import (
+    CodexFinalQualityReport,
     assess_codex_final_candidate,
     write_codex_final_quality_report,
 )
-from art_pipeline.codex_final_repair_inputs import (
-    CODEX_FINAL_CANDIDATE_FILENAME,
-    discover_codex_final_repair_input_paths,
-)
 from art_pipeline.codex_final_jobs import CodexFinalJob
 from art_pipeline.codex_final_paths import (
+    CODEX_FINAL_CANDIDATE_FILENAME,
     CODEX_FINAL_STAGE,
     codex_final_asset_path,
     codex_final_paths,
@@ -89,7 +86,6 @@ class PreparedCodexFinalJob:
     source_crop_path: Path
     mask_path: Path
     analysis_mask_path: Path
-    layout_guide_path: Path
     quality_report_path: Path
     final_asset_path: Path
     final_source_crop_path: Path
@@ -172,16 +168,15 @@ def prepare_codex_final_job(
     job_id = _new_codex_job_id()
     work_dir = resolve_workspace_path(workspace_root, f"elements/{element.id}/{CODEX_FINAL_STAGE}/job/{job_id}")
     work_dir.mkdir(parents=True, exist_ok=True)
-    repair_input_paths = discover_codex_final_repair_input_paths(workspace_root, element.id)
     output_file = work_dir / CODEX_FINAL_CANDIDATE_FILENAME
     raw_output_file = work_dir / "codex_raw.png"
     prompt_file = work_dir / "prompt.md"
     brief_image_file = work_dir / "generation_brief.png"
     brief_json_file = work_dir / "generation_brief.json"
     analysis_mask_file = work_dir / "analysis_mask.png"
-    layout_guide_file = work_dir / "layout_guide.png"
     quality_report_file = work_dir / "quality_report.json"
     chroma_key = choose_chroma_key(source_crop_file)
+    write_codex_final_analysis_mask(mask_file, analysis_mask_file)
     render_codex_final_brief(
         workspace_root,
         source_crop_path=source_crop_path,
@@ -192,20 +187,10 @@ def prepare_codex_final_job(
         image_path=brief_image_file,
         json_path=brief_json_file,
     )
-    render_codex_final_layout_guide(
-        source_crop_file=source_crop_file,
-        mask_file=mask_file,
-        analysis_mask_file=analysis_mask_file,
-        guide_file=layout_guide_file,
-    )
     input_images = build_codex_final_input_images(
         source_crop_path=source_crop_path,
-        brief_image_path=_workspace_relative_path(workspace_root, brief_image_file),
         transparent_cutout_path=reference_asset_path,
         mask_path=mask_path,
-        layout_guide_path=_workspace_relative_path(workspace_root, layout_guide_file),
-        previous_final_path=repair_input_paths.previous_final_path,
-        failed_candidate_path=repair_input_paths.failed_candidate_path,
         removed_child_mask_paths=tuple(child.mask_path for child in removed_children),
     )
     # WHY: prompt 的编号必须跟实际发送给 Codex 的 input_images 完全一致。
@@ -248,7 +233,6 @@ def prepare_codex_final_job(
         source_crop_path=source_crop_file,
         mask_path=mask_file,
         analysis_mask_path=analysis_mask_file,
-        layout_guide_path=layout_guide_file,
         quality_report_path=quality_report_file,
         final_asset_path=final_asset_file,
         final_source_crop_path=final_source_crop_file,
@@ -274,17 +258,11 @@ def prepared_codex_final_job_from_manifest_job(
     source_crop_path = required_input_path(input_images, SOURCE_CROP_ROLE.role)
     reference_asset_path = required_input_path(input_images, TRANSPARENT_CUTOUT_ROLE.role)
     mask_path = required_input_path(input_images, MASK_ROLE.role)
-    layout_guide_path = _optional_input_path(input_images, LAYOUT_GUIDE_ROLE.role) or _job_artifact_path(
-        job,
-        "layout_guide.png",
-        job.layoutGuidePath,
-    )
     analysis_mask_path = _job_artifact_path(job, "analysis_mask.png", job.analysisMaskPath)
     quality_report_path = _job_artifact_path(job, "quality_report.json", job.qualityReportPath)
     source_crop_file = resolve_workspace_path(workspace_root, source_crop_path)
     reference_asset_file = resolve_workspace_path(workspace_root, reference_asset_path)
     mask_file = resolve_workspace_path(workspace_root, mask_path)
-    layout_guide_file = resolve_workspace_path(workspace_root, layout_guide_path)
     prompt_file = resolve_workspace_path(workspace_root, job.promptPath)
     prompt = prompt_file.read_text(encoding="utf-8")
     paths = codex_final_paths(element.id)
@@ -315,7 +293,6 @@ def prepared_codex_final_job_from_manifest_job(
         source_crop_path=source_crop_file,
         mask_path=mask_file,
         analysis_mask_path=resolve_workspace_path(workspace_root, analysis_mask_path),
-        layout_guide_path=layout_guide_file,
         quality_report_path=resolve_workspace_path(workspace_root, quality_report_path),
         final_asset_path=resolve_workspace_path(workspace_root, paths["assetPath"]),
         final_source_crop_path=resolve_workspace_path(workspace_root, paths["sourceCropPath"]),
@@ -359,6 +336,7 @@ def finalize_codex_final_job(
         prepared.reference_asset_path,
         prepared.chroma_key,
     )
+    next_provider_metadata = dict(provider_metadata or {})
     quality_report = assess_codex_final_candidate(
         candidate_file=prepared.output_path,
         reference_file=prepared.reference_asset_path,
@@ -370,6 +348,35 @@ def finalize_codex_final_job(
         raise RuntimeError("Codex final candidate failed quality gate: " + quality_report.summary)
     promote_codex_final_candidate(prepared.output_path, prepared.final_asset_path)
     timing["transparentFinalizeSeconds"] = _elapsed_seconds(step_started)
+    return _complete_codex_final_success(
+        workspace_root,
+        state,
+        prepared,
+        provider_name=provider_name,
+        provider_metadata=next_provider_metadata,
+        output_file=prepared.output_path,
+        raw_output_file=prepared.raw_output_path,
+        output_diagnostics=output_diagnostics,
+        quality_report=quality_report,
+        timing=timing,
+        finalize_started=finalize_started,
+    )
+
+
+def _complete_codex_final_success(
+    workspace_root: Path,
+    state: WorkspaceState,
+    prepared: PreparedCodexFinalJob,
+    *,
+    provider_name: str,
+    provider_metadata: dict[str, Any] | None,
+    output_file: Path,
+    raw_output_file: Path | None,
+    output_diagnostics: dict[str, Any],
+    quality_report: CodexFinalQualityReport,
+    timing: dict[str, float],
+    finalize_started: float,
+) -> tuple[WorkspaceState, ElementRecord, dict[str, Any]]:
     step_started = time.perf_counter()
     copy_codex_source_crop(prepared.source_crop_path, prepared.final_source_crop_path)
     timing["copySourceCropSeconds"] = _elapsed_seconds(step_started)
@@ -379,13 +386,12 @@ def finalize_codex_final_job(
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "jobId": prepared.work_dir.name,
         "workDirPath": _workspace_relative_path(workspace_root, prepared.work_dir),
-        "outputPath": _workspace_relative_path(workspace_root, prepared.output_path),
-        "rawOutputPath": _workspace_relative_path(workspace_root, prepared.raw_output_path),
+        "outputPath": _workspace_relative_path(workspace_root, output_file),
+        "rawOutputPath": _workspace_relative_path(workspace_root, raw_output_file) if raw_output_file else None,
         "promptPath": _workspace_relative_path(workspace_root, prepared.prompt_path),
         "briefImagePath": _workspace_relative_path(workspace_root, prepared.brief_image_path),
         "briefJsonPath": _workspace_relative_path(workspace_root, prepared.brief_json_path),
         "analysisMaskPath": _workspace_relative_path(workspace_root, prepared.analysis_mask_path),
-        "layoutGuidePath": _workspace_relative_path(workspace_root, prepared.layout_guide_path),
         "qualityReportPath": _workspace_relative_path(workspace_root, prepared.quality_report_path),
         "referenceAssetPath": prepared.reference_asset_workspace_path,
         "sourceCropPath": prepared.source_crop_workspace_path,
@@ -450,7 +456,6 @@ def finalize_codex_final_job(
         "briefImagePath": metadata["briefImagePath"],
         "briefJsonPath": metadata["briefJsonPath"],
         "analysisMaskPath": metadata["analysisMaskPath"],
-        "layoutGuidePath": metadata["layoutGuidePath"],
         "qualityReportPath": metadata["qualityReportPath"],
         "jobId": metadata["jobId"],
         "codexThreadId": metadata.get("codexThreadId"),
@@ -575,16 +580,6 @@ def _removed_child_metadata(child: RemovedChildContext) -> dict[str, Any]:
         "bbox": child.bbox,
         "canvas": child.canvas,
     }
-
-
-def _optional_input_path(
-    input_images: Sequence[CodexFinalInputImage],
-    role: str,
-) -> str | None:
-    for image in input_images:
-        if image.role == role:
-            return image.path
-    return None
 
 
 def _job_artifact_path(job: CodexFinalJob, filename: str, explicit_path: str) -> str:

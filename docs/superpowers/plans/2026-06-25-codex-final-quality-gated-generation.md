@@ -1,5 +1,9 @@
 # Codex Final Quality-Gated Generation Implementation Plan
 
+> **Superseded:** This guide-driven whole-redraw plan is kept only as a postmortem record.
+> Use `2026-06-26-codex-final-fidelity-first-cleanup.md` for the implemented
+> fidelity-first contract.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Rework Codex final generation into a hatch-pet-aligned candidate pipeline where Codex only creates raw candidates, deterministic Python code handles measurement/postprocess/QA, and bad candidates never overwrite accepted final assets.
@@ -546,3 +550,15 @@ npm --prefix frontend run build
 - Failed candidate does not overwrite the previous accepted final.
 - QA report explains why a candidate was blocked.
 - Repair reruns only failed assets and uses source, previous final, failed candidate, and repair note as grounding.
+
+## Postmortem
+
+This plan was superseded on 2026-06-26 by `2026-06-26-codex-final-fidelity-first-cleanup.md`.
+Browser and manual review showed that guide-driven whole redraw made grouped assets unstable:
+small assets drifted inside oversized canvases, grouped objects changed relative layout, and
+parent assets could be globally repainted or simplified. The layout guide, failed-candidate
+feedback, and previous-final feedback are therefore removed from the normal generation path.
+
+The replacement contract is fidelity-first: normal assets use deterministic source-crop +
+accepted-mask candidates, and AI is used only for bounded parent repair regions. The UI now
+labels these checks as blocking checks rather than visual QA acceptance.

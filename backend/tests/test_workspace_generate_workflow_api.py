@@ -92,7 +92,10 @@ def test_stage_generate_accepts_masks_and_targets_selected_codex_jobs(tmp_path: 
     assert (tmp_path / "workspace" / "stage_snapshots" / "mask.json").exists()
 
 
-def test_stage_generate_prepares_agent_jobs_without_codex_provider(tmp_path: Path, monkeypatch: Any) -> None:
+def test_stage_generate_prepares_agent_jobs_without_codex_provider(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
     def fail_if_codex_provider_requested(_: Any) -> None:
         raise AssertionError("stage generate should not request a Codex provider")
 
@@ -120,8 +123,12 @@ def test_stage_generate_prepares_agent_jobs_without_codex_provider(tmp_path: Pat
     task = _wait_for_codex_queue_ready(client, body["task"]["taskId"])
     assert body["workflow"]["stage"] == "generate"
     assert task["type"] == "codex_final_batch"
+    assert task["status"] == "queued"
     assert task["items"][0]["status"] == "queued"
     assert task["items"][0]["message"] == "Queued for Codex controller."
+    assert task["items"][0]["artifactPaths"]["rawOutputPath"].endswith("/codex_raw.png")
+    assert body["state"]["elements"][0]["sourceProvider"] is None
+    assert client.get("/api/workspace/state").json()["elements"][0]["sourceProvider"] is None
 
 
 def test_stage_generate_launches_codex_controllers_for_run(

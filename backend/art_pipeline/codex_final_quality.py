@@ -14,13 +14,6 @@ from art_pipeline.codex_final_analysis_mask import build_codex_final_analysis_ma
 CodexFinalQualityStatus = Literal["passed", "failed"]
 CodexFinalQualityMetric = int | float | str | bool
 
-_MIN_BBOX_SIDE_RATIO = 0.45
-_EDGE_CLIPPED_AREA_RATIO = 1.2
-_EXTREME_AREA_MIN_RATIO = 0.35
-_EXTREME_AREA_MAX_RATIO = 3.0
-_WARNING_AREA_MIN_RATIO = 0.7
-_WARNING_AREA_MAX_RATIO = 1.35
-_WARNING_CENTER_SHIFT_RATIO = 0.18
 _COPY_VISIBLE_CHANGE_RATIO_THRESHOLD = 0.12
 _COPY_MEAN_RGBA_DELTA_THRESHOLD = 6.0
 _COPY_ALPHA_IOU_THRESHOLD = 0.98
@@ -57,6 +50,8 @@ def assess_codex_final_candidate(
     reference_file: Path,
     analysis_mask_file: Path,
     chroma_key: tuple[int, int, int],
+    *,
+    block_near_copy: bool = True,
 ) -> CodexFinalQualityReport:
     with Image.open(candidate_file) as candidate:
         candidate.load()
@@ -95,33 +90,17 @@ def assess_codex_final_candidate(
         errors.append("analysis_mask_empty")
         return _report(errors, warnings, metrics)
 
-    candidate_width = candidate_bbox[2] - candidate_bbox[0]
-    candidate_height = candidate_bbox[3] - candidate_bbox[1]
-    analysis_width = analysis.bbox[2] - analysis.bbox[0]
-    analysis_height = analysis.bbox[3] - analysis.bbox[1]
     area_ratio = candidate_area / analysis.visible_area
     metrics["visibleAreaRatio"] = round(area_ratio, 4)
 
-    if _is_small_edge_clipped(candidate_rgba.size, candidate_bbox, candidate_area, analysis.visible_area):
-        errors.append("subject_clipped_at_output_edge")
-
-    if (
-        candidate_width < analysis_width * _MIN_BBOX_SIDE_RATIO
-        or candidate_height < analysis_height * _MIN_BBOX_SIDE_RATIO
-    ):
-        errors.append("bbox_side_too_small")
-
-    if area_ratio < _EXTREME_AREA_MIN_RATIO or area_ratio > _EXTREME_AREA_MAX_RATIO:
-        errors.append("visible_area_extreme_outlier")
-    elif area_ratio < _WARNING_AREA_MIN_RATIO or area_ratio > _WARNING_AREA_MAX_RATIO:
-        warnings.append("visible_area_differs")
-
-    residue_pixels = _count_visible_chroma_residue(candidate_rgba, analysis.bbox, chroma_key)
+    residue_pixels = _count_visible_chroma_residue(candidate_rgba, chroma_key)
     metrics["visibleChromaResiduePixels"] = residue_pixels
     if residue_pixels >= max(8, int(candidate_area * _CHROMA_RESIDUE_RATIO)):
         errors.append("visible_chroma_residue")
 
-    pollution_pixels = _count_background_alpha_pollution(candidate_rgba, analysis.image, analysis.bbox)
+    pollution_pixels = 0
+    if candidate_rgba.size == analysis.image.size:
+        pollution_pixels = _count_background_alpha_pollution(candidate_rgba, analysis.image, analysis.bbox)
     metrics["backgroundAlphaPollutionPixels"] = pollution_pixels
     metrics["backgroundAlphaPollutionRatio"] = round(pollution_pixels / candidate_area, 4)
     # WHY: chroma 色距只能抓绿色/洋红等背景残留；真实失败里也可能留下
@@ -137,24 +116,12 @@ def assess_codex_final_candidate(
     metrics["meanRgbaDelta"] = round(mean_delta, 4)
     # WHY: 近似 SAM2 cutout 是候选质量问题，不属于透明化步骤；集中在
     # report 内可以让失败原因、repair note 和 task artifact 保持同一事实源。
-    if (
+    if block_near_copy and (
         alpha_iou >= _COPY_ALPHA_IOU_THRESHOLD
         and visible_change_ratio < _COPY_VISIBLE_CHANGE_RATIO_THRESHOLD
         and mean_delta < _COPY_MEAN_RGBA_DELTA_THRESHOLD
     ):
         errors.append("near_copy_of_sam2_cutout")
-
-    candidate_centroid = _mask_centroid(alpha)
-    if candidate_centroid is not None and analysis.centroid is not None:
-        center_shift = _distance(candidate_centroid, analysis.centroid)
-        shift_ratio = center_shift / max(analysis_width, analysis_height, 1)
-        metrics["candidateCentroidX"] = round(candidate_centroid[0], 4)
-        metrics["candidateCentroidY"] = round(candidate_centroid[1], 4)
-        metrics["analysisCentroidX"] = round(analysis.centroid[0], 4)
-        metrics["analysisCentroidY"] = round(analysis.centroid[1], 4)
-        metrics["centerShiftRatio"] = round(shift_ratio, 4)
-        if shift_ratio >= _WARNING_CENTER_SHIFT_RATIO:
-            warnings.append("bbox_center_shifted")
 
     return _report(errors, warnings, metrics)
 
@@ -191,9 +158,6 @@ def _repair_note(errors: list[str]) -> str | None:
     notes = {
         "empty_alpha": "Candidate has no visible subject.",
         "analysis_mask_empty": "Cleaned analysis mask has no visible subject.",
-        "subject_clipped_at_output_edge": "Candidate appears clipped at the output edge.",
-        "bbox_side_too_small": "Candidate subject is much smaller than the source mask.",
-        "visible_area_extreme_outlier": "Candidate visible area is far outside the source mask range.",
         "visible_chroma_residue": "Candidate still has visible chroma background residue.",
         "background_alpha_pollution": "Candidate has visible background pixels outside the subject.",
         "near_copy_of_sam2_cutout": "Candidate is too similar to the rough SAM2 cutout.",
@@ -215,33 +179,13 @@ def _record_bbox_metrics(
     metrics[f"{prefix}BboxHeight"] = bottom - top
 
 
-def _is_small_edge_clipped(
-    size: tuple[int, int],
-    bbox: tuple[int, int, int, int],
-    candidate_area: int,
-    analysis_area: int,
-) -> bool:
-    width, height = size
-    left, top, right, bottom = bbox
-    touches_edge = left <= 0 or top <= 0 or right >= width or bottom >= height
-    if not touches_edge:
-        return False
-    # WHY: 合理的大主体可能贴近画布边缘；只有“贴边且面积仍像小残片”的候选
-    # 才按裁切失败处理，避免把正常扩展到整张 canvas 的结果误杀。
-    return candidate_area <= analysis_area * _EDGE_CLIPPED_AREA_RATIO
-
-
 def _count_visible_chroma_residue(
     image: Image.Image,
-    subject_bbox: tuple[int, int, int, int],
     chroma_key: tuple[int, int, int],
 ) -> int:
-    left, top, right, bottom = _inflate_bbox(subject_bbox, image.size, 0.1)
     count = 0
     for y in range(image.height):
         for x in range(image.width):
-            if left <= x < right and top <= y < bottom:
-                continue
             red, green, blue, alpha = image.getpixel((x, y))
             if alpha > _CHROMA_RESIDUE_ALPHA and _color_distance((red, green, blue), chroma_key) <= _CHROMA_RESIDUE_DISTANCE:
                 count += 1
@@ -362,8 +306,10 @@ def _inflate_bbox(
 
 
 def _alpha_iou(image: Image.Image, reference_rgba: Image.Image) -> float:
-    if image.size != reference_rgba.size:
+    aligned = _aligned_alpha_pair(image, reference_rgba)
+    if aligned is None:
         return 0.0
+    image, reference_rgba = aligned
     image_mask = _binary_alpha_mask(image)
     reference_mask = _binary_alpha_mask(reference_rgba)
     intersection = ImageChops.multiply(image_mask, reference_mask)
@@ -376,8 +322,10 @@ def _alpha_iou(image: Image.Image, reference_rgba: Image.Image) -> float:
 
 
 def _visible_pixel_difference(image: Image.Image, reference_rgba: Image.Image) -> tuple[float, float]:
-    if image.size != reference_rgba.size:
+    aligned = _aligned_alpha_pair(image, reference_rgba)
+    if aligned is None:
         return 1.0, 255.0
+    image, reference_rgba = aligned
     visible_mask = ImageChops.lighter(
         _binary_alpha_mask(image),
         _binary_alpha_mask(reference_rgba),
@@ -395,32 +343,28 @@ def _visible_pixel_difference(image: Image.Image, reference_rgba: Image.Image) -
     return changed_ratio, mean_delta
 
 
+def _aligned_alpha_pair(image: Image.Image, reference_rgba: Image.Image) -> tuple[Image.Image, Image.Image] | None:
+    if image.size == reference_rgba.size:
+        return image, reference_rgba
+    image_bbox = image.getchannel("A").getbbox()
+    reference_bbox = reference_rgba.getchannel("A").getbbox()
+    if image_bbox is None or reference_bbox is None:
+        return None
+    image_crop = image.crop(image_bbox)
+    reference_crop = reference_rgba.crop(reference_bbox)
+    if image_crop.size != reference_crop.size:
+        return None
+    # WHY: final 现在会裁到有效边距，不能再用原 canvas 尺寸判断近似复制；
+    # 这里只在裁后尺寸一致时比较主体像素，避免误把构图差异当自动修图依据。
+    return image_crop, reference_crop
+
+
 def _binary_alpha_mask(image: Image.Image) -> Image.Image:
     return image.getchannel("A").point(lambda value: 255 if value else 0)
 
 
 def _mask_area(mask: Image.Image) -> int:
     return sum(mask.histogram()[1:])
-
-
-def _mask_centroid(mask: Image.Image) -> tuple[float, float] | None:
-    width, _height = mask.size
-    total = 0
-    sum_x = 0
-    sum_y = 0
-    for index, value in enumerate(mask.tobytes()):
-        if value == 0:
-            continue
-        total += 1
-        sum_x += index % width
-        sum_y += index // width
-    if total == 0:
-        return None
-    return (sum_x / total, sum_y / total)
-
-
-def _distance(first: tuple[float, float], second: tuple[float, float]) -> float:
-    return math.sqrt((first[0] - second[0]) ** 2 + (first[1] - second[1]) ** 2)
 
 
 def _color_distance(left: tuple[int, int, int], right: tuple[int, int, int]) -> float:

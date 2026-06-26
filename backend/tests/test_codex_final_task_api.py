@@ -83,36 +83,25 @@ def test_codex_final_batch_prepares_agent_jobs_without_running_provider(
     assert response.status_code == 200
     task_id = response.json()["taskId"]
     task = _wait_for_codex_agent_preparation(client, task_id, workspace_root, codex_provider)
-    assert codex_provider.requests == []
     manifest_path = workspace_root / "tasks" / task_id / "codex-final-jobs.json"
     handoff_path = workspace_root / "tasks" / task_id / "codex-final-agent-handoff.md"
+    assert codex_provider.requests == []
     assert manifest_path.exists()
     assert handoff_path.exists()
     assert task["status"] == "queued"
     assert task["total"] == 2
+    assert task["done"] == 0
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     jobs_by_element = {job["elementId"]: job for job in manifest["jobs"]}
     assert set(jobs_by_element) == {"element_001", "element_002"}
     assert "selected_source=" in handoff_path.read_text(encoding="utf-8")
 
-    required_artifacts = {
-        "manifestPath",
-        "handoffPath",
-        "promptPath",
-        "briefImagePath",
-        "rawOutputPath",
-        "qualityReportPath",
-        "qualityStatus",
-    }
     for element_id in ("element_001", "element_002"):
         item = _item(task, element_id)
         job = jobs_by_element[element_id]
         assert item["status"] == "queued"
         assert item["message"] == "Queued for Codex controller."
-        assert job["status"] == "queued"
-        assert job["message"] == "Queued for Codex controller."
-        assert required_artifacts <= set(item["artifactPaths"])
         assert item["artifactPaths"]["manifestPath"] == f"tasks/{task_id}/codex-final-jobs.json"
         assert item["artifactPaths"]["handoffPath"] == f"tasks/{task_id}/codex-final-agent-handoff.md"
         assert item["artifactPaths"]["promptPath"] == job["promptPath"]
@@ -432,6 +421,7 @@ def test_codex_final_batch_defers_identical_cutout_validation_to_ingest(tmp_path
     sam2_task = client.post("/api/workspace/tasks/sam2-masks").json()
     _wait_for_task(client, sam2_task["taskId"])
     assert client.post("/api/workspace/elements/element_001/segment/accept").status_code == 200
+    _force_parent_repair_targets(client, workspace_root, ("element_001",))
 
     response = client.post("/api/workspace/tasks/codex-finals")
 
@@ -599,7 +589,7 @@ def test_codex_final_ingest_quality_failure_projects_report_artifacts(
 ) -> None:
     client, workspace_root, task = _prepare_waiting_codex_final_task(tmp_path, with_second_element=True)
     job = _manifest_job(workspace_root, task["taskId"], "element_001")
-    _write_clipped_raw_output(workspace_root, job)
+    _write_empty_raw_output(workspace_root, job)
 
     response = client.post(
         f"/api/workspace/tasks/{task['taskId']}/codex-final/jobs/element_001/ingest",
@@ -614,11 +604,11 @@ def test_codex_final_ingest_quality_failure_projects_report_artifacts(
     assert item["status"] == "failed"
     assert item["artifactPaths"]["qualityReportPath"].endswith("/quality_report.json")
     assert item["artifactPaths"]["qualityStatus"] == "failed"
-    assert "subject_clipped_at_output_edge" in item["artifactPaths"]["qualityErrors"]
-    assert item["artifactPaths"]["repairNote"] == "Candidate appears clipped at the output edge."
+    assert "empty_alpha" in item["artifactPaths"]["qualityErrors"]
+    assert item["artifactPaths"]["repairNote"] == "Candidate has no visible subject."
     failed_job = _manifest_job(workspace_root, task["taskId"], "element_001")
     assert failed_job["qualityStatus"] == "failed"
-    assert failed_job["repairNote"] == "Candidate appears clipped at the output edge."
+    assert failed_job["repairNote"] == "Candidate has no visible subject."
     assert (workspace_root / failed_job["qualityReportPath"]).exists()
 
 
@@ -724,6 +714,7 @@ def _prepare_waiting_codex_final_task(
     element_ids = ("element_001", "element_002") if with_second_element else ("element_001",)
     for element_id in element_ids:
         assert client.post(f"/api/workspace/elements/{element_id}/segment/accept").status_code == 200
+    _force_parent_repair_targets(client, workspace_root, element_ids)
     response = client.post("/api/workspace/tasks/codex-finals")
     assert response.status_code == 200
     task = _wait_for_codex_agent_preparation(
@@ -733,6 +724,78 @@ def _prepare_waiting_codex_final_task(
         codex_provider,
     )
     return client, workspace_root, task
+
+
+def _force_parent_repair_targets(
+    client: TestClient,
+    workspace_root: Path,
+    element_ids: tuple[str, ...],
+) -> None:
+    state = client.get("/api/workspace/state").json()
+    elements = state["elements"]
+    for element_id in element_ids:
+        parent = next(element for element in elements if element["id"] == element_id)
+        parent["assetRole"] = "parent"
+        child_id = f"{element_id}_removed_child"
+        child_bbox = {
+            "x": parent["bbox"]["x"] + 1,
+            "y": parent["bbox"]["y"] + 1,
+            "w": max(1, parent["bbox"]["w"] // 2),
+            "h": max(1, parent["bbox"]["h"] // 2),
+        }
+        child_canvas = {
+            "x": max(0, child_bbox["x"] - 1),
+            "y": max(0, child_bbox["y"] - 1),
+            "w": child_bbox["w"] + 2,
+            "h": child_bbox["h"] + 2,
+        }
+        _write_hidden_removed_child_sam2(workspace_root, child_id, child_bbox, child_canvas)
+        elements.append(
+            {
+                **parent,
+                "id": child_id,
+                "name": f"{parent['name']} removed child",
+                "label": "removed child",
+                "assetRole": "removable_child",
+                "removeFromParent": element_id,
+                "visible": False,
+                "bbox": child_bbox,
+                "canvas": child_canvas,
+                "mask": f"elements/{child_id}/sam2_edge/mask.png",
+                "segmentationStatus": "mask_accepted",
+                "segmentationQuality": {
+                    "selectedProfile": "fixture",
+                    "candidateCount": 1,
+                    "foregroundArea": child_bbox["w"] * child_bbox["h"],
+                    "detachedArea": 0,
+                    "filledHoleCount": 0,
+                    "filledHoleArea": 0,
+                    "qualityStatus": "pass",
+                    "qualityReasons": [],
+                },
+            }
+        )
+    assert client.put("/api/workspace/state", json=state).status_code == 200
+
+
+def _write_hidden_removed_child_sam2(
+    workspace_root: Path,
+    element_id: str,
+    bbox: dict[str, int],
+    canvas: dict[str, int],
+) -> None:
+    stage_dir = workspace_root / "elements" / element_id / "sam2_edge"
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    source = Image.new("RGBA", (canvas["w"], canvas["h"]), (230, 90, 120, 255))
+    source.save(stage_dir / "source_crop.png", format="PNG")
+    cutout = Image.new("RGBA", (canvas["w"], canvas["h"]), (0, 0, 0, 0))
+    local_x = bbox["x"] - canvas["x"]
+    local_y = bbox["y"] - canvas["y"]
+    for x in range(local_x, local_x + bbox["w"]):
+        for y in range(local_y, local_y + bbox["h"]):
+            cutout.putpixel((x, y), (230, 90, 120, 255))
+    cutout.save(stage_dir / "transparent_asset.png", format="PNG")
+    cutout.getchannel("A").save(stage_dir / "mask.png", format="PNG")
 
 
 def _prepare_claimed_codex_final_task(
@@ -825,8 +888,20 @@ def _write_valid_raw_output_to_path(
     path: Path,
 ) -> None:
     source_crop = next(image for image in job["inputImages"] if image["role"] == "source_crop")
+    mask_input = next(image for image in job["inputImages"] if image["role"] == "mask")
     chroma_key = choose_chroma_key(workspace_root / source_crop["path"])
-    write_semantic_rgb_output(path, chroma_key, (8, 6))
+    with Image.open(workspace_root / mask_input["path"]) as mask_file:
+        mask = mask_file.convert("L")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", mask.size, chroma_key)
+    for y in range(mask.height):
+        for x in range(mask.width):
+            if job.get("generationProfile") == "parent_inpaint_without_children":
+                image.putpixel((x, y), (40, 90, 220))
+            elif mask.getpixel((x, y)) > 0:
+                image.putpixel((x, y), (40, 90, 220))
+    image.putpixel((0, 0), chroma_key)
+    image.save(path, format="PNG")
 
 
 def _write_clipped_raw_output(workspace_root: Path, job: dict[str, Any]) -> None:
@@ -840,8 +915,18 @@ def _write_clipped_raw_output(workspace_root: Path, job: dict[str, Any]) -> None
     image = Image.new("RGB", (width, height), chroma_key)
     for x in range(0, max(1, width // 4)):
         for y in range(1, max(1, height - 1)):
-            image.putpixel((x, y), (12, 180, 90))
+            image.putpixel((x, y), (40, 90, 220))
     image.save(path, format="PNG")
+
+
+def _write_empty_raw_output(workspace_root: Path, job: dict[str, Any]) -> None:
+    source_crop = next(image for image in job["inputImages"] if image["role"] == "source_crop")
+    chroma_key = choose_chroma_key(workspace_root / source_crop["path"])
+    with Image.open(workspace_root / source_crop["path"]) as source:
+        size = source.size
+    path = workspace_root / job["rawOutputPath"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, chroma_key).save(path, format="PNG")
 
 
 def _item(task: dict[str, Any], element_id: str) -> dict[str, Any]:

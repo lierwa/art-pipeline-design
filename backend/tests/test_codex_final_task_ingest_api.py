@@ -39,7 +39,12 @@ def test_codex_final_concurrent_ingests_preserve_sibling_state(tmp_path: Path) -
 
     assert [result["status"] for result in results] == [200, 200]
     next_state = client.get("/api/workspace/state").json()
-    providers = {element["id"]: element["sourceProvider"] for element in next_state["elements"]}
+    parent_ids = {"element_001", "element_002"}
+    providers = {
+        element["id"]: element["sourceProvider"]
+        for element in next_state["elements"]
+        if element["id"] in parent_ids
+    }
     assert providers == {"element_001": "codex_agent", "element_002": "codex_agent"}
     next_task = client.get(f"/api/workspace/tasks/{task['taskId']}").json()
     assert next_task["status"] == "succeeded"
