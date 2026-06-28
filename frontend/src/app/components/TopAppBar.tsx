@@ -1,19 +1,31 @@
 import { ChangeEvent } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { CircleStop, HelpCircle, Loader2, PackageOpen, Play, RefreshCw, Settings, Upload } from "lucide-react";
+import {
+  CircleStop,
+  HelpCircle,
+  Loader2,
+  PackageOpen,
+  Play,
+  RefreshCw,
+  Settings,
+  Upload,
+} from "lucide-react";
 
 import { IconButton } from "../../shared/ui/IconButton";
 import { ConfirmActionDialog } from "../../shared/ui/ConfirmActionDialog";
 import { ProcessingRecordsPopover } from "./ProcessingRecordsPopover";
 import { SourceMetadata, WorkspaceRunSummary } from "../../domain/workspace";
+import { ProductNav } from "./ProductNav";
 
 type TopAppBarProps = {
   source: SourceMetadata | null;
   status: string;
-  primaryActionLabel: string;
-  primaryActionHelp: string | null;
-  isPrimaryActionRunning: boolean;
-  isPrimaryActionDisabled: boolean;
+  title?: string;
+  showPipelineControls?: boolean;
+  primaryActionLabel?: string | null;
+  primaryActionHelp?: string | null;
+  isPrimaryActionRunning?: boolean;
+  isPrimaryActionDisabled?: boolean;
   secondaryActionLabel?: string | null;
   secondaryActionHelp?: string | null;
   isSecondaryActionRunning?: boolean;
@@ -22,22 +34,24 @@ type TopAppBarProps = {
   isStoppingCodexGeneration: boolean;
   runs: WorkspaceRunSummary[];
   activeRunId: string | null;
-  onUpload: (event: ChangeEvent<HTMLInputElement>) => void;
-  onPrimaryAction: () => void;
+  onUpload?: (event: ChangeEvent<HTMLInputElement>) => void;
+  onPrimaryAction?: () => void;
   onSecondaryAction?: () => void;
-  onStopCodexGeneration: () => void | Promise<void>;
-  onSelectRun: (runId: string) => void;
-  onDuplicateRun: (runId: string) => void | Promise<void>;
-  onDeleteRun: (runId: string) => void | Promise<void>;
+  onStopCodexGeneration?: () => void | Promise<void>;
+  onSelectRun?: (runId: string) => void;
+  onDuplicateRun?: (runId: string) => void | Promise<void>;
+  onDeleteRun?: (runId: string) => void | Promise<void>;
 };
 
 export function TopAppBar({
   source,
   status,
-  primaryActionLabel,
-  primaryActionHelp,
-  isPrimaryActionRunning,
-  isPrimaryActionDisabled,
+  title = "Art Asset Pipeline",
+  showPipelineControls = true,
+  primaryActionLabel = null,
+  primaryActionHelp = null,
+  isPrimaryActionRunning = false,
+  isPrimaryActionDisabled = false,
   secondaryActionLabel = null,
   secondaryActionHelp = null,
   isSecondaryActionRunning = false,
@@ -54,35 +68,46 @@ export function TopAppBar({
   onDuplicateRun,
   onDeleteRun,
 }: TopAppBarProps) {
+  const canShowProcessingRecords =
+    showPipelineControls
+    && onSelectRun
+    && onDuplicateRun
+    && onDeleteRun;
+
   return (
     <header className="top-app-bar">
       <div className="brand-lockup">
         <div className="brand-mark" aria-hidden="true" />
         <div>
-          <h1>Art Asset Pipeline</h1>
+          <h1>{title}</h1>
           <p>{status}</p>
         </div>
+        <ProductNav />
       </div>
 
-      <input
-        id="source-upload"
-        aria-label="Upload PNG"
-        accept="image/png"
-        className="visually-hidden"
-        type="file"
-        onChange={onUpload}
-      />
+      {showPipelineControls && onUpload ? (
+        <input
+          id="source-upload"
+          aria-label="Upload PNG"
+          accept="image/png"
+          className="visually-hidden"
+          type="file"
+          onChange={onUpload}
+        />
+      ) : null}
 
       <Tooltip.Provider delayDuration={250}>
         <div className="top-app-actions">
-          <label
-            className="upload-button source-upload-button"
-            htmlFor="source-upload"
-            title={source ? `Change source: ${source.filename}` : "Upload PNG"}
-          >
-            <Upload size={16} strokeWidth={2.2} aria-hidden="true" />
-            <span className="visually-hidden">Upload PNG</span>
-          </label>
+          {showPipelineControls && onUpload ? (
+            <label
+              className="upload-button source-upload-button"
+              htmlFor="source-upload"
+              title={source ? `Change source: ${source.filename}` : "Upload PNG"}
+            >
+              <Upload size={16} strokeWidth={2.2} aria-hidden="true" />
+              <span className="visually-hidden">Upload PNG</span>
+            </label>
+          ) : null}
           {secondaryActionLabel ? (
             <button
               type="button"
@@ -101,21 +126,23 @@ export function TopAppBar({
               {isSecondaryActionRunning ? "Working..." : secondaryActionLabel}
             </button>
           ) : null}
-          <button
-            type="button"
-            className="primary-action"
-            onClick={onPrimaryAction}
-            disabled={isPrimaryActionDisabled || isPrimaryActionRunning}
-            title={primaryActionHelp ?? undefined}
-          >
-            {isPrimaryActionRunning ? (
-              <Loader2 size={16} className="is-spinning" aria-hidden="true" />
-            ) : (
-              <Play size={16} fill="currentColor" aria-hidden="true" />
-            )}
-            {isPrimaryActionRunning ? "Working..." : primaryActionLabel}
-          </button>
-          {canStopCodexGeneration ? (
+          {primaryActionLabel && onPrimaryAction ? (
+            <button
+              type="button"
+              className="primary-action"
+              onClick={onPrimaryAction}
+              disabled={isPrimaryActionDisabled || isPrimaryActionRunning}
+              title={primaryActionHelp ?? undefined}
+            >
+              {isPrimaryActionRunning ? (
+                <Loader2 size={16} className="is-spinning" aria-hidden="true" />
+              ) : (
+                <Play size={16} fill="currentColor" aria-hidden="true" />
+              )}
+              {isPrimaryActionRunning ? "Working..." : primaryActionLabel}
+            </button>
+          ) : null}
+          {showPipelineControls && canStopCodexGeneration && onStopCodexGeneration ? (
             <ConfirmActionDialog
               title="Stop Codex generation"
               description="Terminate active Codex generation processes and mark the current running Codex jobs failed. Saved source images, masks, and completed assets remain untouched."
@@ -139,13 +166,15 @@ export function TopAppBar({
               )}
             />
           ) : null}
-          <ProcessingRecordsPopover
-            runs={runs}
-            activeRunId={activeRunId}
-            onSelectRun={onSelectRun}
-            onDuplicateRun={onDuplicateRun}
-            onDeleteRun={onDeleteRun}
-          />
+          {canShowProcessingRecords ? (
+            <ProcessingRecordsPopover
+              runs={runs}
+              activeRunId={activeRunId}
+              onSelectRun={onSelectRun}
+              onDuplicateRun={onDuplicateRun}
+              onDeleteRun={onDeleteRun}
+            />
+          ) : null}
           <IconButton
             label="Help"
             icon={<HelpCircle size={17} strokeWidth={2.2} />}

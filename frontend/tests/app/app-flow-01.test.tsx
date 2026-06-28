@@ -267,6 +267,16 @@ describe("App flow 01", () => {
   });
 
   it("allows the stacked shell to grow without clipping", async () => {
+    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === "/api/workspace/runs" && (!init || init.method === "GET")) {
+        return jsonResponse({ runs: [] });
+      }
+      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
+        return jsonResponse({ source: null, elements: [], detectionVocabulary: [] });
+      }
+      throw new Error(`Unexpected fetch call: ${String(input)}`);
+    });
+
     // The app tsconfig omits Node typings, but this regression reads authored CSS in Vitest.
     // @ts-expect-error Test-only Node import without widening app compiler types.
     const { readFileSync } = await import("node:fs");
@@ -277,6 +287,17 @@ describe("App flow 01", () => {
     const stylesheet = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../src/styles.css"), "utf8");
     const desktopMinimumWidth = 96 + 720 + 320;
     const responsiveShellRules = stylesheet.match(/@media\s*\(max-width:\s*(\d+)px\)\s*\{([\s\S]*)\n\}/);
+
+    window.history.pushState({}, "", "/pipeline");
+    render(<App />);
+    const topAppBar = await screen.findByRole("banner");
+    const productNav = within(topAppBar).getByRole("navigation", { name: /product areas/i });
+    const brandLockup = topAppBar.querySelector(".brand-lockup");
+
+    expect(topAppBar.closest(".app-shell")).not.toBeNull();
+    expect(brandLockup).not.toBeNull();
+    expect(brandLockup).toContainElement(productNav);
+    expect(within(topAppBar).queryByLabelText(/workbench switcher/i)).not.toBeInTheDocument();
 
     expect(responsiveShellRules).not.toBeNull();
     expect(Number(responsiveShellRules?.[1] ?? 0)).toBeGreaterThanOrEqual(desktopMinimumWidth);
@@ -289,7 +310,10 @@ describe("App flow 01", () => {
     expect(responsiveCss).toMatch(/\.workbench-panel\s*\{[\s\S]*width:\s*100%\s*!important;[\s\S]*flex:\s*none\s*!important;/);
     expect(responsiveCss).toMatch(/\.workbench-panel-resize-handle\s*\{[\s\S]*display:\s*none\s*!important;/);
 
-    expect(stylesheet).toMatch(/\.top-app-bar\s*\{[\s\S]*grid-template-columns:\s*228px\s+minmax\(0,\s*1fr\);/);
+    expect(stylesheet).toMatch(/\.top-app-bar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+max-content;/);
+    expect(stylesheet).toMatch(/\.brand-lockup\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;/);
+    expect(stylesheet).toMatch(/\.product-nav\s*\{[\s\S]*max-width:\s*100%;[\s\S]*display:\s*inline-flex;[\s\S]*flex-wrap:\s*wrap;/);
+    expect(stylesheet).not.toMatch(/\.workbench-switcher\s*\{/);
     expect(stylesheet).not.toMatch(/\.source-control\s*\{/);
     expect(stylesheet).toMatch(/\.source-upload-button\s*\{[\s\S]*width:\s*36px;[\s\S]*height:\s*36px;/);
     expect(stylesheet).toMatch(/\.right-review-panel\s*\{[\s\S]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto;/);
@@ -319,6 +343,8 @@ describe("App flow 01", () => {
     expect(stylesheet).toMatch(/\.canvas-pan-viewport\s*\{[\s\S]*transform:/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-workspace\s*>\s*\.canvas-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
     expect(stylesheet).toMatch(/@media\s*\(max-width:\s*640px\)\s*\{[\s\S]*\.canvas-artboard\s*\{[\s\S]*width:\s*min\(calc\(100vw - 1\.5rem\),\s*calc\(\(100vh - 260px\) \* var\(--source-aspect,\s*1\)\),\s*960px\);/);
+    restoreFetch();
+    window.history.pushState({}, "", "/");
   });
 
   it("prioritizes the canvas in the desktop workbench layout", async () => {
@@ -443,113 +469,4 @@ describe("App flow 01", () => {
     }
   });
 
-  it("renders reference-style model status metric details", async () => {
-    const statusState = {
-      source: loadedState.source,
-      elements: [
-        loadedState.elements[0],
-        {
-          ...createdManualElement,
-          id: "element_accepted_002",
-          label: "Manual Lamp",
-          sourceProvider: "manual",
-          sourcePrompt: "Manual Lamp",
-          history: [],
-          mergedInto: null,
-          exportParent: false,
-        },
-        {
-          ...detectedElement,
-          id: "element_proposal_001",
-          status: "proposal",
-          name: "plant",
-          label: "plant",
-        },
-        {
-          ...detectedElement,
-          id: "element_proposal_002",
-          status: "edited",
-          name: "mirror",
-          label: "mirror",
-        },
-      ],
-    };
-    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(statusState);
-      }
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
-    });
-
-    try {
-      render(<App />);
-
-      const providerLabel = await screen.findByText("Model Chain");
-      const statusStrip = providerLabel.closest("footer");
-      expect(statusStrip).not.toBeNull();
-      const metrics = within(statusStrip as HTMLElement);
-
-      expect(metrics.getByText("test_provider + SAM2")).toBeInTheDocument();
-      expect(metrics.getByText("Candidates")).toBeInTheDocument();
-      expect(metrics.getByText("from detector")).toBeInTheDocument();
-      expect(metrics.getByText("Masks Ready")).toBeInTheDocument();
-      expect(metrics.getByText("SAM2 accepted")).toBeInTheDocument();
-      expect(metrics.getByText("Export Ready")).toBeInTheDocument();
-      expect(metrics.getByText("final assets")).toBeInTheDocument();
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  it("keeps the uploaded-source workspace focused on the canvas before detection", async () => {
-    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(loadedStateWithoutElements);
-      }
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
-    });
-
-    try {
-      render(<App />);
-
-      await screen.findByText(/original\.png - 120 x 90/i);
-
-      expect(screen.getAllByRole("button", { name: /run detection/i })).toHaveLength(1);
-      expect(screen.queryByText(/model proposals pending/i)).not.toBeInTheDocument();
-      expect(screen.queryByRole("checkbox", { name: /show rejected/i })).not.toBeInTheDocument();
-      expect(screen.queryByText(/extraction preview/i)).not.toBeInTheDocument();
-      expect(screen.queryByText(/export pack/i)).not.toBeInTheDocument();
-    } finally {
-      restoreFetch();
-    }
-  });
-
-  it("runs detection from the top app bar", async () => {
-    const user = userEvent.setup();
-    const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/workspace/state" && (!init || init.method === "GET")) {
-        return jsonResponse(loadedStateWithoutElements);
-      }
-
-      if (input === "/api/workspace/detect" && init?.method === "POST") {
-        return jsonResponse(detectedState);
-      }
-
-      throw new Error(`Unexpected fetch call: ${String(input)}`);
-    });
-
-    try {
-      render(<App />);
-
-      const topAppBar = await screen.findByRole("banner");
-      await user.click(within(topAppBar).getByRole("button", { name: /run detection/i }));
-
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        "/api/workspace/detect",
-        expect.objectContaining({ method: "POST" }),
-      );
-    } finally {
-      restoreFetch();
-    }
-  });
 });

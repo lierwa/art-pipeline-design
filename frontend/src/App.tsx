@@ -1,7 +1,7 @@
-import { AppWorkbench } from "./app/components/AppWorkbench";
 import "./styles.css";
 import { buildBoundAppWorkflowState } from "./app/appWorkflowBindings";
 import { buildAppWorkbenchProps } from "./app/appWorkbenchProps";
+import { AppRoutes } from "./app/routes/AppRoutes";
 import { useAppKeyboardShortcuts } from "./app/useAppKeyboardShortcuts";
 import { useAppLifecycleEffects } from "./app/useAppLifecycleEffects";
 import { useAppShellState } from "./app/useAppShellState";
@@ -380,7 +380,17 @@ export function App() {
     workspaceTasks,
   });
 
-  return <AppWorkbench {...workbenchProps} />;
+  return (
+    <AppRoutes
+      workbenchProps={{
+        ...workbenchProps,
+        topBar: {
+          ...workbenchProps.topBar,
+          title: "Art Asset Pipeline",
+        },
+      }}
+    />
+  );
 
   async function refreshWorkspaceRuns() {
     try {

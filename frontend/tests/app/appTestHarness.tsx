@@ -1,7 +1,9 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { BrowserRouter } from "react-router";
 import { vi } from "vitest";
 
+import { App as RawApp } from "../../src/App";
 import { normalizeWorkspaceState, type WorkspaceState } from "../../src/domain/workspace";
 
 vi.mock("@yaireo/tagify/react", async () => ({
@@ -121,4 +123,11 @@ export async function confirmMergeDialog(user: ReturnType<typeof userEvent.setup
 export { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 export { default as userEvent } from "@testing-library/user-event";
 export { describe, expect, it, vi } from "vitest";
-export { App } from "../../src/App";
+
+export function App() {
+  return (
+    <BrowserRouter>
+      <RawApp />
+    </BrowserRouter>
+  );
+}

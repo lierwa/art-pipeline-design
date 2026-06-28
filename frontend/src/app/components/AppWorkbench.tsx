@@ -19,6 +19,14 @@ export function AppWorkbench({ topBar, rail, canvas, review, chrome }: AppWorkbe
   return (
     <div className="app-shell">
       <TopAppBar {...topBar} />
+      <AppWorkbenchContent rail={rail} canvas={canvas} review={review} chrome={chrome} />
+    </div>
+  );
+}
+
+export function AppWorkbenchContent({ rail, canvas, review, chrome }: Omit<AppWorkbenchProps, "topBar">) {
+  return (
+    <>
       <main className="workbench-grid-frame">
         <PanelGroup className="workbench-grid" orientation="horizontal">
           <Panel className="workbench-panel workbench-panel-rail" defaultSize="6%" minSize="96px" maxSize="168px">
@@ -39,6 +47,6 @@ export function AppWorkbench({ topBar, rail, canvas, review, chrome }: AppWorkbe
         </PanelGroup>
       </main>
       <AppChromeOverlays {...chrome} />
-    </div>
+    </>
   );
 }
