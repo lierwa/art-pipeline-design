@@ -1,0 +1,150 @@
+{
+  "$defs": {
+    "CharacterConceptHint": {
+      "additionalProperties": false,
+      "properties": {
+        "cast_mode": {
+          "const": "main_cast_and_supporting_cast",
+          "title": "Cast Mode",
+          "type": "string"
+        },
+        "main_cast_hint": {
+          "minLength": 1,
+          "title": "Main Cast Hint",
+          "type": "string"
+        },
+        "supporting_cast_hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Supporting Cast Hint"
+        },
+        "reference_asset_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reference Asset Ids",
+          "type": "array"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Constraints",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cast_mode",
+        "main_cast_hint",
+        "supporting_cast_hint",
+        "reference_asset_ids",
+        "constraints"
+      ],
+      "title": "CharacterConceptHint",
+      "type": "object"
+    },
+    "GenerateChapterCandidateDraft": {
+      "additionalProperties": false,
+      "properties": {
+        "chapter_title": {
+          "minLength": 1,
+          "title": "Chapter Title",
+          "type": "string"
+        },
+        "chapter_intent": {
+          "minLength": 1,
+          "title": "Chapter Intent",
+          "type": "string"
+        },
+        "scene_domain": {
+          "minLength": 1,
+          "title": "Scene Domain",
+          "type": "string"
+        },
+        "daily_moment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Daily Moment"
+        },
+        "event_seed": {
+          "minLength": 1,
+          "title": "Event Seed",
+          "type": "string"
+        },
+        "spatial_seed": {
+          "minLength": 1,
+          "title": "Spatial Seed",
+          "type": "string"
+        },
+        "object_coverage_hint": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Object Coverage Hint",
+          "type": "array"
+        },
+        "character_concept_hint": {
+          "$ref": "#/$defs/CharacterConceptHint"
+        },
+        "style_notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Style Notes"
+        }
+      },
+      "required": [
+        "chapter_title",
+        "chapter_intent",
+        "scene_domain",
+        "daily_moment",
+        "event_seed",
+        "spatial_seed",
+        "object_coverage_hint",
+        "character_concept_hint",
+        "style_notes"
+      ],
+      "title": "GenerateChapterCandidateDraft",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "planning_summary": {
+      "minLength": 1,
+      "title": "Planning Summary",
+      "type": "string"
+    },
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/GenerateChapterCandidateDraft"
+      },
+      "minItems": 1,
+      "title": "Candidates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "planning_summary",
+    "candidates"
+  ],
+  "title": "GenerateChapterCandidatesOutput",
+  "type": "object"
+}

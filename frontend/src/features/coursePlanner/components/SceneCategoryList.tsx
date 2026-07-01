@@ -1,13 +1,16 @@
+import { Archive, Pencil, Plus, Trash2 } from "lucide-react";
+import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
+import { InlineItemActions } from "./CoursePlannerChrome";
 import type { ScenePack } from "../types";
 
 type SceneCategoryListProps = {
   isBusy: boolean;
   scenePacks: ScenePack[];
   selectedScenePackId: string | null;
-  onArchiveScenePack: () => void;
+  onArchiveScenePack: (scenePack: ScenePack) => void;
   onCreateScenePack: () => void;
-  onDeleteScenePack: () => void;
-  onRenameScenePack: () => void;
+  onDeleteScenePack: (scenePack: ScenePack) => void;
+  onEditScenePack: (scenePack: ScenePack) => void;
   onSelectScenePack: (scenePackId: string) => void;
 };
 
@@ -18,11 +21,9 @@ export function SceneCategoryList({
   onArchiveScenePack,
   onCreateScenePack,
   onDeleteScenePack,
-  onRenameScenePack,
+  onEditScenePack,
   onSelectScenePack,
 }: SceneCategoryListProps) {
-  const hasSelection = Boolean(selectedScenePackId);
-
   return (
     <aside className="scene-category-list-panel" aria-label="Scene Pack panel">
       <div className="planning-panel-header">
@@ -31,41 +32,89 @@ export function SceneCategoryList({
           <p>{scenePacks.length > 0 ? "选择一个 Scene Pack 来生成和整理 Chapter。" : "先创建 Scene Pack。"}</p>
         </div>
         <button type="button" aria-label="Add Scene Pack" disabled={isBusy} onClick={onCreateScenePack}>
-          +
+          <Plus size={16} aria-hidden="true" />
         </button>
       </div>
 
       <nav className="scene-category-list" aria-label="Scene Pack list">
         {scenePacks.length > 0 ? (
-          scenePacks.map((scenePack) => (
-            <button
-              type="button"
-              className={scenePack.id === selectedScenePackId ? "is-active" : ""}
-              key={scenePack.id}
-              aria-current={scenePack.id === selectedScenePackId ? "page" : undefined}
-              onClick={() => onSelectScenePack(scenePack.id)}
-            >
-              <strong>{scenePack.title}</strong>
-              <span>{scenePack.intent}</span>
-              <small>{scenePack.chapterIds.length} accepted Chapters · {scenePack.status}</small>
-            </button>
-          ))
+          scenePacks.map((scenePack) => {
+            const isActive = scenePack.id === selectedScenePackId;
+            const canMutate = !isBusy;
+            const chapterCount = scenePack.chapterIds.length;
+            const metaText = `${chapterCount} accepted Chapters · ${scenePack.status}`;
+            const archiveDisabled = !canMutate || scenePack.status === "archived";
+
+            return (
+              <article
+                key={scenePack.id}
+                role="group"
+                aria-label={`Scene Pack ${scenePack.title}`}
+                className={`scene-pack-card${isActive ? " is-active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="scene-pack-card__body"
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => onSelectScenePack(scenePack.id)}
+                >
+                  <span className="scene-pack-card__title">{scenePack.title}</span>
+                  <span className="scene-pack-card__intent">{scenePack.intent}</span>
+                  <span className="scene-pack-card__meta">{metaText}</span>
+                </button>
+                <InlineItemActions
+                  ariaLabel={`Scene Pack actions for ${scenePack.title}`}
+                >
+                  <button
+                    type="button"
+                    aria-label={`Edit Scene Pack ${scenePack.title}`}
+                    disabled={!canMutate}
+                    onClick={() => onEditScenePack(scenePack)}
+                  >
+                    <Pencil size={14} aria-hidden="true" />
+                    Edit
+                  </button>
+                  <ConfirmActionDialog
+                    trigger={(
+                      <button
+                        type="button"
+                        aria-label={`Archive Scene Pack ${scenePack.title}`}
+                        disabled={archiveDisabled}
+                      >
+                        <Archive size={14} aria-hidden="true" />
+                        Archive
+                      </button>
+                    )}
+                    title="Archive Scene Pack"
+                    description="Archive this Scene Pack and keep its files available for later review."
+                    confirmLabel="Archive Scene Pack"
+                    onConfirm={() => onArchiveScenePack(scenePack)}
+                  />
+                  <ConfirmActionDialog
+                    trigger={(
+                      <button
+                        type="button"
+                        aria-label={`Delete Scene Pack ${scenePack.title}`}
+                        className="course-planner-inline-action is-destructive"
+                        disabled={!canMutate}
+                      >
+                        <Trash2 size={14} aria-hidden="true" />
+                        Delete
+                      </button>
+                    )}
+                    title="Delete Scene Pack"
+                    description="Remove this Scene Pack from the active list. Existing files stay in the scene library."
+                    confirmLabel="Delete Scene Pack"
+                    onConfirm={() => onDeleteScenePack(scenePack)}
+                  />
+                </InlineItemActions>
+              </article>
+            );
+          })
         ) : (
           <p className="course-planner-empty">No Scene Packs yet.</p>
         )}
       </nav>
-
-      <div className="scene-pack-actions" aria-label="Scene Pack actions">
-        <button type="button" aria-label="Rename Scene Pack" disabled={isBusy || !hasSelection} onClick={onRenameScenePack}>
-          Rename
-        </button>
-        <button type="button" aria-label="Archive Scene Pack" disabled={isBusy || !hasSelection} onClick={onArchiveScenePack}>
-          Archive
-        </button>
-        <button type="button" aria-label="Delete Scene Pack" disabled={isBusy || !hasSelection} onClick={onDeleteScenePack}>
-          Delete
-        </button>
-      </div>
     </aside>
   );
 }

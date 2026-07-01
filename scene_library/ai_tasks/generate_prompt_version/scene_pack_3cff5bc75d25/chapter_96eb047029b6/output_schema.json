@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ObjectPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "core_objects": {
+          "items": {
+            "$ref": "#/$defs/PlannedObject"
+          },
+          "title": "Core Objects",
+          "type": "array"
+        },
+        "required_objects": {
+          "items": {
+            "$ref": "#/$defs/PlannedObject"
+          },
+          "title": "Required Objects",
+          "type": "array"
+        },
+        "recommended_objects": {
+          "items": {
+            "$ref": "#/$defs/PlannedObject"
+          },
+          "title": "Recommended Objects",
+          "type": "array"
+        },
+        "avoid_or_move_objects": {
+          "items": {
+            "$ref": "#/$defs/PlannedObject"
+          },
+          "title": "Avoid Or Move Objects",
+          "type": "array"
+        }
+      },
+      "title": "ObjectPlan",
+      "type": "object",
+      "required": [
+        "core_objects",
+        "required_objects",
+        "recommended_objects",
+        "avoid_or_move_objects"
+      ]
+    },
+    "PlannedObject": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "role_in_scene": {
+          "minLength": 1,
+          "title": "Role In Scene",
+          "type": "string"
+        },
+        "placement_hint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Placement Hint"
+        },
+        "priority": {
+          "enum": [
+            "core",
+            "required",
+            "recommended",
+            "avoid"
+          ],
+          "title": "Priority",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "role_in_scene",
+        "placement_hint",
+        "priority"
+      ],
+      "title": "PlannedObject",
+      "type": "object"
+    },
+    "SceneDirectorPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "story_event": {
+          "minLength": 1,
+          "title": "Story Event",
+          "type": "string"
+        },
+        "scene_composition": {
+          "minLength": 1,
+          "title": "Scene Composition",
+          "type": "string"
+        },
+        "spatial_structure": {
+          "minLength": 1,
+          "title": "Spatial Structure",
+          "type": "string"
+        },
+        "character_arrangement": {
+          "minLength": 1,
+          "title": "Character Arrangement",
+          "type": "string"
+        },
+        "action_design": {
+          "minLength": 1,
+          "title": "Action Design",
+          "type": "string"
+        },
+        "style_and_constraints": {
+          "minLength": 1,
+          "title": "Style And Constraints",
+          "type": "string"
+        }
+      },
+      "required": [
+        "story_event",
+        "scene_composition",
+        "spatial_structure",
+        "character_arrangement",
+        "action_design",
+        "style_and_constraints"
+      ],
+      "title": "SceneDirectorPlan",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "scene_director_plan": {
+      "$ref": "#/$defs/SceneDirectorPlan"
+    },
+    "object_plan": {
+      "$ref": "#/$defs/ObjectPlan"
+    }
+  },
+  "required": [
+    "title",
+    "scene_director_plan",
+    "object_plan"
+  ],
+  "title": "GeneratePromptVersionOutput",
+  "type": "object"
+}

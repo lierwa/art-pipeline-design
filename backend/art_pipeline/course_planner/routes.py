@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse
 
 from art_pipeline.course_planner.api_models import (
     CandidateBatchRequest,
-    ChapterListLockRequest,
     ChapterOrderRequest,
     ChapterSeedRequest,
     ImageAttemptCreateRequest,
@@ -158,7 +157,6 @@ def post_chapter(
     store = _store(request)
     try:
         pack = store.get_scene_pack(scenePackId)
-        _require_editable_chapter_list(pack)
         seed = _chapter_seed_from_request(pack, payload)
         chapter = store.create_chapter_from_seed(pack.id, seed)
     except FileNotFoundError as exc:
@@ -175,30 +173,17 @@ def patch_chapter_order(
     store = _store(request)
     try:
         pack = store.get_scene_pack(scenePackId)
-        _require_editable_chapter_list(pack)
         updated = store.reorder_chapters(pack.id, payload.chapter_ids)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Scene pack not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"scenePack": updated.model_dump(mode="json")}
-@router.patch("/scene-packs/{scenePackId}/chapter-list-lock")
-def patch_chapter_list_lock(
-    request: Request,
-    scenePackId: str,
-    payload: ChapterListLockRequest,
-) -> dict[str, object]:
-    try:
-        pack = _store(request).lock_chapter_list(scenePackId, payload.locked)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Scene pack not found.") from exc
-    return {"scenePack": pack.model_dump(mode="json")}
 @router.delete("/scene-packs/{scenePackId}/chapters/{chapterId}")
 def delete_chapter(request: Request, scenePackId: str, chapterId: str) -> dict[str, object]:
     store = _store(request)
     try:
         pack = store.get_scene_pack(scenePackId)
-        _require_editable_chapter_list(pack)
         if chapterId not in pack.chapter_ids:
             raise FileNotFoundError(chapterId)
         if store.list_prompt_versions(chapterId):
@@ -311,7 +296,12 @@ def post_prompt_package(request: Request, versionId: str) -> dict[str, object]:
     try:
         version = store.get_prompt_version(versionId)
         _, chapter = _chapter_context(store, version.chapter_id)
-        package = build_prompt_package(version.scene_director_plan, version.object_plan)
+        package = build_prompt_package(
+            version.scene_director_plan,
+            version.cast_bindings,
+            version.scene_vocabulary,
+            version.prompt_tuning,
+        )
         # WHY: adopted 状态的权威事实是 Chapter 指针；再生成 prompt package
         # 只能刷新内容，不能把仍被采纳的版本降级为 prompt_ready。
         next_status = "adopted" if chapter.adopted_prompt_version_id == version.id else "prompt_ready"
@@ -442,11 +432,6 @@ def _chapter_seed_from_request(pack: ScenePack, payload: ChapterSeedRequest) -> 
     data.update({"scene_pack_id": pack.id, "scene_pack_title": pack.title, "chapter_id": "pending"})
     return ChapterSeed.model_validate(data)
 
-def _require_editable_chapter_list(pack: ScenePack) -> None:
-    if pack.chapter_list_locked:
-        # WHY: Chapter 列表锁是唯一编辑状态；直接在写边界拒绝，避免前端并发操作绕过。
-        raise HTTPException(status_code=409, detail="Chapter list is locked.")
-
 def _delete_chapter(store: CoursePlannerStore, pack: ScenePack, chapter_id: str) -> None:
     if chapter_id not in pack.chapter_ids:
         raise FileNotFoundError(chapter_id)
@@ -491,10 +476,14 @@ def _collect_state(store: CoursePlannerStore) -> dict[str, list[dict[str, object
     }
 
 def _ai_task_http_error(error: AiTaskFailedError) -> HTTPException:
+    public_message = "Course Planner AI task failed. Check the AI task record for diagnostics."
+    task_payload = error.task.model_dump(mode="json")
+    # WHY: 任务 artifact/记录保留原始 provider 错误，HTTP 错误只返回可读摘要，避免 UI 泄露整段 JSON schema 诊断。
+    task_payload["error"] = public_message
     return HTTPException(
         status_code=502,
         detail={
-            "message": f"Course Planner AI task failed: {error.cause}",
-            "task": error.task.model_dump(mode="json"),
+            "message": public_message,
+            "task": task_payload,
         },
     )

@@ -1,0 +1,11 @@
+{
+  "id": "task_2878391cc3df47b69110fca031653104",
+  "kind": "generate_chapter_candidates",
+  "status": "succeeded",
+  "target": {
+    "scene_pack_id": "scene_pack_3cff5bc75d25"
+  },
+  "created_at": "2026-06-29T03:13:15.805770+00:00",
+  "updated_at": "2026-06-29T03:14:48.585504+00:00",
+  "error": null
+}

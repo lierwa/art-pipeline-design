@@ -39,7 +39,7 @@ class CoursePlannerHierarchyStoreMixin:
 
     def update_scene_pack(self, scene_pack_id: str, **updates: Any) -> ScenePack:
         pack = self.get_scene_pack(scene_pack_id)
-        allowed_fields = {"title", "intent", "notes", "status", "chapter_list_locked"}
+        allowed_fields = {"title", "intent", "notes", "status"}
         update_payload = {
             field: value for field, value in updates.items() if field in allowed_fields
         }
@@ -123,9 +123,6 @@ class CoursePlannerHierarchyStoreMixin:
         updated = pack.model_copy(update={"chapter_ids": list(chapter_ids)})
         self._write_model(self._scene_pack_path(pack.id), updated)
         return updated
-
-    def lock_chapter_list(self, scene_pack_id: str, locked: bool) -> ScenePack:
-        return self.update_scene_pack(scene_pack_id, chapter_list_locked=locked)
 
     def create_prompt_version(
         self,

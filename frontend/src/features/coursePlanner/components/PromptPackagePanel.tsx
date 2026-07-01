@@ -1,12 +1,16 @@
 import { type ChangeEvent, useState } from "react";
 
+import { type PromptVersionUiState, isLegacyPromptPackage } from "../domain/promptVersionUiState";
+import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
 import type { PromptPackage, PromptVersion } from "../types";
 
 type PromptPackagePanelProps = {
   isGeneratingPrompt: boolean;
   isUploadingAttempt: boolean;
   promptVersion: PromptVersion | null;
+  uiState: PromptVersionUiState;
   onGeneratePromptPackage: (version: PromptVersion) => Promise<PromptVersion | null>;
+  onTunePrompt: () => void;
   onUploadGeneratedImage: (file: File) => Promise<void>;
   onViewFull: () => void;
 };
@@ -15,12 +19,16 @@ export function PromptPackagePanel({
   isGeneratingPrompt,
   isUploadingAttempt,
   promptVersion,
+  uiState,
   onGeneratePromptPackage,
+  onTunePrompt,
   onUploadGeneratedImage,
   onViewFull,
 }: PromptPackagePanelProps) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const promptPackage = promptVersion?.promptPackage ?? null;
+  const hasLegacyPromptPackage = isLegacyPromptPackage(promptVersion);
+  const needsTuning = uiState.key === "needs_tuning";
 
   async function copyText(label: string, value: string | null | undefined) {
     if (!value || !navigator.clipboard?.writeText) {
@@ -40,50 +48,58 @@ export function PromptPackagePanel({
   }
 
   return (
-    <section className="chapter-workspace-panel prompt-package-panel" aria-label="Prompt Preview">
+    <section className="chapter-workspace-panel prompt-package-panel" aria-label="Image2 Prompt Preview">
       <div className="chapter-workspace-panel-header">
         <div>
-          <h2>Prompt Preview</h2>
+          <h2>Image2 Prompt Preview</h2>
           <p>{promptVersion ? `${promptVersion.versionLabel} / ${promptVersion.title}` : "Select a Prompt Version."}</p>
         </div>
+        <CoursePlannerStatusBadge tone={uiState.tone}>{uiState.label}</CoursePlannerStatusBadge>
       </div>
 
-      <div className="chapter-workspace-actions">
-        <button
-          type="button"
-          className="course-planner-primary-action"
-          disabled={!promptVersion || isGeneratingPrompt}
-          onClick={() => promptVersion && void onGeneratePromptPackage(promptVersion)}
-        >
-          {isGeneratingPrompt ? "生成 Prompt 中..." : "生成/刷新 Prompt"}
-        </button>
-        <button
-          type="button"
-          disabled={!promptPackage?.fullPrompt}
-          onClick={() => void copyText("Full Prompt", promptPackage?.fullPrompt)}
-        >
-          复制完整 Prompt
-        </button>
-        <button
-          type="button"
-          disabled={!promptPackage?.negativeConstraints}
-          onClick={() => void copyText("Negative Constraints", promptPackage?.negativeConstraints)}
-        >
-          复制负面约束
-        </button>
-        <button type="button" disabled={!promptPackage} onClick={onViewFull}>
-          查看 Prompt Package
-        </button>
-      </div>
-
-      <GeneratedImageUpload
-        disabled={!promptVersion || isUploadingAttempt}
-        isUploading={isUploadingAttempt}
-        onUpload={uploadGeneratedImage}
-      />
-
-      {copyStatus ? <p className="course-planner-status">{copyStatus}</p> : null}
-      <PromptPackagePreview promptPackage={promptPackage} />
+      {needsTuning ? (
+        <div className="prompt-package-tuning-card">
+          <p>先录入角色 IP 和参考图，再生成最终 Image2 prompt。</p>
+          <button type="button" onClick={onTunePrompt}>Tune Prompt</button>
+        </div>
+      ) : (
+        <>
+          <div className="chapter-workspace-actions">
+            <button
+              type="button"
+              className="course-planner-primary-action"
+              disabled={!promptVersion || isGeneratingPrompt || !uiState.canGeneratePrompt}
+              onClick={() => promptVersion && void onGeneratePromptPackage(promptVersion)}
+            >
+              {isGeneratingPrompt ? "生成 Prompt 中..." : "生成/刷新 Prompt"}
+            </button>
+            <button
+              type="button"
+              disabled={!uiState.canCopyPrompt || !promptPackage?.fullPrompt}
+              onClick={() => void copyText("Full Prompt", promptPackage?.fullPrompt)}
+            >
+              复制完整 Prompt
+            </button>
+            <button
+              type="button"
+              disabled={!uiState.canCopyPrompt || !promptPackage?.negativeConstraints}
+              onClick={() => void copyText("Negative Constraints", promptPackage?.negativeConstraints)}
+            >
+              复制负面约束
+            </button>
+            <button type="button" disabled={!promptPackage} onClick={onViewFull}>
+              查看 Prompt Package
+            </button>
+          </div>
+          <GeneratedImageUpload
+            disabled={!promptVersion || isUploadingAttempt || !uiState.canUploadImage}
+            isUploading={isUploadingAttempt}
+            onUpload={uploadGeneratedImage}
+          />
+          {copyStatus ? <p className="course-planner-status">{copyStatus}</p> : null}
+          <PromptPackagePreview hasLegacyPromptPackage={hasLegacyPromptPackage} promptPackage={promptPackage} />
+        </>
+      )}
     </section>
   );
 }
@@ -111,18 +127,27 @@ function GeneratedImageUpload({ disabled, isUploading, onUpload }: GeneratedImag
   );
 }
 
-function PromptPackagePreview({ promptPackage }: { promptPackage: PromptPackage | null }) {
+function PromptPackagePreview({
+  hasLegacyPromptPackage,
+  promptPackage,
+}: {
+  hasLegacyPromptPackage: boolean;
+  promptPackage: PromptPackage | null;
+}) {
+  if (hasLegacyPromptPackage) {
+    return <p className="course-planner-status">旧版 Prompt Package 使用内部 schema 标签，请重新生成。</p>;
+  }
   if (!promptPackage) {
     return <p className="course-planner-empty">当前版本还没有 Prompt Package。</p>;
   }
   return (
     <div className="prompt-package-preview">
-      <section aria-label="Full Prompt">
-        <h3>Full Prompt</h3>
+      <section aria-label="Full Prompt Preview">
+        <h3>Full Prompt Preview</h3>
         <p>{promptPackage.fullPrompt}</p>
       </section>
-      <section aria-label="Negative Constraints">
-        <h3>Negative Constraints</h3>
+      <section aria-label="Negative Constraints Preview">
+        <h3>Negative Constraints Preview</h3>
         <p>{promptPackage.negativeConstraints}</p>
       </section>
       {promptPackage.shortPrompt ? (

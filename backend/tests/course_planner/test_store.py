@@ -266,23 +266,6 @@ def test_reorder_chapters_rejects_missing_or_foreign_ids(tmp_path: Path) -> None
         planner_store.reorder_chapters(pack.id, [chapter.id, "chapter_missing"])
 
 
-def test_lock_chapter_list_changes_only_scene_pack_flag(tmp_path: Path) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-
-    locked = planner_store.lock_chapter_list(pack.id, True)
-    unlocked = planner_store.lock_chapter_list(pack.id, False)
-
-    assert locked.chapter_ids == [chapter.id]
-    assert locked.chapter_list_locked is True
-    assert unlocked.chapter_ids == [chapter.id]
-    assert unlocked.chapter_list_locked is False
-
-
 def test_prompt_version_and_attempt_lineage_is_preserved(tmp_path: Path) -> None:
     planner_store = CoursePlannerStore(tmp_path / "scene_library")
     pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")

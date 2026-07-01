@@ -27,6 +27,7 @@ export type ChapterListResponse = {
 };
 
 const API_ROOT = "/api/course-planner";
+const AI_TASK_PUBLIC_ERROR = "Course Planner AI task failed. Check the AI task record for diagnostics.";
 
 export async function fetchCoursePlannerState(fetcher: CoursePlannerFetcher = fetch): Promise<CoursePlannerState> {
   return normalizeState(await requestJson(fetcher, `${API_ROOT}/state`, { method: "GET" }, "Could not load Course Planner state."));
@@ -98,14 +99,6 @@ export async function reorderChapters(
   fetcher: CoursePlannerFetcher = fetch,
 ): Promise<ChapterListResponse> {
   return toCamel(await requestJson(fetcher, `${scenePackPath(scenePackId)}/chapter-order`, jsonRequest("PATCH", { chapterIds }), "Could not reorder Chapters.")) as ChapterListResponse;
-}
-
-export async function setChapterListLocked(
-  scenePackId: string,
-  locked: boolean,
-  fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterListResponse> {
-  return toCamel(await requestJson(fetcher, `${scenePackPath(scenePackId)}/chapter-list-lock`, jsonRequest("PATCH", { locked }), "Could not update Chapter list lock.")) as ChapterListResponse;
 }
 
 export function deleteChapter(scenePackId: string, chapterId: string, fetcher: CoursePlannerFetcher = fetch): Promise<void> {
@@ -196,19 +189,62 @@ function normalizeState(payload: unknown): CoursePlannerState {
   const state = toCamel(payload) as Partial<CoursePlannerState>;
   const scenePacks = state.scenePacks ?? [];
   const chapters = arrayFromPayload<Chapter>(state, "chapters");
-  const promptVersions = arrayFromPayload<PromptVersion>(state, "promptVersions");
+  const promptVersions = arrayFromPayload<PromptVersion>(state, "promptVersions").map(normalizePromptVersion);
   const imageAttempts = arrayFromPayload<ImageAttempt>(state, "imageAttempts");
   return {
     scenePacks,
     activeScenePackId: state.activeScenePackId ?? scenePacks[0]?.id ?? null,
     candidatesByScenePackId: state.candidatesByScenePackId ?? {},
     chaptersByScenePackId: state.chaptersByScenePackId ?? groupBy(chapters, (chapter) => chapter.scenePackId, orderedChapters),
-    promptVersionsByChapterId: state.promptVersionsByChapterId ?? groupBy(promptVersions, (version) => version.chapterId),
+    promptVersionsByChapterId: normalizePromptVersionsByChapterId(state.promptVersionsByChapterId) ?? groupBy(promptVersions, (version) => version.chapterId),
     imageAttemptsByVersionId: state.imageAttemptsByVersionId ?? groupBy(imageAttempts, (attempt) => attempt.promptVersionId),
     selectedChapterId: state.selectedChapterId ?? null,
     selectedPromptVersionId: state.selectedPromptVersionId ?? null,
     asyncStatus: state.asyncStatus ?? {},
     tasks: state.tasks ?? [],
+  };
+}
+
+function normalizePromptVersionsByChapterId(value: CoursePlannerState["promptVersionsByChapterId"] | undefined): CoursePlannerState["promptVersionsByChapterId"] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([chapterId, versions]) => [
+      chapterId,
+      versions.map(normalizePromptVersion),
+    ]),
+  );
+}
+
+function normalizePromptVersion(version: PromptVersion): PromptVersion {
+  return {
+    ...version,
+    castBindings: version.castBindings ?? [],
+    sceneVocabulary: version.sceneVocabulary ?? emptySceneVocabulary(),
+    promptTuning: version.promptTuning ?? {
+      styleAnchor: version.sceneDirectorPlan?.styleAndConstraints ?? "",
+      styleReferenceImageIds: [],
+      sceneReferenceImageIds: [],
+      mustKeep: [],
+      avoid: [],
+    },
+    objectPlan: version.objectPlan ?? {
+      coreObjects: [],
+      requiredObjects: [],
+      recommendedObjects: [],
+      avoidOrMoveObjects: [],
+    },
+  };
+}
+
+function emptySceneVocabulary(): PromptVersion["sceneVocabulary"] {
+  // WHY: 02 中栏预览以 scene-first vocabulary 为单一事实源；缺失该字段时宁可显式留空，也不能把 legacy objectPlan 误投影成新的叙事词真相。
+  return {
+    narrativeAnchors: [],
+    optionalVocabularyCandidates: [],
+    ambientFurnishingPolicy: "",
+    avoidObjects: [],
   };
 }
 
@@ -308,13 +344,20 @@ function extractErrorMessage(payload: unknown): string | null {
   }
   const detail = (payload as { detail?: unknown }).detail;
   if (typeof detail === "string") {
-    return detail;
+    return publicErrorMessage(detail);
   }
   if (detail && typeof detail === "object") {
     const message = (detail as { message?: unknown }).message;
-    return typeof message === "string" ? message : null;
+    return typeof message === "string" ? publicErrorMessage(message) : null;
   }
   return null;
+}
+
+function publicErrorMessage(message: string): string {
+  // WHY: AI provider/Codex 的内部 schema 诊断写入 task artifact；页面只展示可读摘要，避免大段协议错误打断操作流。
+  return message.includes("Course Planner AI task failed")
+    ? AI_TASK_PUBLIC_ERROR
+    : message;
 }
 
 function toCamel(value: unknown): unknown {

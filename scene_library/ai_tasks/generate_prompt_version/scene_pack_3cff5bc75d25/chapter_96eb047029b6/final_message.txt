@@ -1,0 +1,117 @@
+{
+  "title": "清晨客厅整理",
+  "scene_director_plan": {
+    "story_event": "清晨起床后，客厅正在从前一晚的轻微使用痕迹中恢复整洁：小学生在沙发前把歪斜的抱枕扶正，家长在茶几旁收起昨晚留下的水杯和绘本，二人自然协作，氛围轻松安静。",
+    "scene_composition": "采用中景横向构图，让沙发、茶几与人物动作同时清楚可见。沙发位于画面后方作为稳定背景，茶几在中央偏前形成整理动作焦点，孩子靠近沙发一侧，家长位于茶几另一侧，画面保留少量生活细节但整体干净有序。",
+    "spatial_structure": "沙发靠后墙摆放，前方铺有地毯，茶几置于地毯中央。电视柜与书架分列画面左右两侧，半开的窗帘从侧面引入柔和晨光。收纳篮靠近沙发或茶几边缘，绿植放在窗边或电视柜旁，增强真实家庭客厅的层次。",
+    "character_arrangement": "主角是一名穿居家睡衣的小学生，站或半蹲在沙发前，双手整理抱枕，身体朝向沙发，动作自然明确。辅助角色是一位家长，站在或微微弯身于茶几旁，正在把水杯和绘本归拢，面部表情轻松温和，与孩子形成日常协作关系。",
+    "action_design": "孩子的动作重点是扶正抱枕，使抱枕从倾斜状态变为贴合沙发靠背；家长的动作重点是将茶几上的杯子和绘本收起或叠放整齐。不要表现大幅度清扫、混乱翻找或破坏性行为，整理动作应清晰、温和、可一眼识别。",
+    "style_and_constraints": "整体为温暖自然光，清晨窗光柔和，色彩以真实家庭室内色调为主。人物比例应接近普通家庭成员，不使用夸张卡通比例；服装适合室内清晨场景。画面干净但不空洞，可保留杯子、绘本、收纳篮、绿植等真实生活细节，避免杂乱、危险物品或戏剧化冲突。"
+  },
+  "object_plan": {
+    "core_objects": [
+      {
+        "name": "穿居家睡衣的小学生",
+        "role_in_scene": "主角，正在整理沙发抱枕，体现清晨家庭成员参与客厅归位整理。",
+        "placement_hint": "沙发前方或一侧，双手接触抱枕，身体朝向沙发。",
+        "priority": "core"
+      },
+      {
+        "name": "家长",
+        "role_in_scene": "辅助角色，在茶几旁协助收起水杯和绘本，形成轻松家庭互动。",
+        "placement_hint": "茶几旁，略微弯身或站立整理桌面物品。",
+        "priority": "core"
+      },
+      {
+        "name": "沙发",
+        "role_in_scene": "客厅主要家具与孩子整理动作的承载对象。",
+        "placement_hint": "靠后墙横向摆放，作为画面后景主体。",
+        "priority": "core"
+      },
+      {
+        "name": "抱枕",
+        "role_in_scene": "孩子正在扶正的关键整理对象，直接表达事件动作。",
+        "placement_hint": "沙发坐垫或靠背前，其中一个可略有倾斜，孩子正在扶正。",
+        "priority": "core"
+      },
+      {
+        "name": "茶几",
+        "role_in_scene": "家长整理水杯和绘本的中央操作区域。",
+        "placement_hint": "地毯中央偏前，位于沙发前方。",
+        "priority": "core"
+      }
+    ],
+    "required_objects": [
+      {
+        "name": "水杯",
+        "role_in_scene": "昨晚留下、正在被家长收起的生活物品。",
+        "placement_hint": "茶几上或家长手中，数量少，保持安全完整。",
+        "priority": "required"
+      },
+      {
+        "name": "绘本",
+        "role_in_scene": "昨晚阅读后留下、正在被归拢的物品，强化家庭生活痕迹。",
+        "placement_hint": "茶几上叠放，或被家长拿起准备收纳。",
+        "priority": "required"
+      },
+      {
+        "name": "地毯",
+        "role_in_scene": "划定沙发与茶几之间的活动区域，增加客厅温暖感。",
+        "placement_hint": "铺在沙发前方，茶几置于其上。",
+        "priority": "required"
+      },
+      {
+        "name": "窗帘",
+        "role_in_scene": "半开引入晨光，说明清晨时间与自然光来源。",
+        "placement_hint": "画面侧边窗户处，保持半开状态。",
+        "priority": "required"
+      }
+    ],
+    "recommended_objects": [
+      {
+        "name": "电视柜",
+        "role_in_scene": "补足客厅空间识别度，与沙发形成日常家庭布局。",
+        "placement_hint": "画面一侧或沙发对面，不抢占人物动作焦点。",
+        "priority": "recommended"
+      },
+      {
+        "name": "书架",
+        "role_in_scene": "呼应绘本与家庭阅读氛围，丰富生活细节。",
+        "placement_hint": "电视柜对侧或墙边，作为背景层次。",
+        "priority": "recommended"
+      },
+      {
+        "name": "收纳篮",
+        "role_in_scene": "暗示物品归位去处，支持整理主题。",
+        "placement_hint": "沙发旁、茶几边或书架下方，位置自然可达。",
+        "priority": "recommended"
+      },
+      {
+        "name": "绿植",
+        "role_in_scene": "增强清晨室内自然感与家庭空间的温和气息。",
+        "placement_hint": "窗边、电视柜旁或客厅角落，避免遮挡人物动作。",
+        "priority": "recommended"
+      }
+    ],
+    "avoid_or_move_objects": [
+      {
+        "name": "大量杂乱物品",
+        "role_in_scene": "避免让画面显得混乱，削弱“秩序恢复”的清晨整理主题。",
+        "placement_hint": "不应铺满地面或茶几，只保留少量可被整理的真实生活物品。",
+        "priority": "avoid"
+      },
+      {
+        "name": "破碎杯子或危险物",
+        "role_in_scene": "避免引入事故、冲突或危险叙事。",
+        "placement_hint": "不要出现在茶几、地毯或人物手边。",
+        "priority": "avoid"
+      },
+      {
+        "name": "夸张玩具堆或派对装饰",
+        "role_in_scene": "避免偏离普通家庭清晨整理客厅的日常场景。",
+        "placement_hint": "如需儿童生活痕迹，只保留少量安静、整洁的物件。",
+        "priority": "avoid"
+      }
+    ]
+  }
+}

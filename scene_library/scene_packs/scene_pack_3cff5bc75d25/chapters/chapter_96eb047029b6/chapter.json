@@ -1,0 +1,44 @@
+{
+  "id": "chapter_96eb047029b6",
+  "scene_pack_id": "scene_pack_3cff5bc75d25",
+  "title": "清晨客厅整理",
+  "summary": "孩子把沙发上的抱枕扶正，家长在茶几旁收起昨晚留下的杯子和绘本。",
+  "seed": {
+    "scene_pack_id": "scene_pack_3cff5bc75d25",
+    "scene_pack_title": "室内家庭篇",
+    "chapter_id": "chapter_96eb047029b6",
+    "chapter_title": "清晨客厅整理",
+    "chapter_intent": "呈现家庭一天开始时的室内活动，突出客厅作为共享生活空间的秩序恢复与人物互动。",
+    "scene_domain": "客厅",
+    "daily_moment": "清晨起床后",
+    "event_seed": "孩子把沙发上的抱枕扶正，家长在茶几旁收起昨晚留下的杯子和绘本。",
+    "spatial_seed": "沙发靠后墙摆放，茶几位于中央，地毯铺在沙发前方，电视柜与书架分列两侧，窗帘半开透入晨光。",
+    "object_coverage_hint": [
+      "沙发",
+      "抱枕",
+      "茶几",
+      "水杯",
+      "绘本",
+      "地毯",
+      "电视柜",
+      "窗帘",
+      "收纳篮",
+      "绿植"
+    ],
+    "character_concept_hint": {
+      "cast_mode": "main_cast_and_supporting_cast",
+      "main_cast_hint": "穿居家睡衣的小学生，动作自然，正在整理客厅物品。",
+      "supporting_cast_hint": "一位家长在旁边协助收拾，表情轻松。",
+      "reference_asset_ids": [],
+      "constraints": [
+        "人物应呈现普通家庭成员，不使用夸张卡通比例。",
+        "动作要清楚表达整理与归位，不表现混乱破坏。",
+        "角色服装适合室内清晨场景。"
+      ]
+    },
+    "style_notes": "温暖自然光，画面干净但保留真实生活细节。"
+  },
+  "sort_order": 1,
+  "status": "prompt_ready",
+  "adopted_prompt_version_id": "prompt_version_71d3b7797de1"
+}

@@ -201,7 +201,6 @@ function controller(options: ControllerOptions = {}): CoursePlannerController {
     deleteChapterCandidate: vi.fn(),
     acceptChapterCandidate: vi.fn(),
     reorderChapters: vi.fn(),
-    setChapterListLocked: vi.fn(),
     deleteChapter: vi.fn(),
     listPromptVersions: vi.fn(),
     createPromptVersion: vi.fn(),

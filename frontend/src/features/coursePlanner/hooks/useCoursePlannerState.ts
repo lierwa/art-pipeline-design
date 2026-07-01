@@ -20,28 +20,13 @@ import {
   reorderChapters,
   reviewImageAttempt,
   reviseChapterCandidates,
-  setChapterListLocked,
   updateImageAttempt,
   updatePromptVersion,
   updateScenePack,
   uploadImageAttempt,
 } from "../api";
-import type {
-  AsyncOperationState,
-  Chapter,
-  ChapterCandidate,
-  CoursePlannerState,
-  ImageAttempt,
-  PromptVersion,
-  ScenePack,
-} from "../types";
-import type {
-  CreateScenePackRequest,
-  GenerateChapterCandidatesRequest,
-  PromptVersionCreateRequest,
-  UpdateScenePackRequest,
-  ImageAttemptPatchRequest,
-} from "../api";
+import type { AsyncOperationState, Chapter, ChapterCandidate, CoursePlannerState, ImageAttempt, PromptVersion, ScenePack } from "../types";
+import type { CreateScenePackRequest, GenerateChapterCandidatesRequest, PromptVersionCreateRequest, UpdateScenePackRequest, ImageAttemptPatchRequest } from "../api";
 import {
   appendChapterId,
   findChapter,
@@ -107,6 +92,15 @@ export function useCoursePlannerState() {
       ...current,
       asyncStatus: { ...current.asyncStatus, [key]: status },
     }));
+  }, [applyState]);
+
+  const clearAsyncStatus = useCallback((key: string) => {
+    applyState((current) => {
+      const asyncStatus = { ...current.asyncStatus };
+      delete asyncStatus[key];
+      // WHY: Toast 关闭只清理对应异步状态；其他并发操作仍由 asyncStatus 单一事实源驱动。
+      return { ...current, asyncStatus };
+    });
   }, [applyState]);
 
   const runOperation = useCallback(async <T,>(key: string, operation: () => Promise<T>): Promise<T | null> => {
@@ -236,14 +230,6 @@ export function useCoursePlannerState() {
     });
   }
 
-  async function handleSetChapterListLocked(scenePackId: string, locked: boolean) {
-    return runOperation(`setChapterListLocked:${scenePackId}`, async () => {
-      const response = await setChapterListLocked(scenePackId, locked);
-      upsertScenePack(response.scenePack);
-      return response.scenePack;
-    });
-  }
-
   async function handleDeleteChapter(scenePackId: string, chapterId: string) {
     return runOperation(`deleteChapter:${chapterId}`, async () => {
       await deleteChapter(scenePackId, chapterId);
@@ -277,27 +263,15 @@ export function useCoursePlannerState() {
   }
 
   async function handleCreatePromptVersion(chapterId: string, request: PromptVersionCreateRequest = {}) {
-    return runOperation(`createPromptVersion:${chapterId}`, async () => {
-      const version = await createPromptVersion(chapterId, request);
-      upsertPromptVersion(version);
-      return version;
-    });
+    return runPromptVersionOperation(`createPromptVersion:${chapterId}`, () => createPromptVersion(chapterId, request));
   }
 
   async function handleDuplicatePromptVersion(versionId: string) {
-    return runOperation(`duplicatePromptVersion:${versionId}`, async () => {
-      const version = await duplicatePromptVersion(versionId);
-      upsertPromptVersion(version);
-      return version;
-    });
+    return runPromptVersionOperation(`duplicatePromptVersion:${versionId}`, () => duplicatePromptVersion(versionId));
   }
 
   async function handleUpdatePromptVersion(versionId: string, patch: Partial<PromptVersion>) {
-    return runOperation(`updatePromptVersion:${versionId}`, async () => {
-      const version = await updatePromptVersion(versionId, patch);
-      upsertPromptVersion(version);
-      return version;
-    });
+    return runPromptVersionOperation(`updatePromptVersion:${versionId}`, () => updatePromptVersion(versionId, patch));
   }
 
   async function handleAdoptPromptVersion(chapterId: string, versionId: string) {
@@ -320,17 +294,17 @@ export function useCoursePlannerState() {
   async function handleDeletePromptVersion(versionId: string) {
     return runOperation(`deletePromptVersion:${versionId}`, async () => {
       const version = await deletePromptVersion(versionId);
-      upsertPromptVersion(version);
+      if (version.status === "archived") {
+        removePromptVersionById(version.id);
+      } else {
+        upsertPromptVersion(version);
+      }
       return version;
     });
   }
 
   async function handleGeneratePromptPackage(versionId: string) {
-    return runOperation(`generatePromptPackage:${versionId}`, async () => {
-      const version = await generatePromptPackage(versionId);
-      upsertPromptVersion(version);
-      return version;
-    });
+    return runPromptVersionOperation(`generatePromptPackage:${versionId}`, () => generatePromptPackage(versionId));
   }
 
   async function handleListImageAttempts(versionId: string) {
@@ -345,40 +319,36 @@ export function useCoursePlannerState() {
   }
 
   async function handleCreateImageAttempt(versionId: string, uploadedImageId: string) {
-    return runOperation(`uploadAttempt:${versionId}`, async () => {
-      const attempt = await createImageAttempt(versionId, uploadedImageId);
-      upsertImageAttempt(attempt);
-      return attempt;
-    });
+    return runImageAttemptOperation(`uploadAttempt:${versionId}`, () => createImageAttempt(versionId, uploadedImageId));
   }
 
   async function handleUploadImageAttempt(versionId: string, file: File) {
-    return runOperation(`uploadAttempt:${versionId}`, async () => {
-      const attempt = await uploadImageAttempt(versionId, file);
-      upsertImageAttempt(attempt);
-      return attempt;
-    });
+    return runImageAttemptOperation(`uploadAttempt:${versionId}`, () => uploadImageAttempt(versionId, file));
   }
 
   async function handleReviewImageAttempt(attemptId: string) {
-    return runOperation(`reviewAttempt:${attemptId}`, async () => {
-      const attempt = await reviewImageAttempt(attemptId);
-      upsertImageAttempt(attempt);
-      return attempt;
-    });
+    return runImageAttemptOperation(`reviewAttempt:${attemptId}`, () => reviewImageAttempt(attemptId));
   }
 
   async function handleUpdateImageAttempt(attemptId: string, patch: ImageAttemptPatchRequest) {
-    return runOperation(`updateAttempt:${attemptId}`, async () => {
-      const attempt = await updateImageAttempt(attemptId, patch);
-      upsertImageAttempt(attempt);
-      return attempt;
-    });
+    return runImageAttemptOperation(`updateAttempt:${attemptId}`, () => updateImageAttempt(attemptId, patch));
   }
 
   async function handleImportImageAttempt(attemptId: string) {
-    return runOperation(`importAttempt:${attemptId}`, async () => {
-      const attempt = await importImageAttempt(attemptId);
+    return runImageAttemptOperation(`importAttempt:${attemptId}`, () => importImageAttempt(attemptId));
+  }
+
+  function runPromptVersionOperation(key: string, operation: () => Promise<PromptVersion>) {
+    return runOperation(key, async () => {
+      const version = await operation();
+      upsertPromptVersion(version);
+      return version;
+    });
+  }
+
+  function runImageAttemptOperation(key: string, operation: () => Promise<ImageAttempt>) {
+    return runOperation(key, async () => {
+      const attempt = await operation();
       upsertImageAttempt(attempt);
       return attempt;
     });
@@ -439,6 +409,29 @@ export function useCoursePlannerState() {
     }));
   }
 
+  function removePromptVersionById(versionId: string) {
+    applyState((current) => {
+      const promptVersionsByChapterId = Object.fromEntries(
+        Object.entries(current.promptVersionsByChapterId).map(([chapterId, versions]) => [
+          chapterId,
+          versions.filter((candidate) => candidate.id !== versionId),
+        ]),
+      );
+      const fallbackVersions = current.selectedChapterId
+        ? promptVersionsByChapterId[current.selectedChapterId] ?? []
+        : [];
+      return {
+        ...current,
+        promptVersionsByChapterId,
+        // WHY: DELETE 的用户语义是“移出当前工作台”，后端返回的 archived 版本只证明删除成功；
+        // 前端按 versionId 从所有投影移除，避免响应缺失 chapterId 或旧投影导致“删不掉”。
+        selectedPromptVersionId: current.selectedPromptVersionId === versionId
+          ? preferredPromptVersionId(fallbackVersions)
+          : current.selectedPromptVersionId,
+      };
+    });
+  }
+
   function upsertImageAttempt(attempt: ImageAttempt) {
     applyState((current) => ({
       ...current,
@@ -467,7 +460,6 @@ export function useCoursePlannerState() {
     deleteChapterCandidate: handleDeleteCandidate,
     acceptChapterCandidate: handleAcceptCandidate,
     reorderChapters: handleReorderChapters,
-    setChapterListLocked: handleSetChapterListLocked,
     deleteChapter: handleDeleteChapter,
     listPromptVersions: handleListPromptVersions,
     createPromptVersion: handleCreatePromptVersion,
@@ -483,6 +475,7 @@ export function useCoursePlannerState() {
     updateImageAttempt: handleUpdateImageAttempt,
     importImageAttempt: handleImportImageAttempt,
     refresh,
+    clearAsyncStatus,
     setActiveScenePackId: (activeScenePackId: string | null) => applyState((current) => ({ ...current, activeScenePackId })),
     setSelectedChapterId: (selectedChapterId: string | null) => applyState((current) => ({
       ...current,

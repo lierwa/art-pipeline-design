@@ -1,4 +1,5 @@
 import type { PromptPackage } from "../types";
+import { CoursePlannerDialog } from "./CoursePlannerChrome";
 
 type PromptPackageModalProps = {
   promptPackage: PromptPackage | null;
@@ -12,40 +13,39 @@ export function PromptPackageModal({ promptPackage, isOpen, onClose }: PromptPac
   }
 
   return (
-    <div className="prompt-package-modal-backdrop">
-      <div className="prompt-package-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-package-title">
-        <div className="chapter-workspace-panel-header">
-          <div>
-            <h2 id="prompt-package-title">Prompt Package</h2>
-          </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <div className="prompt-package-modal-body">
-          <section aria-label="Full Prompt">
-            <h3>Full Prompt</h3>
-            <p>{promptPackage.fullPrompt}</p>
+    <CoursePlannerDialog
+      title="Prompt Package"
+      description="View the generated prompt package for this Prompt Version."
+      isOpen={isOpen}
+      onClose={onClose}
+      footer={(
+        <button type="button" aria-label="Close Prompt Package" onClick={onClose}>
+          Close
+        </button>
+      )}
+    >
+      <div className="prompt-package-modal-body">
+        <section aria-label="Full Prompt">
+          <h3>Full Prompt</h3>
+          <p>{promptPackage.fullPrompt}</p>
+        </section>
+        {promptPackage.shortPrompt ? (
+          <section aria-label="Short Prompt">
+            <h3>Short Prompt</h3>
+            <p>{promptPackage.shortPrompt}</p>
           </section>
-          <section aria-label="Negative Constraints">
-            <h3>Negative Constraints</h3>
-            <p>{promptPackage.negativeConstraints}</p>
+        ) : null}
+        <section aria-label="Negative Constraints">
+          <h3>Negative Constraints</h3>
+          <p>{promptPackage.negativeConstraints}</p>
+        </section>
+        {promptPackage.revisionPrompt ? (
+          <section aria-label="Revision Prompt">
+            <h3>Revision Prompt</h3>
+            <p>{promptPackage.revisionPrompt}</p>
           </section>
-          {promptPackage.shortPrompt ? (
-            <section aria-label="Short Prompt">
-              <h3>Short Prompt</h3>
-              <p>{promptPackage.shortPrompt}</p>
-            </section>
-          ) : null}
-          {promptPackage.revisionPrompt ? (
-            <section aria-label="Revision Prompt">
-              <h3>Revision Prompt</h3>
-              <p>{promptPackage.revisionPrompt}</p>
-            </section>
-          ) : null}
-        </div>
+        ) : null}
       </div>
-    </div>
+    </CoursePlannerDialog>
   );
 }

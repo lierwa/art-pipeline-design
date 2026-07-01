@@ -56,7 +56,7 @@ export function PlanningBriefPanel({
         >
           {isGenerating ? "生成中..." : hasCandidates ? "重新生成候选" : "生成候选"}
         </button>
-        <button type="button" disabled={!hasScenePack || isGenerating} onClick={onGenerateMore}>
+        <button type="button" disabled={!hasScenePack || !hasCandidates || isGenerating} onClick={onGenerateMore}>
           {isGenerating ? "追加中..." : "生成更多"}
         </button>
         <button type="button" disabled={!hasScenePack || isRevising} onClick={onOpenBatchRevision}>

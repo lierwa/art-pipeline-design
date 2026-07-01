@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from art_pipeline.course_planner.codex_json_provider import CodexJsonProvider
 
@@ -15,6 +15,22 @@ class ExampleOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str
+
+
+class NestedStrictOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["main_cast_and_supporting_cast"] = "main_cast_and_supporting_cast"
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class StrictSchemaOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    nested: NestedStrictOutput
 
 
 def test_codex_json_provider_extracts_json_block(tmp_path: Path) -> None:
@@ -52,6 +68,44 @@ def test_codex_json_provider_extracts_json_block(tmp_path: Path) -> None:
     assert command["args"][0] == "codex"
     assert "--output-last-message" in command["args"]
     assert command["promptChars"] == len("return json")
+
+
+def test_codex_json_provider_writes_openai_strict_output_schema(tmp_path: Path) -> None:
+    def runner(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        _ = kwargs
+        command = list(args[0])
+        schema_path = Path(command[command.index("--output-schema") + 1])
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        nested_schema = schema["$defs"]["NestedStrictOutput"]
+        final_message_path = Path(command[command.index("--output-last-message") + 1])
+        final_message_path.write_text(
+            json.dumps({
+                "title": "室内家庭篇",
+                "nested": {
+                    "mode": "main_cast_and_supporting_cast",
+                    "name": "孩子",
+                    "aliases": [],
+                    "note": None,
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        assert set(schema["required"]) == set(schema["properties"])
+        assert set(nested_schema["required"]) == set(nested_schema["properties"])
+        assert "default" not in nested_schema["properties"]["mode"]
+        assert "default" not in nested_schema["properties"]["note"]
+        return subprocess.CompletedProcess(args=["codex"], returncode=0, stdout="{}", stderr="")
+
+    provider = CodexJsonProvider(codex_bin="codex", runner=runner)
+
+    result = provider.run_json_task(
+        prompt="return json",
+        output_model=StrictSchemaOutput,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result.nested.mode == "main_cast_and_supporting_cast"
 
 
 def test_codex_json_provider_extracts_direct_json_from_final_message(tmp_path: Path) -> None:

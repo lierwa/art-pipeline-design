@@ -228,12 +228,35 @@ function promptVersion(overrides: Partial<PromptVersion> = {}): PromptVersion {
     title: "first kitchen angle",
     status: "prompt_ready",
     sceneDirectorPlan: {
-      storyEvent: "孩子拿杯子准备早餐。",
+      storyEvent: "团团拿杯子准备早餐。",
       sceneComposition: "中景厨房餐台。",
       spatialStructure: "冰箱在左，餐台在右。",
-      characterArrangement: "孩子靠近餐台，家长在背景。",
+      characterArrangement: "团团靠近餐台，阿布在背景辅助整理。",
       actionDesign: "拿杯子并看向麦片盒。",
       styleAndConstraints: "clean storybook image",
+    },
+    castBindings: [
+      {
+        characterId: "tuantuan",
+        displayName: "团团",
+        roleInScene: "main",
+        actionIntent: "拿起早餐杯子。",
+        referenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+        invariants: ["白色蓬松猫", "黄色小包"],
+      },
+    ],
+    sceneVocabulary: {
+      narrativeAnchors: ["杯子", "冰箱"],
+      optionalVocabularyCandidates: ["麦片盒", "餐台"],
+      ambientFurnishingPolicy: "补充少量厨房生活细节，不把画面变成物品清单。",
+      avoidObjects: ["human child", "parent"],
+    },
+    promptTuning: {
+      styleAnchor: "生活化猫咪主角团，clean storybook image",
+      styleReferenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+      sceneReferenceImageIds: [],
+      mustKeep: ["cat IP cast"],
+      avoid: ["human child", "parent"],
     },
     objectPlan: {
       coreObjects: [{ name: "杯子", roleInScene: "早餐动作核心", priority: "core" }],

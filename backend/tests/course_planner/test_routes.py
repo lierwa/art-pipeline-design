@@ -66,9 +66,6 @@ def test_candidate_batch_is_ephemeral_and_accepting_creates_generated_chapter_id
         f"/api/course-planner/scene-packs/{scene_pack_id}/candidate-revisions",
         json={"feedback": "保留厨房，但强化水槽附近动作"},
     )
-    delete_candidate_response = client.delete(
-        "/api/course-planner/candidates/candidate_001"
-    )
     accept_response = client.post(
         f"/api/course-planner/scene-packs/{scene_pack_id}/chapters",
         json=chapter_seed_payload(),
@@ -79,12 +76,19 @@ def test_candidate_batch_is_ephemeral_and_accepting_creates_generated_chapter_id
 
     assert batch_response.status_code == 200
     payload = batch_response.json()
+    candidate_ids = [candidate["id"] for candidate in payload["candidates"]]
     assert payload["task"]["kind"] == "generate_chapter_candidates"
-    assert [candidate["id"] for candidate in payload["candidates"]] == [
-        "candidate_001",
-        "candidate_002",
-    ]
+    assert len(candidate_ids) == 2
+    assert len(set(candidate_ids)) == 2
+    assert all(candidate_id.startswith("candidate_") for candidate_id in candidate_ids)
+    assert payload["candidates"][0]["scene_pack_id"] == scene_pack_id
+    assert payload["candidates"][0]["title"] == "清洗苹果"
+    assert payload["candidates"][0]["seed"]["object_coverage_hint"]
+    assert payload["candidates"][0]["seed"]["character_concept_hint"]["main_cast_hint"]
     assert payload["candidatePersistence"] == "ephemeral"
+    delete_candidate_response = client.delete(
+        f"/api/course-planner/candidates/{candidate_ids[0]}"
+    )
     assert revision_response.status_code == 200
     assert revision_response.json()["task"]["kind"] == "revise_chapter_candidates"
     assert revision_response.json()["candidatePersistence"] == "ephemeral"
@@ -95,18 +99,43 @@ def test_candidate_batch_is_ephemeral_and_accepting_creates_generated_chapter_id
     assert "reject" not in prompt.lower()
 
     assert delete_candidate_response.status_code == 200
-    assert delete_candidate_response.json()["candidateId"] == "candidate_001"
+    assert delete_candidate_response.json()["candidateId"] == candidate_ids[0]
     assert delete_candidate_response.json()["candidatePersistence"] == "ephemeral"
     assert accept_response.status_code == 200
     chapter = accept_response.json()["chapter"]
     assert chapter["id"].startswith("chapter_")
-    assert chapter["id"] != "candidate_001"
+    assert chapter["id"] not in candidate_ids
     assert chapter["seed"]["chapter_id"] == chapter["id"]
     assert chapter["seed"]["scene_pack_id"] == scene_pack_id
     assert chapters_response.json()["chapters"][0]["id"] == chapter["id"]
 
 
-def test_chapter_order_lock_and_delete_share_one_list_state(tmp_path: Path) -> None:
+def test_candidate_batch_failure_returns_public_error_without_schema_leak(
+    tmp_path: Path,
+) -> None:
+    provider = FakeProvider([
+        RuntimeError(
+            "Codex CLI JSON task failed: invalid_json_schema Missing cast_mode text.format.schema"
+        )
+    ])
+    client = client_with_provider(tmp_path, provider)
+    scene_pack_id = create_scene_pack(client)
+
+    response = client.post(
+        f"/api/course-planner/scene-packs/{scene_pack_id}/candidate-batches",
+        json={"feedback": ""},
+    )
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["message"] == "Course Planner AI task failed. Check the AI task record for diagnostics."
+    assert detail["task"]["status"] == "failed"
+    assert "task_" in detail["task"]["id"]
+    assert "invalid_json_schema" not in json.dumps(detail)
+    assert "cast_mode" not in json.dumps(detail)
+
+
+def test_chapter_order_and_delete_share_one_list_state(tmp_path: Path) -> None:
     client = client_with_provider(tmp_path)
     scene_pack_id = create_scene_pack(client)
     first_id = create_chapter(client, scene_pack_id)
@@ -120,17 +149,6 @@ def test_chapter_order_lock_and_delete_share_one_list_state(tmp_path: Path) -> N
         f"/api/course-planner/scene-packs/{scene_pack_id}/chapter-order",
         json={"chapterIds": [second_id, first_id]},
     )
-    lock_response = client.patch(
-        f"/api/course-planner/scene-packs/{scene_pack_id}/chapter-list-lock",
-        json={"locked": True},
-    )
-    locked_delete_response = client.delete(
-        f"/api/course-planner/scene-packs/{scene_pack_id}/chapters/{first_id}"
-    )
-    unlock_response = client.patch(
-        f"/api/course-planner/scene-packs/{scene_pack_id}/chapter-list-lock",
-        json={"locked": False},
-    )
     delete_response = client.delete(
         f"/api/course-planner/scene-packs/{scene_pack_id}/chapters/{first_id}"
     )
@@ -140,9 +158,6 @@ def test_chapter_order_lock_and_delete_share_one_list_state(tmp_path: Path) -> N
 
     assert reorder_response.status_code == 200
     assert reorder_response.json()["scenePack"]["chapter_ids"] == [second_id, first_id]
-    assert lock_response.json()["scenePack"]["chapter_list_locked"] is True
-    assert locked_delete_response.status_code == 409
-    assert unlock_response.json()["scenePack"]["chapter_list_locked"] is False
     assert delete_response.status_code == 200
     assert chapters_response.json()["chapters"][0]["id"] == second_id
 
@@ -185,7 +200,15 @@ def test_prompt_versions_package_attempt_review_and_import_are_version_scoped(
     version = create_version_response.json()["promptVersion"]
     assert version["chapter_id"] == chapter_id
     assert version["version_label"] == "V001"
-    assert "水槽" in version["prompt_package"]["full_prompt"]
+    assert version["cast_bindings"][0]["character_id"] == "tuantuan"
+    assert version["scene_vocabulary"]["optional_vocabulary_candidates"] == [
+        "cup",
+        "plate",
+        "chair",
+        "window",
+    ]
+    assert "tuantuan" in version["prompt_package"]["full_prompt"]
+    assert "Do not force every candidate object into the image" in version["prompt_package"]["full_prompt"]
     assert "Detection keywords" not in version["prompt_package"]["full_prompt"]
     assert provider.requests[0][1].__name__ == "GeneratePromptVersionOutput"
 
@@ -196,6 +219,7 @@ def test_prompt_versions_package_attempt_review_and_import_are_version_scoped(
 
     assert package_response.status_code == 200
     assert "红苹果" in package_response.json()["promptPackage"]["full_prompt"]
+    assert "Required objects by priority:" not in package_response.json()["promptPackage"]["full_prompt"]
     assert attempt_response.status_code == 200
     assert attempt_response.json()["imageAttempt"]["prompt_version_id"] == version_id
     assert review_response.status_code == 200

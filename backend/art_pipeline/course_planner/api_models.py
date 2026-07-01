@@ -4,7 +4,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from art_pipeline.course_planner.models import ObjectPlan, PromptPackage, SceneDirectorPlan
+from art_pipeline.course_planner.models import (
+    CastBinding,
+    ObjectPlan,
+    PromptPackage,
+    PromptTuning,
+    SceneDirectorPlan,
+    SceneVocabulary,
+)
 
 
 class ScenePackCreateRequest(BaseModel):
@@ -51,12 +58,6 @@ class ChapterOrderRequest(BaseModel):
     chapter_ids: list[str] = Field(alias="chapterIds")
 
 
-class ChapterListLockRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    locked: bool
-
-
 class PromptVersionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,6 +71,9 @@ class PromptVersionPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1)
     status: Literal["draft", "prompt_ready", "has_attempts", "adopted", "archived"] | None = None
     scene_director_plan: SceneDirectorPlan | None = None
+    cast_bindings: list[CastBinding] | None = None
+    scene_vocabulary: SceneVocabulary | None = None
+    prompt_tuning: PromptTuning | None = None
     object_plan: ObjectPlan | None = None
     prompt_package: PromptPackage | None = None
 

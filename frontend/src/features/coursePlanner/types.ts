@@ -75,6 +75,30 @@ export type ObjectPlan = {
   avoidOrMoveObjects: PlannedObject[];
 };
 
+export type CastBinding = {
+  characterId: string;
+  displayName: string;
+  roleInScene: "main" | "support" | "background";
+  actionIntent: string;
+  referenceImageIds: string[];
+  invariants: string[];
+};
+
+export type SceneVocabulary = {
+  narrativeAnchors: string[];
+  optionalVocabularyCandidates: string[];
+  ambientFurnishingPolicy: string;
+  avoidObjects: string[];
+};
+
+export type PromptTuning = {
+  styleAnchor: string;
+  styleReferenceImageIds: string[];
+  sceneReferenceImageIds: string[];
+  mustKeep: string[];
+  avoid: string[];
+};
+
 export type PromptPackage = {
   fullPrompt: string;
   shortPrompt?: string | null;
@@ -89,6 +113,9 @@ export type PromptVersion = {
   title: string;
   status: "draft" | "prompt_ready" | "has_attempts" | "adopted" | "archived";
   sceneDirectorPlan: SceneDirectorPlan;
+  castBindings: CastBinding[];
+  sceneVocabulary: SceneVocabulary;
+  promptTuning: PromptTuning;
   objectPlan: ObjectPlan;
   promptPackage: PromptPackage;
   sourceVersionId?: string | null;

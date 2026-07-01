@@ -11,13 +11,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from art_pipeline.course_planner.codex_json_provider import CodexJsonProvider
 from art_pipeline.course_planner.models import (
+    CastBinding,
     Chapter,
     ChapterSeed,
     CharacterConceptHint,
     ImageAttempt,
     ImageAttemptReview,
-    ObjectPlan,
+    PromptTuning,
     PromptVersion,
+    SceneVocabulary,
     SceneDirectorPlan,
     ScenePack,
 )
@@ -55,7 +57,9 @@ class GeneratePromptVersionOutput(BaseModel):
 
     title: str = Field(min_length=1)
     scene_director_plan: SceneDirectorPlan
-    object_plan: ObjectPlan
+    cast_bindings: list[CastBinding] = Field(min_length=1)
+    scene_vocabulary: SceneVocabulary
+    prompt_tuning: PromptTuning
 
 
 class AiTaskRecord(BaseModel):
@@ -99,8 +103,9 @@ class CoursePlannerAiService:
                 output_model=GenerateChapterCandidatesOutput,
                 artifact_dir=artifact_dir,
             )
+            batch_id = uuid4().hex[:12]
             return [
-                _candidate_payload(scene_pack, candidate, index)
+                _candidate_payload(scene_pack, candidate, index, batch_id)
                 for index, candidate in enumerate(output.candidates, start=1)
             ]
         except Exception as exc:
@@ -130,11 +135,18 @@ class CoursePlannerAiService:
                 output_model=GeneratePromptVersionOutput,
                 artifact_dir=artifact_dir,
             )
-            package = build_prompt_package(output.scene_director_plan, output.object_plan)
+            package = build_prompt_package(
+                output.scene_director_plan,
+                output.cast_bindings,
+                output.scene_vocabulary,
+                output.prompt_tuning,
+            )
             return {
                 "title": output.title,
                 "scene_director_plan": output.scene_director_plan.model_dump(mode="json"),
-                "object_plan": output.object_plan.model_dump(mode="json"),
+                "cast_bindings": [binding.model_dump(mode="json") for binding in output.cast_bindings],
+                "scene_vocabulary": output.scene_vocabulary.model_dump(mode="json"),
+                "prompt_tuning": output.prompt_tuning.model_dump(mode="json"),
                 "prompt_package": package.model_dump(mode="json"),
                 "source_version_id": source_version.id if source_version else None,
             }
@@ -255,6 +267,7 @@ def _candidate_payload(
     scene_pack: ScenePack,
     candidate: GenerateChapterCandidateDraft,
     index: int,
+    batch_id: str,
 ) -> dict[str, Any]:
     seed = ChapterSeed(
         scene_pack_id=scene_pack.id,
@@ -271,7 +284,10 @@ def _candidate_payload(
         style_notes=candidate.style_notes,
     )
     return {
-        "id": f"candidate_{index:03d}",
+        # WHY: 候选不落盘但会在前端追加合并；批次前缀避免“生成更多”覆盖上一批同序号候选。
+        "id": f"candidate_{batch_id}_{index:03d}",
+        "scene_pack_id": scene_pack.id,
+        "title": candidate.chapter_title,
         "seed": seed.model_dump(mode="json"),
         "summary": candidate.event_seed,
     }
@@ -280,7 +296,9 @@ def _candidate_payload(
 def _generate_chapter_candidates_prompt(scene_pack: ScenePack, feedback: str) -> str:
     return _json_task_prompt(
         "Generate Scene Pack chapter candidates for an image-first course planner. "
-        "Return candidate seeds only; do not ask the user for ids or fixed counts. "
+        "Return high-quality ChapterSeed drafts only; do not ask the user for ids or fixed counts. "
+        "Each candidate must be a concrete visual scene with event_seed, spatial_seed, object_coverage_hint, "
+        "and character_concept_hint strong enough to feed the Chapter Scene Designer. "
         "Use delete/remove or revision language for unwanted candidates.",
         {
             "scene_pack": scene_pack.model_dump(mode="json"),
@@ -297,8 +315,10 @@ def _generate_chapter_candidates_prompt(scene_pack: ScenePack, feedback: str) ->
                         "spatial_seed": "spatial object relationships",
                         "object_coverage_hint": ["visual object names"],
                         "character_concept_hint": {
+                            "cast_mode": "main_cast_and_supporting_cast",
                             "main_cast_hint": "main character concept",
                             "supporting_cast_hint": "optional supporting cast",
+                            "reference_asset_ids": ["optional ids from future character/style reference library"],
                             "constraints": ["character constraints"],
                         },
                         "style_notes": "optional visual style notes",
@@ -316,9 +336,15 @@ def _generate_prompt_version_prompt(
     source_version: PromptVersion | None,
 ) -> str:
     return _json_task_prompt(
-        "Generate one Prompt Version from the Chapter Seed. "
-        "Return SceneDirectorPlan and ObjectPlan only; PromptPackage is derived later "
-        "from those plans.",
+        "Generate one Prompt Version for a ChatGPT Image2 scene workflow from the ChapterSeed. "
+        "The output must give the user an editable SceneDirectorPlan, CastBinding list, SceneVocabulary, "
+        "and PromptTuning that can later build a copy-ready Image2 creative brief. Prioritize story clarity, "
+        "selected cat IP consistency, character consistency, style reference continuity, reference-image usage, spatial readability, "
+        "and scene-first vocabulary candidates. "
+        "Do not write generic human roles such as student, child, parent, kid, 小学生, 孩子, or 家长 as final cast. "
+        "If the formal character library is not available, use clearly named temporary cat-IP bindings from the reference pool "
+        "and preserve reference_asset_ids as future anchors. SceneVocabulary.optional_vocabulary_candidates are selectable words only; "
+        "do not make them required visual objects.",
         {
             "scene_pack": scene_pack.model_dump(mode="json"),
             "chapter": chapter.model_dump(mode="json"),
@@ -327,7 +353,9 @@ def _generate_prompt_version_prompt(
             "output_schema": {
                 "title": "version title",
                 "scene_director_plan": "SceneDirectorPlan",
-                "object_plan": "ObjectPlan",
+                "cast_bindings": "list[CastBinding]",
+                "scene_vocabulary": "SceneVocabulary",
+                "prompt_tuning": "PromptTuning",
             },
         },
     )

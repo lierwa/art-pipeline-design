@@ -1,4 +1,4 @@
-import type { CoursePlannerState } from "../types";
+import type { ChapterStatus, CoursePlannerState } from "../types";
 
 export type ChapterProductionStatus = {
   hasPromptVersion: boolean;
@@ -7,6 +7,17 @@ export type ChapterProductionStatus = {
   hasImportedAttempt: boolean;
 };
 
+export function chapterStatusLabel(status: ChapterStatus): string {
+  const labels: Record<ChapterStatus, string> = {
+    draft: "Draft",
+    designing: "Designing",
+    prompt_ready: "Prompt ready",
+    has_attempts: "Has attempts",
+    imported: "Imported",
+  };
+  return labels[status];
+}
+
 export function deriveChapterProductionStatus(
   state: CoursePlannerState,
   chapterId: string,
@@ -14,12 +25,12 @@ export function deriveChapterProductionStatus(
   const versions = state.promptVersionsByChapterId[chapterId] ?? [];
   const attempts = versions.flatMap((version) => state.imageAttemptsByVersionId[version.id] ?? []);
   const objectCount = versions.reduce((total, version) => {
-    const { objectPlan } = version;
-    // WHY: 旧 Chapter 状态面板仍参与编译；从 PromptVersion 的对象规划派生，只读投影避免恢复旧 scenes/keywords 状态源。
+    const { sceneVocabulary } = version;
+    // WHY: 02 是 scene-first；这里统计的是可选词池与叙事锚点数量，
+    // 不是旧 object-first 的必出物体数量。
     return total
-      + objectPlan.coreObjects.length
-      + objectPlan.requiredObjects.length
-      + objectPlan.recommendedObjects.length;
+      + sceneVocabulary.narrativeAnchors.length
+      + sceneVocabulary.optionalVocabularyCandidates.length;
   }, 0);
 
   return {

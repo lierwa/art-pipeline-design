@@ -26,7 +26,6 @@ import {
   reorderChapters,
   reviewImageAttempt,
   reviseChapterCandidates,
-  setChapterListLocked,
   updateImageAttempt,
   updatePromptVersion,
   updateScenePack,
@@ -62,7 +61,6 @@ describe("course planner hierarchy API client", () => {
     await deleteChapterCandidate("candidate_002", fetcher);
     const accepted = await acceptChapterCandidate("scene_pack_001", candidatePayload().seed, fetcher);
     await reorderChapters("scene_pack_001", ["chapter_001"], fetcher);
-    await setChapterListLocked("scene_pack_001", true, fetcher);
     await deleteChapter("scene_pack_001", "chapter_001", fetcher);
     await listPromptVersions("chapter_001", fetcher);
     await createPromptVersion("chapter_001", { feedback: "more readable action" }, fetcher);
@@ -89,7 +87,6 @@ describe("course planner hierarchy API client", () => {
       ["/api/course-planner/candidates/candidate_002", "DELETE"],
       ["/api/course-planner/scene-packs/scene_pack_001/chapters", "POST"],
       ["/api/course-planner/scene-packs/scene_pack_001/chapter-order", "PATCH"],
-      ["/api/course-planner/scene-packs/scene_pack_001/chapter-list-lock", "PATCH"],
       ["/api/course-planner/scene-packs/scene_pack_001/chapters/chapter_001", "DELETE"],
       ["/api/course-planner/chapters/chapter_001/prompt-versions", "GET"],
       ["/api/course-planner/chapters/chapter_001/prompt-versions", "POST"],
@@ -109,11 +106,10 @@ describe("course planner hierarchy API client", () => {
     expect(JSON.parse(String(calls[2].init?.body))).toEqual(scenePackDraft());
     expect(JSON.parse(String(calls[7].init?.body))).toEqual(chapterSeedRequestPayload());
     expect(JSON.parse(String(calls[8].init?.body))).toEqual({ chapterIds: ["chapter_001"] });
-    expect(JSON.parse(String(calls[9].init?.body))).toEqual({ locked: true });
-    expect(JSON.parse(String(calls[12].init?.body))).toEqual({ feedback: "more readable action" });
-    expect(JSON.parse(String(calls[19].init?.body))).toEqual({ uploadedImageId: "upload_001" });
-    expect(calls[20].init?.body).toBeInstanceOf(FormData);
-    expect(JSON.parse(String(calls[22].init?.body))).toEqual({ status: "not_accepted", humanDecision: "delete" });
+    expect(JSON.parse(String(calls[11].init?.body))).toEqual({ feedback: "more readable action" });
+    expect(JSON.parse(String(calls[18].init?.body))).toEqual({ uploadedImageId: "upload_001" });
+    expect(calls[19].init?.body).toBeInstanceOf(FormData);
+    expect(JSON.parse(String(calls[21].init?.body))).toEqual({ status: "not_accepted", humanDecision: "delete" });
     expect(state.scenePacks[0]).toEqual(scenePackPayload());
     expect(state.chaptersByScenePackId.scene_pack_001).toEqual([chapterPayload()]);
     expect(state.promptVersionsByChapterId.chapter_001).toEqual([promptVersionPayload()]);
@@ -131,6 +127,29 @@ describe("course planner hierarchy API client", () => {
     expect(accepted.chapter).toEqual(chapterPayload());
     expect(archivedVersion.status).toBe("archived");
     expect(archivedPack.status).toBe("archived");
+  });
+
+  it("keeps scene-first vocabulary empty when backend prompt version omits sceneVocabulary but still sends legacy objectPlan", async () => {
+    const fetcher = vi.fn(async () =>
+      new Response(JSON.stringify({
+        scene_packs: [snakeScenePack(scenePackPayload())],
+        chapters: [snakeChapter(chapterPayload())],
+        prompt_versions: [snakePromptVersionWithoutSceneVocabulary(promptVersionPayload())],
+        image_attempts: [],
+        tasks: [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })) as typeof fetch;
+
+    const state = await fetchCoursePlannerState(fetcher);
+
+    expect(state.promptVersionsByChapterId.chapter_001[0].sceneVocabulary).toEqual({
+      narrativeAnchors: [],
+      optionalVocabularyCandidates: [],
+      ambientFurnishingPolicy: "",
+      avoidObjects: [],
+    });
   });
 
   it("throws useful errors from non-2xx JSON detail responses", async () => {
@@ -171,12 +190,11 @@ function responseFor(input: string, init?: RequestInit): unknown {
       chapter: snakeChapter(chapterPayload()),
     };
   }
-  if (input.endsWith("/chapter-order") || input.endsWith("/chapter-list-lock")) {
+  if (input.endsWith("/chapter-order")) {
     return {
       scenePack: snakeScenePack({
         ...scenePackPayload(),
         chapterIds: ["chapter_001"],
-        chapterListLocked: input.endsWith("/chapter-list-lock"),
       }),
     };
   }
@@ -313,6 +331,9 @@ function promptVersionPayload(): PromptVersion {
     title: "V001",
     status: "prompt_ready",
     sceneDirectorPlan: sceneDirectorPlan(),
+    castBindings: castBindings(),
+    sceneVocabulary: sceneVocabulary(),
+    promptTuning: promptTuning(),
     objectPlan: objectPlan(),
     promptPackage: promptPackage(),
     sourceVersionId: null,
@@ -325,9 +346,41 @@ function sceneDirectorPlan() {
     storyEvent: "Milk spills during breakfast.",
     sceneComposition: "Wide kitchen table shot.",
     spatialStructure: "Window on left, sink behind.",
-    characterArrangement: "Main child reaches for cloth.",
+    characterArrangement: "Tuantuan reaches for cloth while Abu watches the cup.",
     actionDesign: "Wiping spilled milk.",
     styleAndConstraints: "No text, warm storybook style.",
+  };
+}
+
+function castBindings() {
+  return [
+    {
+      characterId: "tuantuan",
+      displayName: "团团",
+      roleInScene: "main" as const,
+      actionIntent: "Reaches for cloth near the spilled milk.",
+      referenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+      invariants: ["white fluffy cat", "yellow bag"],
+    },
+  ];
+}
+
+function sceneVocabulary() {
+  return {
+    narrativeAnchors: ["milk cup"],
+    optionalVocabularyCandidates: ["cloth", "table", "window"],
+    ambientFurnishingPolicy: "Add natural kitchen details only when they support the story moment.",
+    avoidObjects: ["knife"],
+  };
+}
+
+function promptTuning() {
+  return {
+    styleAnchor: "No text, warm storybook style.",
+    styleReferenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+    sceneReferenceImageIds: [],
+    mustKeep: ["cat IP cast"],
+    avoid: ["object catalog layout"],
   };
 }
 
@@ -442,11 +495,21 @@ function snakePromptVersion(version: PromptVersion) {
     chapter_id: version.chapterId,
     version_label: version.versionLabel,
     scene_director_plan: toSnakeObject(version.sceneDirectorPlan),
+    cast_bindings: version.castBindings.map(toSnakeObject),
+    scene_vocabulary: toSnakeObject(version.sceneVocabulary),
+    prompt_tuning: toSnakeObject(version.promptTuning),
     object_plan: toSnakeObject(version.objectPlan),
     prompt_package: toSnakeObject(version.promptPackage),
     source_version_id: version.sourceVersionId,
     image_attempt_ids: version.imageAttemptIds,
   };
+}
+
+function snakePromptVersionWithoutSceneVocabulary(version: PromptVersion) {
+  const payload = { ...snakePromptVersion(version) } as Record<string, unknown>;
+  delete payload.sceneVocabulary;
+  delete payload.scene_vocabulary;
+  return payload;
 }
 
 function snakePromptPackage(packagePayload: ReturnType<typeof promptPackage>) {

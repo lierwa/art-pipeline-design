@@ -259,12 +259,13 @@ def _image_attempt_context(
 
 
 def _object_plan_vocabulary(version: PromptVersion) -> list[str]:
-    objects = [
-        *version.object_plan.core_objects,
-        *version.object_plan.required_objects,
-        *version.object_plan.recommended_objects,
+    # WHY: Course Planner 02 已切到 scene-first；检测词来自可选词池，
+    # 叙事锚点只作补充，避免把旧 object plan 的硬清单误当成必检目标。
+    values = [
+        *version.scene_vocabulary.optional_vocabulary_candidates,
+        *version.scene_vocabulary.narrative_anchors,
     ]
-    return [planned_object.name for planned_object in objects]
+    return list(dict.fromkeys(value for value in values if value.strip()))
 
 
 def _scene_library_relative_path(planner_store: CoursePlannerStore, path: Path) -> str:

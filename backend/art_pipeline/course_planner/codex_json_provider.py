@@ -7,7 +7,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -44,7 +44,11 @@ class CodexJsonProvider:
             if stale_path.exists():
                 stale_path.unlink()
         output_schema_path.write_text(
-            json.dumps(output_model.model_json_schema(), ensure_ascii=False, indent=2),
+            json.dumps(
+                _openai_strict_output_schema(output_model.model_json_schema()),
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         args = [
@@ -104,6 +108,31 @@ def _extract_json_payload(raw_output: str) -> str:
         raise ValueError("Codex CLI returned empty output.")
     json.loads(payload)
     return payload
+
+
+def _openai_strict_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    # WHY: Codex/OpenAI strict response_format 要求 object 的 properties 全部列入 required；
+    # Pydantic 的默认值仍是运行时校验语义，不能直接当作外部协议 schema。
+    strict_schema = _strict_schema_node(schema)
+    return strict_schema if isinstance(strict_schema, dict) else schema
+
+
+def _strict_schema_node(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_strict_schema_node(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    node = {
+        key: _strict_schema_node(item)
+        for key, item in value.items()
+        if key != "default"
+    }
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        node["required"] = list(properties.keys())
+        node.setdefault("additionalProperties", False)
+    return node
 
 
 def _write_artifacts(

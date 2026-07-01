@@ -134,11 +134,6 @@ describe("Course Planner hierarchy state", () => {
           scenePack: snakeScenePack({ ...scenePackPayload(), chapterIds: ["chapter_001"] }),
         });
       }
-      if (url.endsWith("/chapter-list-lock") && init?.method === "PATCH") {
-        return jsonResponse({
-          scenePack: snakeScenePack({ ...scenePackPayload(), chapterIds: ["chapter_001"], chapterListLocked: true }),
-        });
-      }
       if (url.endsWith("/prompt-versions") && (!init || init.method === "GET")) {
         return jsonResponse({
           prompt_versions: [
@@ -206,11 +201,8 @@ describe("Course Planner hierarchy state", () => {
       await act(async () => {
         await result.current.reorderChapters("scene_pack_001", ["chapter_001"]);
       });
-      await act(async () => {
-        await result.current.setChapterListLocked("scene_pack_001", true);
-      });
       expect(result.current.chaptersByScenePackId.scene_pack_001).toEqual([chapterPayload()]);
-      expect(result.current.scenePacks[0].chapterListLocked).toBe(true);
+      expect(result.current.scenePacks[0].chapterIds).toEqual(["chapter_001"]);
 
       act(() => {
         result.current.setSelectedPromptVersionId("prompt_version_from_other_chapter");
@@ -241,10 +233,9 @@ describe("Course Planner hierarchy state", () => {
       expect(result.current.imageAttemptsByVersionId.prompt_version_001).toBeUndefined();
       expect(result.current.asyncStatus["uploadAttempt:prompt_version_003"]?.status).toBe("succeeded");
 
-      expect(calls.map((call) => [call.input, call.init?.method ?? "GET"])).toContainEqual([
+      expect(calls.map((call) => call.input)).not.toContain(
         "/api/course-planner/scene-packs/scene_pack_001/chapter-list-lock",
-        "PATCH",
-      ]);
+      );
       expect(JSON.parse(String(calls.find((call) => call.input.endsWith("/chapter-order"))?.init?.body))).toEqual({
         chapterIds: ["chapter_001"],
       });
@@ -333,6 +324,9 @@ function promptVersionPayload(id: string, chapterId = "chapter_001"): PromptVers
     title: "Generated prompt",
     status: "prompt_ready",
     sceneDirectorPlan: sceneDirectorPlan(),
+    castBindings: castBindings(),
+    sceneVocabulary: sceneVocabulary(),
+    promptTuning: promptTuning(),
     objectPlan: objectPlan(),
     promptPackage: promptPackage(),
     imageAttemptIds: [],
@@ -344,9 +338,41 @@ function sceneDirectorPlan() {
     storyEvent: "Milk spills during breakfast.",
     sceneComposition: "Wide kitchen table shot.",
     spatialStructure: "Window on left, sink behind.",
-    characterArrangement: "Main child reaches for cloth.",
+    characterArrangement: "Tuantuan reaches for cloth while Abu watches the cup.",
     actionDesign: "Wiping spilled milk.",
     styleAndConstraints: "No text, warm storybook style.",
+  };
+}
+
+function castBindings() {
+  return [
+    {
+      characterId: "tuantuan",
+      displayName: "团团",
+      roleInScene: "main" as const,
+      actionIntent: "Reaches for cloth near the spilled milk.",
+      referenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+      invariants: ["white fluffy cat", "yellow bag"],
+    },
+  ];
+}
+
+function sceneVocabulary() {
+  return {
+    narrativeAnchors: ["milk cup"],
+    optionalVocabularyCandidates: ["cloth", "table", "window"],
+    ambientFurnishingPolicy: "Add natural kitchen details only when they support the story moment.",
+    avoidObjects: ["knife"],
+  };
+}
+
+function promptTuning() {
+  return {
+    styleAnchor: "No text, warm storybook style.",
+    styleReferenceImageIds: ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
+    sceneReferenceImageIds: [],
+    mustKeep: ["cat IP cast"],
+    avoid: ["object catalog layout"],
   };
 }
 
@@ -454,6 +480,9 @@ function snakePromptVersion(version: PromptVersion) {
     title: version.title,
     status: version.status,
     scene_director_plan: toSnakeObject(version.sceneDirectorPlan),
+    cast_bindings: version.castBindings.map(toSnakeObject),
+    scene_vocabulary: toSnakeObject(version.sceneVocabulary),
+    prompt_tuning: toSnakeObject(version.promptTuning),
     object_plan: toSnakeObject(version.objectPlan),
     prompt_package: toSnakeObject(version.promptPackage),
     source_version_id: version.sourceVersionId,

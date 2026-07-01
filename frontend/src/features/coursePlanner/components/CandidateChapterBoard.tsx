@@ -7,7 +7,6 @@ type CandidateChapterBoardProps = {
   activeScenePack: ScenePack | null;
   onAccept: (candidateId: string) => void;
   onDelete: (candidateId: string) => void;
-  onEdit: (candidate: ChapterCandidate) => void;
 };
 
 export function CandidateChapterBoard({
@@ -17,16 +16,13 @@ export function CandidateChapterBoard({
   deletingCandidateId,
   onAccept,
   onDelete,
-  onEdit,
 }: CandidateChapterBoardProps) {
-  const isChapterListLocked = Boolean(activeScenePack?.chapterListLocked);
-
   return (
     <section className="candidate-chapter-board" aria-label="AI Chapter candidate pool">
       <div className="planning-panel-header">
         <div>
           <h2>AI Chapter Candidates</h2>
-          <p>{candidateStatus(activeScenePack, candidates.length, isChapterListLocked)}</p>
+          <p>{candidateStatus(activeScenePack, candidates.length)}</p>
         </div>
       </div>
 
@@ -37,11 +33,9 @@ export function CandidateChapterBoard({
               key={candidate.id}
               candidate={candidate}
               isAccepting={acceptingCandidateId === candidate.id}
-              isChapterListLocked={isChapterListLocked}
               isDeleting={deletingCandidateId === candidate.id}
               onAccept={onAccept}
               onDelete={onDelete}
-              onEdit={onEdit}
             />
           ))
         ) : (
@@ -54,12 +48,9 @@ export function CandidateChapterBoard({
   );
 }
 
-function candidateStatus(activeScenePack: ScenePack | null, candidateCount: number, isChapterListLocked: boolean): string {
+function candidateStatus(activeScenePack: ScenePack | null, candidateCount: number): string {
   if (!activeScenePack) {
     return "等待选择 Scene Pack。";
-  }
-  if (isChapterListLocked) {
-    return "Chapter list locked. Unlock to accept more candidates.";
   }
   return candidateCount > 0 ? `${candidateCount} candidates available.` : "生成候选后会显示场景、事件、空间和角色概念。";
 }
@@ -67,21 +58,17 @@ function candidateStatus(activeScenePack: ScenePack | null, candidateCount: numb
 type CandidateChapterCardProps = {
   candidate: ChapterCandidate;
   isAccepting: boolean;
-  isChapterListLocked: boolean;
   isDeleting: boolean;
   onAccept: (candidateId: string) => void;
   onDelete: (candidateId: string) => void;
-  onEdit: (candidate: ChapterCandidate) => void;
 };
 
 function CandidateChapterCard({
   candidate,
   isAccepting,
-  isChapterListLocked,
   isDeleting,
   onAccept,
   onDelete,
-  onEdit,
 }: CandidateChapterCardProps) {
   const isBusy = isAccepting || isDeleting;
 
@@ -104,11 +91,8 @@ function CandidateChapterCard({
       </dl>
 
       <div className="candidate-card-actions">
-        <button type="button" disabled={isBusy || isChapterListLocked} onClick={() => onAccept(candidate.id)}>
+        <button type="button" disabled={isBusy} onClick={() => onAccept(candidate.id)}>
           {isAccepting ? "接受中..." : "接受"}
-        </button>
-        <button type="button" disabled={isBusy} onClick={() => onEdit(candidate)}>
-          编辑
         </button>
         <button type="button" disabled={isBusy} onClick={() => onDelete(candidate.id)}>
           {isDeleting ? "删除中..." : "删除"}
