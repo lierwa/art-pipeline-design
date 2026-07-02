@@ -27,6 +27,12 @@ from art_pipeline.course_planner.store_common import (
     validate_slug as _validate_slug,
 )
 from art_pipeline.course_planner.store_hierarchy import CoursePlannerHierarchyStoreMixin
+from art_pipeline.course_planner.scene_package_store import (
+    CoursePlannerScenePackageStoreMixin,
+)
+from art_pipeline.course_planner.scene_package_delete_store import (
+    CoursePlannerScenePackageDeleteStoreMixin,
+)
 from art_pipeline.workspace.store import utc_now
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -38,7 +44,11 @@ class ChaptersPayload(BaseModel):
     chapters: list[Chapter]
 
 
-class CoursePlannerStore(CoursePlannerHierarchyStoreMixin):
+class CoursePlannerStore(
+    CoursePlannerHierarchyStoreMixin,
+    CoursePlannerScenePackageStoreMixin,
+    CoursePlannerScenePackageDeleteStoreMixin,
+):
     def __init__(self, scene_library_root: Path) -> None:
         self.scene_library_root = Path(scene_library_root).resolve()
 

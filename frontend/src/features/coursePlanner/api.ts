@@ -8,8 +8,40 @@ import type {
   PromptVersion,
   ScenePack,
 } from "./types";
+import {
+  API_ROOT,
+  arrayFromPayload,
+  encodePathPart,
+  jsonRequest,
+  payloadValue,
+  requestJson,
+  requestVoid,
+  toCamel,
+  toSnake,
+} from "./apiClient";
+import type { CoursePlannerFetcher } from "./apiClient";
 
-export type CoursePlannerFetcher = typeof fetch;
+export type { CoursePlannerFetcher } from "./apiClient";
+export type {
+  BaseCandidateUploadInput,
+  ChapterAssetUploadInput,
+  ChapterScenePromptInput,
+  ChapterScenePromptTargetObjectInput,
+  CompleteImageUploadInput,
+  ReferenceUploadInput,
+  RunAssociationInput,
+} from "./scenePackageApi";
+export {
+  associateCompleteImageRun,
+  fetchChapterScenePackage,
+  lockEmptyBaseScene,
+  saveChapterSceneAssembly,
+  updateChapterScenePrompt,
+  uploadChapterAssetFromRunAsset,
+  uploadChapterSceneReference,
+  uploadCompleteSceneImage,
+  uploadEmptyBaseSceneCandidate,
+} from "./scenePackageApi";
 
 export type CreateScenePackRequest = Pick<ScenePack, "title" | "intent" | "notes">;
 export type UpdateScenePackRequest = Partial<Pick<ScenePack, "title" | "intent" | "notes" | "status">>;
@@ -25,9 +57,6 @@ export type AcceptChapterCandidateResponse = {
 export type ChapterListResponse = {
   scenePack: ScenePack;
 };
-
-const API_ROOT = "/api/course-planner";
-const AI_TASK_PUBLIC_ERROR = "Course Planner AI task failed. Check the AI task record for diagnostics.";
 
 export async function fetchCoursePlannerState(fetcher: CoursePlannerFetcher = fetch): Promise<CoursePlannerState> {
   return normalizeState(await requestJson(fetcher, `${API_ROOT}/state`, { method: "GET" }, "Could not load Course Planner state."));
@@ -248,24 +277,6 @@ function emptySceneVocabulary(): PromptVersion["sceneVocabulary"] {
   };
 }
 
-function payloadValue<T>(payload: unknown, key: string): T {
-  if (payload && typeof payload === "object" && key in payload) {
-    return (payload as Record<string, unknown>)[key] as T;
-  }
-  return payload as T;
-}
-
-function arrayFromPayload<T>(payload: unknown, key: string): T[] {
-  if (Array.isArray(payload)) {
-    return payload as T[];
-  }
-  if (payload && typeof payload === "object") {
-    const value = (payload as Record<string, unknown>)[key];
-    return Array.isArray(value) ? value as T[] : [];
-  }
-  return [];
-}
-
 function groupBy<T>(
   items: T[],
   keyOf: (item: T) => string,
@@ -311,89 +322,6 @@ function promptVersionPath(versionId: string): string {
 
 function imageAttemptPath(attemptId: string): string {
   return `${API_ROOT}/image-attempts/${encodePathPart(attemptId)}`;
-}
-
-function encodePathPart(value: string): string {
-  return encodeURIComponent(value);
-}
-
-function jsonRequest(method: "PATCH" | "POST", body: unknown): RequestInit {
-  return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
-}
-
-async function requestVoid(fetcher: CoursePlannerFetcher, input: RequestInfo | URL, init: RequestInit, fallbackError: string): Promise<void> {
-  await requestJson(fetcher, input, init, fallbackError);
-}
-
-async function requestJson(fetcher: CoursePlannerFetcher, input: RequestInfo | URL, init: RequestInit, fallbackError: string): Promise<unknown> {
-  const response = await fetcher(input, init);
-  if (!response.ok) {
-    throw await responseError(response, fallbackError);
-  }
-  return response.status === 204 ? null : response.json();
-}
-
-async function responseError(response: Response, fallbackError: string): Promise<Error> {
-  const payload = await response.json().catch(() => null) as unknown;
-  return new Error(extractErrorMessage(payload) ?? fallbackError);
-}
-
-function extractErrorMessage(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const detail = (payload as { detail?: unknown }).detail;
-  if (typeof detail === "string") {
-    return publicErrorMessage(detail);
-  }
-  if (detail && typeof detail === "object") {
-    const message = (detail as { message?: unknown }).message;
-    return typeof message === "string" ? publicErrorMessage(message) : null;
-  }
-  return null;
-}
-
-function publicErrorMessage(message: string): string {
-  // WHY: AI provider/Codex 的内部 schema 诊断写入 task artifact；页面只展示可读摘要，避免大段协议错误打断操作流。
-  return message.includes("Course Planner AI task failed")
-    ? AI_TASK_PUBLIC_ERROR
-    : message;
-}
-
-function toCamel(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(toCamel);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .map(([key, item]) => [camelKey(key), toCamel(item)]),
-  );
-}
-
-function camelKey(key: string): string {
-  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
-}
-
-function toSnake(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(toSnake);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .map(([key, item]) => [snakeKey(key), toSnake(item)]),
-  );
-}
-
-function snakeKey(key: string): string {
-  return key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 }
 
 export type { PromptPackage };

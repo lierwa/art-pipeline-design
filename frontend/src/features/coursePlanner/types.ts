@@ -139,6 +139,138 @@ export type ImageAttempt = {
   pipelineImportId?: string | null;
 };
 
+export type RuntimeRole = "target" | "initial";
+
+export type ChapterScenePrompt = {
+  prompt_text: string;
+  negative_constraints: string;
+  style_notes: string;
+  updated_at: string | null;
+};
+
+export type TargetObjectItem = {
+  id: string;
+  label: string;
+  description: string;
+  priority: "core" | "required" | "recommended";
+};
+
+export type ChapterSceneReference = {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  created_at: string;
+  prompt_role: "style" | "scene" | "character" | "other";
+  notes: string;
+};
+
+export type ImageReferenceSnapshot = {
+  reference_ids: string[];
+  locked_base_candidate_id: string | null;
+  notes: string;
+};
+
+export type EmptyBaseSceneCandidate = {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  width: number;
+  height: number;
+  status: "candidate" | "locked" | "inactive";
+  prompt_snapshot: string;
+  reference_snapshot: ImageReferenceSnapshot;
+  created_at: string;
+  locked_at: string | null;
+};
+
+export type CompleteSceneImage = {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  width: number;
+  height: number;
+  base_candidate_id: string;
+  status: "active" | "historical" | "deleted";
+  prompt_snapshot: string;
+  reference_snapshot: ImageReferenceSnapshot;
+  variation_prompt: string;
+  pipeline_run_id: string | null;
+  pipeline_run_status: string | null;
+  created_at: string;
+};
+
+export type ChapterAssetLineage = {
+  source_run_id: string;
+  source_run_asset_id: string;
+  source_complete_image_id: string | null;
+};
+
+export type ChapterAsset = {
+  id: string;
+  display_name: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  lineage: ChapterAssetLineage;
+  linked_target_object_id: string | null;
+  status: "available" | "removed";
+  created_at: string;
+};
+
+export type ChapterSceneAssemblyBaseSize = {
+  width: number;
+  height: number;
+};
+
+export type ChapterSceneAssemblyTransform = {
+  cx: number;
+  cy: number;
+  w: number;
+  h: number;
+  rotation_deg: number;
+};
+
+export type ChapterSceneAssemblyPlacement = {
+  id: string;
+  asset_id: string;
+  display_name: string;
+  runtime_role: RuntimeRole;
+  transform: ChapterSceneAssemblyTransform;
+  group_id: string | null;
+  requires_placed: string[];
+};
+
+export type ChapterSceneAssemblyGroup = {
+  id: string;
+  display_name: string;
+  placement_ids: string[];
+};
+
+export type ChapterSceneAssemblyManifest = {
+  schema_version: 1;
+  base_candidate_id: string | null;
+  base_size: ChapterSceneAssemblyBaseSize | null;
+  placements: ChapterSceneAssemblyPlacement[];
+  groups: ChapterSceneAssemblyGroup[];
+  layer_order: string[];
+  updated_at: string | null;
+};
+
+export type ChapterScenePackage = {
+  chapter_id: string;
+  prompt: ChapterScenePrompt;
+  target_objects: TargetObjectItem[];
+  references: ChapterSceneReference[];
+  base_candidates: EmptyBaseSceneCandidate[];
+  locked_base_candidate_id: string | null;
+  complete_images: CompleteSceneImage[];
+  chapter_assets: ChapterAsset[];
+  assembly: ChapterSceneAssemblyManifest;
+};
+
 export type AsyncOperationState = {
   status: "idle" | "pending" | "succeeded" | "failed";
   error?: string | null;

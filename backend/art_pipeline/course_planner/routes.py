@@ -33,6 +33,9 @@ from art_pipeline.course_planner.models import (
     ScenePack,
 )
 from art_pipeline.course_planner.prompt_builder import build_prompt_package
+from art_pipeline.course_planner.scene_package_routes import (
+    register_scene_package_routes,
+)
 from art_pipeline.course_planner.store import CoursePlannerStore
 from art_pipeline.course_planner.store_hierarchy import PromptVersionArchiveConflict
 from art_pipeline.course_planner.upload_assets import (
@@ -44,6 +47,7 @@ router = APIRouter(prefix="/api/course-planner")
 
 def register_course_planner_routes(app: FastAPI) -> None:
     app.include_router(router)
+    register_scene_package_routes(app)
 @router.get("/state")
 def get_course_planner_state(request: Request) -> dict[str, list[dict[str, object]]]:
     return _collect_state(_store(request))

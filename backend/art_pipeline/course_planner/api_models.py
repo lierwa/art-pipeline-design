@@ -38,6 +38,26 @@ class CandidateBatchRequest(BaseModel):
     feedback: str = ""
 
 
+class TargetObjectRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1)
+    description: str = ""
+    priority: Literal["core", "required", "recommended"] = "required"
+
+
+class ChapterScenePromptPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt_text: str = Field(alias="promptText")
+    negative_constraints: str | None = Field(default=None, alias="negativeConstraints")
+    style_notes: str | None = Field(default=None, alias="styleNotes")
+    target_objects: list[TargetObjectRequest] | None = Field(
+        default=None,
+        alias="targetObjects",
+    )
+
+
 class ChapterSeedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -100,3 +120,10 @@ class ImageAttemptPatchRequest(BaseModel):
         "keep_record",
         "delete",
     ] | None = Field(default=None, alias="humanDecision")
+
+
+class CompleteSceneImageRunPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(alias="runId", min_length=1)
+    run_status: str | None = Field(default=None, alias="runStatus")
