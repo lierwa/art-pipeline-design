@@ -1,0 +1,3 @@
+# Manage external Image2 workflow
+
+The system does not integrate with an Image2 API for first-version scene image creation. It manages copy-ready Chapter Scene Prompts, visual references, uploaded base-scene candidates, uploaded complete-scene images, pipeline runs, chapter assets, and assembly; authors create the actual images externally in ChatGPT/Image2 and bring the results back into the system. Prompt readiness and image upload are separate states: the system does not pretend to verify whether an external prompt was copied or used, but uploaded images keep prompt and reference snapshots for lineage.
