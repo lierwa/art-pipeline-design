@@ -194,3 +194,53 @@ Minor:
 - `backend/art_pipeline/course_planner/scene_package_models.py`
 - `backend/tests/course_planner/test_models.py`
 - `backend/tests/course_planner/test_scene_package_models.py`
+
+## Task 1 Re-review Findings Requiring Fix
+
+Critical:
+- `scene_package_media.py` still maps `references` / `base_candidates` even though the new `ChapterScenePackage` exposes `reference_selections` / `empty_scene_images`. Remove old media kind names from the touched runtime helper and make it match the new model surface.
+
+Important:
+- `scene_package_models.py` and `test_scene_package_models.py` exceed the repo `文件 ≤ 500 行` hard constraint. Split cohesive logic/tests without changing the public model interface.
+
+## Task 1 Second Re-review Fix
+
+### Fix summary
+
+- Removed legacy scene-package media kind aliases from `backend/art_pipeline/course_planner/scene_package_media.py`; the helper now addresses `empty_scene_images`, `complete_images`, `chapter_assets`, `assets`, and `final_scene` only.
+- Split prompt readiness and prompt projection into `backend/art_pipeline/course_planner/scene_package_prompt_projection.py`, then re-exported `is_prompt_ready`, `build_empty_scene_prompt`, and `build_complete_prompt` from `scene_package_models.py` to preserve the public import surface.
+- Split assembly helpers into `backend/art_pipeline/course_planner/scene_package_assembly_validation.py`, then re-exported `frontmost_layer_id` and `validate_assembly_manifest` from `scene_package_models.py`.
+- Split the oversized backend tests into focused contract, prompt-projection, and assembly-validation files, with shared factories in `backend/tests/course_planner/scene_package_model_helpers.py`.
+
+### Tests run and results
+
+- `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_scene_package_models.py tests/course_planner/test_scene_package_prompt_projection.py tests/course_planner/test_scene_package_assembly_validation.py tests/course_planner/test_models.py -q`
+  - Result: `48 passed in 0.22s`
+- `git diff --check`
+  - Result: no output
+
+### File line counts
+
+- `217 backend/art_pipeline/course_planner/scene_package_models.py`
+- `176 backend/art_pipeline/course_planner/scene_package_prompt_projection.py`
+- `194 backend/art_pipeline/course_planner/scene_package_assembly_validation.py`
+- `242 backend/tests/course_planner/test_scene_package_models.py`
+- `110 backend/tests/course_planner/test_scene_package_prompt_projection.py`
+- `110 backend/tests/course_planner/test_scene_package_assembly_validation.py`
+- `257 backend/tests/course_planner/scene_package_model_helpers.py`
+
+### Regex gate result
+
+- `rg -n "references|base_candidates|base-candidates|locked_base|base_candidate|EmptyBaseSceneCandidate|ChapterSceneReference|build_base_prompt" backend/art_pipeline/course_planner/scene_package_models.py backend/art_pipeline/course_planner/scene_package_media.py backend/tests/course_planner/test_scene_package_models.py backend/tests/course_planner/test_scene_package_prompt_projection.py backend/tests/course_planner/test_scene_package_assembly_validation.py`
+  - Result: no output
+
+### Files changed
+
+- `backend/art_pipeline/course_planner/scene_package_media.py`
+- `backend/art_pipeline/course_planner/scene_package_models.py`
+- `backend/art_pipeline/course_planner/scene_package_prompt_projection.py`
+- `backend/art_pipeline/course_planner/scene_package_assembly_validation.py`
+- `backend/tests/course_planner/test_scene_package_models.py`
+- `backend/tests/course_planner/test_scene_package_prompt_projection.py`
+- `backend/tests/course_planner/test_scene_package_assembly_validation.py`
+- `backend/tests/course_planner/scene_package_model_helpers.py`

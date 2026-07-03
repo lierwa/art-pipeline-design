@@ -28,11 +28,11 @@ def find_scene_package_media(
     media_id: str,
 ) -> ScenePackageMediaRecord:
     kind_to_records: dict[str, Sequence[ScenePackageMediaRecord]] = {
-        "references": package.references,
-        "base_candidates": package.base_candidates,
+        "empty_scene_images": package.empty_scene_images,
         "complete_images": package.complete_images,
         "chapter_assets": package.chapter_assets,
         "assets": package.chapter_assets,
+        "final_scene": () if package.final_scene is None else (package.final_scene,),
     }
     records = kind_to_records.get(kind)
     if records is None:
