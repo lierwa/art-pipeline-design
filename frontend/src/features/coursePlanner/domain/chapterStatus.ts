@@ -1,4 +1,4 @@
-import type { ChapterScenePackage, ChapterStatus } from "../types";
+import type { ChapterScenePackage } from "../types";
 
 export type ChapterProductionStatus = {
   hasPromptText: boolean;
@@ -6,17 +6,6 @@ export type ChapterProductionStatus = {
   placedAssetCount: number;
   hasFinalScene: boolean;
 };
-
-export function chapterStatusLabel(status: ChapterStatus): string {
-  const labels: Record<ChapterStatus, string> = {
-    draft: "Draft",
-    designing: "Designing",
-    prompt_ready: "Prompt ready",
-    has_attempts: "Has attempts",
-    imported: "Imported",
-  };
-  return labels[status];
-}
 
 export function deriveChapterProductionStatus(scenePackage: ChapterScenePackage | null): ChapterProductionStatus {
   if (!scenePackage) {

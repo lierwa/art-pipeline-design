@@ -14,10 +14,9 @@ import {
 } from "../components/PromptVersionDraftEditor";
 import { CREATE_PROMPT_VERSION_PENDING_ID, PromptVersionList } from "../components/PromptVersionList";
 import "../components/coursePlanner.css";
-import { chapterStatusLabel } from "../domain/chapterStatus";
 import { canShowPromptVersionText, derivePromptVersionDisplayState } from "../domain/promptVersionUiState";
 import { useCoursePlannerState } from "../hooks/useCoursePlannerState";
-import type { Chapter, CoursePlannerState, PromptVersion } from "../types";
+import type { Chapter, ChapterStatus, CoursePlannerState, PromptVersion } from "../types";
 
 export function ChapterWorkspacePage() {
   const { chapterId } = useParams();
@@ -175,7 +174,7 @@ export function ChapterWorkspacePage() {
         eyebrow={`${scenePack.title} / Chapter`}
         title={currentChapter.title}
         subtitle={chapterHeaderSubtitle(currentChapter.summary, selectedVersionUiState)}
-        status={selectedVersion ? selectedVersionUiState.label : chapterStatusLabel(currentChapter.status)}
+        status={selectedVersion ? selectedVersionUiState.label : chapterLifecycleStatusLabel(currentChapter.status)}
         statusTone={selectedVersion ? selectedVersionUiState.tone : "neutral"}
       />
 
@@ -281,6 +280,15 @@ function ChapterSeedSummary({ chapter }: { chapter: Chapter }) {
       </div>
     </section>
   );
+}
+
+function chapterLifecycleStatusLabel(status: ChapterStatus): string {
+  const labels: Record<ChapterStatus, string> = {
+    draft: "Draft",
+    designing: "Designing",
+    imported: "Imported",
+  };
+  return labels[status];
 }
 
 function SeedItem({ label, value }: { label: string; value: string }) {

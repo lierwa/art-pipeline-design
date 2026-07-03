@@ -63,6 +63,7 @@ export function coursePlannerState({
   promptVersions?: PromptVersion[];
   selectedPromptVersionId?: string | null;
 } = {}): CoursePlannerState {
+  const adoptedPromptVersionId = promptVersions.find((version) => version.status === "adopted")?.id ?? null;
   return {
     scenePacks: [
       {
@@ -86,8 +87,10 @@ export function coursePlannerState({
           summary: "早餐时牛奶杯打翻，孩子和家长一起处理。",
           seed: chapterSeed(),
           sortOrder: 1,
-          status: promptVersions.length > 0 ? "prompt_ready" : "designing",
-          adoptedPromptVersionId: promptVersions.find((version) => version.status === "adopted")?.id ?? null,
+          // WHY: Chapter.status 只保留后端存活的生命周期状态；
+          // PromptVersion 是否 ready / 有尝试图，属于 version 维度，不能再反投影回 Chapter。
+          status: adoptedPromptVersionId ? "imported" : promptVersions.length > 0 ? "designing" : "draft",
+          adoptedPromptVersionId,
         },
       ],
     },

@@ -206,7 +206,7 @@ function coursePlannerState({
             styleNotes: "clean storybook image",
           },
           sortOrder: 1,
-          status: "prompt_ready",
+          status: "imported",
           adoptedPromptVersionId: "version_breakfast_002",
         },
       ],

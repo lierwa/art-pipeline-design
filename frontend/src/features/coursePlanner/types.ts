@@ -31,7 +31,7 @@ export type ChapterSeed = {
   styleNotes?: string | null;
 };
 
-export type ChapterStatus = "draft" | "designing" | "prompt_ready" | "has_attempts" | "imported";
+export type ChapterStatus = "draft" | "designing" | "imported";
 
 export type Chapter = {
   id: string;
