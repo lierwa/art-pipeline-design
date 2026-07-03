@@ -9,6 +9,8 @@ type ChapterCardProps = {
 };
 
 export function ChapterCard({ chapter, status }: ChapterCardProps) {
+  const placedAssetLabel = `${status.placedAssetCount} ${status.placedAssetCount === 1 ? "asset" : "assets"} placed`;
+
   return (
     <article className="chapter-card">
       <div className="chapter-card-header">
@@ -20,22 +22,20 @@ export function ChapterCard({ chapter, status }: ChapterCardProps) {
       </div>
       <dl>
         <div>
-          <dt>Prompt Version</dt>
-          <dd>{status.hasPromptVersion ? "version ready" : "version missing"}</dd>
+          <dt>Prompt Text</dt>
+          <dd>{status.hasPromptText ? "ready" : "missing"}</dd>
         </div>
         <div>
-          <dt>Planned Objects</dt>
-          <dd>{status.objectCount} objects</dd>
+          <dt>Target Objects</dt>
+          <dd>{status.targetObjectCount} objects</dd>
         </div>
         <div>
-          <dt>Image Attempts</dt>
-          <dd>
-            {status.attemptCount} {status.attemptCount === 1 ? "attempt" : "attempts"}
-          </dd>
+          <dt>Placed Assets</dt>
+          <dd>{placedAssetLabel}</dd>
         </div>
         <div>
-          <dt>Pipeline Import</dt>
-          <dd>{status.hasImportedAttempt ? "imported" : "not imported"}</dd>
+          <dt>Final Scene</dt>
+          <dd>{status.hasFinalScene ? "locked" : "not locked"}</dd>
         </div>
       </dl>
       <div className="chapter-card-actions">

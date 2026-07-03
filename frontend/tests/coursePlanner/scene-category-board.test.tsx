@@ -340,10 +340,7 @@ function coursePlannerState({
       packHome: [chapterFromSeed(chapterSeed("chapter_breakfast_kitchen", "早餐厨房"))],
       ...(includeSecondaryPack ? { packStudy: [] } : {}),
     },
-    promptVersionsByChapterId: {},
-    imageAttemptsByVersionId: {},
     selectedChapterId: null,
-    selectedPromptVersionId: null,
     asyncStatus: asyncStatus ?? {},
     tasks: [],
   };
@@ -401,7 +398,6 @@ function chapterFromSeed(seed: ChapterSeed = chapterSeed("chapter_breakfast_kitc
     seed,
     sortOrder: 1,
     status: "draft",
-    adoptedPromptVersionId: null,
   };
 }
 
