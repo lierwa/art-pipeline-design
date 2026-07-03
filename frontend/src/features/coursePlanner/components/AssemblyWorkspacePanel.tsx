@@ -10,6 +10,8 @@ type AssemblyWorkspacePanelProps = {
   onSaveAssembly: (manifest: ChapterSceneAssemblyManifest) => Promise<ChapterScenePackage | null>;
 };
 
+const DEFAULT_ASSEMBLY_EXPORT_SIZE = { width: 1024, height: 1024 } as const;
+
 export function AssemblyWorkspacePanel({ onSaveAssembly, scenePackage }: AssemblyWorkspacePanelProps) {
   async function handleSave() {
     const nextManifest = createAssemblyManifest(scenePackage);
@@ -60,17 +62,25 @@ export function AssemblyWorkspacePanel({ onSaveAssembly, scenePackage }: Assembl
 }
 
 export function createAssemblyManifest(scenePackage: ChapterScenePackage): ChapterSceneAssemblyManifest {
-  const placements = scenePackage.chapter_assets.map((asset, index) => draftPlacement(asset, index));
-  const layerOrder = placements.map((placement) => placement.id);
+  const hasPersistedPlacements = scenePackage.assembly.placements.length > 0;
+  const placements = hasPersistedPlacements
+    ? scenePackage.assembly.placements
+    : scenePackage.chapter_assets.map((asset, index) => draftPlacement(asset, index));
+  const selectedEmptyScene = currentEmptySceneImage(scenePackage);
+  const layerOrder = hasPersistedPlacements && scenePackage.assembly.layer_order.length > 0
+    ? scenePackage.assembly.layer_order
+    : placements.map((placement) => placement.id);
 
   return {
+    ...scenePackage.assembly,
     schema_version: 1,
     empty_scene_image_id: scenePackage.current_empty_scene_image_id,
-    empty_scene_size: scenePackage.empty_scene_images[0]
-      ? { width: scenePackage.empty_scene_images[0].width, height: scenePackage.empty_scene_images[0].height }
-      : null,
+    // WHY: assembly manifest 必须沿用“当前选中的 empty scene”作为唯一事实源；
+    // 只有找不到选中图片记录时才回退到已持久化尺寸，避免首张图片把用户当前选择覆盖掉。
+    empty_scene_size: selectedEmptyScene
+      ? { width: selectedEmptyScene.width, height: selectedEmptyScene.height }
+      : scenePackage.assembly.empty_scene_size,
     placements,
-    groups: [],
     layer_order: layerOrder,
     updated_at: new Date().toISOString(),
   };
@@ -85,34 +95,36 @@ export function isAssemblyReady(scenePackage: ChapterScenePackage): boolean {
 }
 
 export async function exportAssemblyPreviewFile(scenePackage: ChapterScenePackage): Promise<File> {
+  const emptySceneImageId = scenePackage.current_empty_scene_image_id;
+  if (!emptySceneImageId) {
+    throw new Error("Could not export assembly preview without a selected Empty Scene Image.");
+  }
+
+  const selectedEmptyScene = currentEmptySceneImage(scenePackage);
+  const canvasSize = selectedEmptyScene
+    ? { width: selectedEmptyScene.width, height: selectedEmptyScene.height }
+    : scenePackage.assembly.empty_scene_size ?? DEFAULT_ASSEMBLY_EXPORT_SIZE;
   const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 1024;
+  canvas.width = canvasSize.width;
+  canvas.height = canvasSize.height;
   const context = canvas.getContext("2d");
   if (!context) {
     throw new Error("Could not prepare assembly export.");
   }
 
-  // WHY: Task 5 先交付稳定的 Studio shell，而不是重新发明完整画布引擎；
-  // 这里用与预览同源的轻量导出保证 Lock Final 走真实 PNG 文件边界，后续 Task 6/7 再接入正式素材渲染。
-  context.fillStyle = "#0b141e";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#1a2f42";
-  context.fillRect(40, 40, canvas.width - 80, canvas.height - 80);
-  context.fillStyle = "#e6edf7";
-  context.font = "28px sans-serif";
-  context.fillText("Chapter Scene Studio", 72, 110);
+  // WHY: lock final 产物要复用当前 assembly 的真实素材合同，
+  // 不能再导出占位图，否则 backend 保存的 final scene 与用户看到的摆放结果会分叉。
+  const emptySceneImage = await loadScenePackageImage(scenePackage.chapter_id, "empty_scene_images", emptySceneImageId);
+  context.drawImage(emptySceneImage, 0, 0, canvas.width, canvas.height);
 
-  scenePackage.assembly.placements.forEach((placement, index) => {
-    const width = Math.max(placement.transform.w * canvas.width, 120);
-    const height = Math.max(placement.transform.h * canvas.height, 120);
-    const x = Math.max(placement.transform.cx * canvas.width - width / 2, 56);
-    const y = Math.max(placement.transform.cy * canvas.height - height / 2, 156);
-    context.fillStyle = previewColor(index);
-    context.fillRect(x, y, width, height);
-    context.fillStyle = "#071018";
-    context.fillText(placement.display_name, x + 18, y + 42);
-  });
+  for (const placement of scenePackage.assembly.placements) {
+    const asset = scenePackage.chapter_assets.find((chapterAsset) => chapterAsset.id === placement.asset_id);
+    if (!asset) {
+      throw new Error(`Could not find Chapter Asset ${placement.asset_id} for assembly export.`);
+    }
+    const assetImage = await loadScenePackageImage(scenePackage.chapter_id, "chapter_assets", asset.id);
+    drawPlacementImage(context, assetImage, placement, canvas.width, canvas.height);
+  }
 
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((nextBlob) => {
@@ -147,4 +159,48 @@ function draftPlacement(asset: ChapterAsset, index: number): ChapterSceneAssembl
 
 function previewColor(index: number): string {
   return ["#89ddff", "#91f7dc", "#ffe082"][index % 3] ?? "#89ddff";
+}
+
+function currentEmptySceneImage(scenePackage: ChapterScenePackage) {
+  return scenePackage.empty_scene_images.find((image) => image.id === scenePackage.current_empty_scene_image_id) ?? null;
+}
+
+function scenePackageMediaUrl(
+  chapterId: string,
+  mediaKind: "empty_scene_images" | "chapter_assets",
+  mediaId: string,
+): string {
+  return `/api/course-planner/chapters/${chapterId}/scene-package/media/${mediaKind}/${mediaId}`;
+}
+
+function loadScenePackageImage(
+  chapterId: string,
+  mediaKind: "empty_scene_images" | "chapter_assets",
+  mediaId: string,
+): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Could not load ${mediaKind} image ${mediaId} for assembly export.`));
+    image.src = scenePackageMediaUrl(chapterId, mediaKind, mediaId);
+  });
+}
+
+function drawPlacementImage(
+  context: CanvasRenderingContext2D,
+  image: CanvasImageSource,
+  placement: ChapterSceneAssemblyPlacement,
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  const width = placement.transform.w * canvasWidth;
+  const height = placement.transform.h * canvasHeight;
+  const centerX = placement.transform.cx * canvasWidth;
+  const centerY = placement.transform.cy * canvasHeight;
+
+  context.save();
+  context.translate(centerX, centerY);
+  context.rotate((placement.transform.rotation_deg * Math.PI) / 180);
+  context.drawImage(image, -width / 2, -height / 2, width, height);
+  context.restore();
 }
