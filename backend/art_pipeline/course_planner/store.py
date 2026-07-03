@@ -2,24 +2,18 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from io import BytesIO
 from pathlib import Path
 from typing import TypeVar
 from uuid import uuid4
 
-from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict
 
 from art_pipeline.course_planner.file_rollback import write_models_with_rollback
 from art_pipeline.course_planner.models import (
-    AIReview,
     Chapter,
     CourseProject,
     SceneCard,
     SceneKeywords,
-    SceneVersionLock,
-    SceneVersion,
     Space,
 )
 from art_pipeline.course_planner.store_common import (
@@ -140,136 +134,6 @@ class CoursePlannerStore(
             SceneKeywords,
         )
 
-    def create_scene_version(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        image_bytes: bytes,
-    ) -> SceneVersion:
-        chapter_id = _validate_slug(chapter_id, "Chapter id")
-        _validate_png_bytes(image_bytes)
-        next_index = self._next_scene_version_index(course_id, space_id, chapter_id)
-        version_id = f"version_{next_index:03d}"
-        version_dirname = f"v{next_index:03d}"
-        image_path = f"versions/{version_dirname}/image.png"
-        now = utc_now()
-        version = SceneVersion(
-            id=version_id,
-            chapter_id=chapter_id,
-            index=next_index,
-            image_path=image_path,
-            status="uploaded",
-            created_at=now,
-            updated_at=now,
-        )
-        self._write_bytes(
-            self._scene_version_image_path(course_id, space_id, chapter_id, version),
-            image_bytes,
-        )
-        self._write_model(
-            self._scene_version_path(course_id, space_id, chapter_id, version_id),
-            version,
-        )
-        return version
-
-    def read_scene_versions(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-    ) -> list[SceneVersion]:
-        versions_root = self._versions_root_path(course_id, space_id, chapter_id)
-        if not versions_root.exists():
-            return []
-        versions = [
-            self._read_model(path, SceneVersion)
-            for path in versions_root.glob("v*/scene_version.json")
-        ]
-        locked_version_id = self._read_scene_version_lock(course_id, space_id, chapter_id)
-        return sorted(
-            [
-                self._derive_scene_version_lock_status(version, locked_version_id)
-                for version in versions
-            ],
-            key=lambda version: version.index,
-        )
-
-    def read_scene_version(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version_id: str,
-    ) -> SceneVersion:
-        version = self._read_model(
-            self._scene_version_path(course_id, space_id, chapter_id, version_id),
-            SceneVersion,
-        )
-        locked_version_id = self._read_scene_version_lock(course_id, space_id, chapter_id)
-        return self._derive_scene_version_lock_status(version, locked_version_id)
-
-    def lock_scene_version(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version_id: str,
-    ) -> SceneVersion:
-        version_id = _validate_slug(version_id, "Scene version id")
-        target_version = self._read_model(
-            self._scene_version_path(course_id, space_id, chapter_id, version_id),
-            SceneVersion,
-        )
-        now = utc_now()
-        # WHY: lock 是 chapter 级单一事实源。只原子替换一个 lock 文件，
-        # 避免分散写多个 version JSON 时中途失败造成双锁或无锁。
-        self._write_model(
-            self._scene_version_lock_path(course_id, space_id, chapter_id),
-            SceneVersionLock(locked_version_id=version_id, updated_at=now),
-        )
-        return target_version.model_copy(update={"status": "locked"})
-
-    def write_ai_review_and_mark_reviewed(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version_id: str,
-        review: AIReview,
-    ) -> SceneVersion:
-        _require_match(review.chapter_id, chapter_id, "AI review chapter_id")
-        _require_match(review.version_id, version_id, "AI review version_id")
-        version_path = self._scene_version_path(course_id, space_id, chapter_id, version_id)
-        review_path = version_path.parent / "ai_review.json"
-        version = self._read_model(version_path, SceneVersion)
-        _require_match(version.chapter_id, chapter_id, "Scene version chapter_id")
-        updated = version.model_copy(update={"status": "reviewed", "updated_at": utc_now()})
-        write_models_with_rollback(
-            [(review_path, review), (version_path, updated)],
-            self._write_model,
-        )
-        locked_version_id = self._read_scene_version_lock(course_id, space_id, chapter_id)
-        return self._derive_scene_version_lock_status(updated, locked_version_id)
-
-    def scene_version_image_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version: SceneVersion,
-    ) -> Path:
-        return self._scene_version_image_path(course_id, space_id, chapter_id, version)
-
-    def scene_version_json_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version_id: str,
-    ) -> Path:
-        return self._scene_version_path(course_id, space_id, chapter_id, version_id)
-
     def _course_path(self, course_id: str) -> Path:
         return self._resolve("courses", _validate_slug(course_id, "Course id"), "course.json")
 
@@ -323,117 +187,6 @@ class CoursePlannerStore(
             "keywords.json",
         )
 
-    def _versions_root_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-    ) -> Path:
-        return self._resolve(
-            "courses",
-            _validate_slug(course_id, "Course id"),
-            "spaces",
-            _validate_slug(space_id, "Space id"),
-            "chapters",
-            _validate_slug(chapter_id, "Chapter id"),
-            "versions",
-        )
-
-    def _scene_version_lock_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-    ) -> Path:
-        return self._resolve(
-            "courses",
-            _validate_slug(course_id, "Course id"),
-            "spaces",
-            _validate_slug(space_id, "Space id"),
-            "chapters",
-            _validate_slug(chapter_id, "Chapter id"),
-            "version_lock.json",
-        )
-
-    def _scene_version_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version_id: str,
-    ) -> Path:
-        version_id = _validate_slug(version_id, "Scene version id")
-        index = _version_index_from_id(version_id)
-        return self._resolve(
-            "courses",
-            _validate_slug(course_id, "Course id"),
-            "spaces",
-            _validate_slug(space_id, "Space id"),
-            "chapters",
-            _validate_slug(chapter_id, "Chapter id"),
-            "versions",
-            f"v{index:03d}",
-            "scene_version.json",
-        )
-
-    def _scene_version_image_path(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-        version: SceneVersion,
-    ) -> Path:
-        _require_match(version.chapter_id, chapter_id, "Scene version chapter_id")
-        expected_image_path = f"versions/v{version.index:03d}/image.png"
-        if version.image_path != expected_image_path:
-            raise ValueError(
-                f"Scene version image_path must match {expected_image_path!r}."
-            )
-        return self._resolve(
-            "courses",
-            _validate_slug(course_id, "Course id"),
-            "spaces",
-            _validate_slug(space_id, "Space id"),
-            "chapters",
-            _validate_slug(chapter_id, "Chapter id"),
-            "versions",
-            f"v{version.index:03d}",
-            "image.png",
-        )
-
-    def _next_scene_version_index(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-    ) -> int:
-        existing = self.read_scene_versions(course_id, space_id, chapter_id)
-        if not existing:
-            return 1
-        return max(version.index for version in existing) + 1
-
-    def _read_scene_version_lock(
-        self,
-        course_id: str,
-        space_id: str,
-        chapter_id: str,
-    ) -> str | None:
-        path = self._scene_version_lock_path(course_id, space_id, chapter_id)
-        if not path.exists():
-            return None
-        return self._read_model(path, SceneVersionLock).locked_version_id
-
-    def _derive_scene_version_lock_status(
-        self,
-        version: SceneVersion,
-        locked_version_id: str | None,
-    ) -> SceneVersion:
-        if version.id == locked_version_id:
-            return version.model_copy(update={"status": "locked"})
-        if version.status == "locked":
-            return version.model_copy(update={"status": "uploaded"})
-        return version
-
     def _resolve(self, *parts: str) -> Path:
         candidate = self.scene_library_root.joinpath(*parts).resolve()
         try:
@@ -464,20 +217,3 @@ class CoursePlannerStore(
         temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         temp_path.write_bytes(payload)
         os.replace(temp_path, path)
-
-
-def _validate_png_bytes(payload: bytes) -> None:
-    try:
-        with Image.open(BytesIO(payload)) as image:
-            image.load()
-            if image.format != "PNG":
-                raise ValueError("Scene version image must be a valid PNG.")
-    except UnidentifiedImageError as exc:
-        raise ValueError("Scene version image must be a valid PNG.") from exc
-
-
-def _version_index_from_id(version_id: str) -> int:
-    match = re.fullmatch(r"version_(\d{3})", version_id)
-    if match is None:
-        raise ValueError("Scene version id must use the version_NNN format.")
-    return int(match.group(1))

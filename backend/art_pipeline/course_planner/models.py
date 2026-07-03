@@ -113,51 +113,11 @@ class ChapterSeed(CoursePlannerModel):
     style_notes: str | None = None
 
 
-class SceneDirectorPlan(CoursePlannerModel):
-    story_event: str = Field(min_length=1)
-    scene_composition: str = Field(min_length=1)
-    spatial_structure: str = Field(min_length=1)
-    character_arrangement: str = Field(min_length=1)
-    action_design: str = Field(min_length=1)
-    style_and_constraints: str = Field(min_length=1)
-
-
 class PlannedObject(CoursePlannerModel):
     name: str = Field(min_length=1)
     role_in_scene: str = Field(min_length=1)
     placement_hint: str | None = None
     priority: Literal["core", "required", "recommended", "avoid"]
-
-
-class ObjectPlan(CoursePlannerModel):
-    core_objects: list[PlannedObject] = Field(default_factory=list)
-    required_objects: list[PlannedObject] = Field(default_factory=list)
-    recommended_objects: list[PlannedObject] = Field(default_factory=list)
-    avoid_or_move_objects: list[PlannedObject] = Field(default_factory=list)
-
-
-class CastBinding(CoursePlannerModel):
-    character_id: str = Field(min_length=1)
-    display_name: str = Field(min_length=1)
-    role_in_scene: Literal["main", "support", "background"]
-    action_intent: str = Field(min_length=1)
-    reference_image_ids: list[str] = Field(default_factory=list)
-    invariants: list[str] = Field(default_factory=list)
-
-
-class SceneVocabulary(CoursePlannerModel):
-    narrative_anchors: list[str] = Field(default_factory=list)
-    optional_vocabulary_candidates: list[str] = Field(default_factory=list)
-    ambient_furnishing_policy: str = ""
-    avoid_objects: list[str] = Field(default_factory=list)
-
-
-class PromptTuning(CoursePlannerModel):
-    style_anchor: str = ""
-    style_reference_image_ids: list[str] = Field(default_factory=list)
-    scene_reference_image_ids: list[str] = Field(default_factory=list)
-    must_keep: list[str] = Field(default_factory=list)
-    avoid: list[str] = Field(default_factory=list)
 
 
 class SceneCard(CoursePlannerModel):
@@ -173,29 +133,3 @@ KeywordText = Annotated[str, Field(min_length=1)]
 class SceneKeywords(CoursePlannerModel):
     chapter_id: str
     keywords: list[KeywordText] = Field(default_factory=list)
-
-
-SceneVersionStatus = Literal["uploaded", "reviewed", "locked"]
-
-
-class SceneVersion(CoursePlannerModel):
-    id: str
-    chapter_id: str
-    index: int
-    image_path: str
-    status: SceneVersionStatus = "uploaded"
-    created_at: str
-    updated_at: str
-
-
-class SceneVersionLock(CoursePlannerModel):
-    locked_version_id: str
-    updated_at: str
-
-
-class AIReview(CoursePlannerModel):
-    chapter_id: str
-    version_id: str
-    status: Literal["approved", "needs_revision", "rejected"]
-    notes_zh: str = Field(min_length=1)
-    created_at: str

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import art_pipeline.course_planner.models as course_planner_models
 import pytest
 from pydantic import ValidationError
 
@@ -204,6 +205,20 @@ def test_character_ip_profile_defaults_to_available_with_reference_links() -> No
     assert character.status == "available"
     assert character.reference_image_ids == ["reference_image_001"]
     assert character.updated_at is None
+
+
+def test_models_module_does_not_export_dead_prompt_authoring_types() -> None:
+    for legacy_name in (
+        "".join(("Scene", "Director", "Plan")),
+        "".join(("Object", "Plan")),
+        "".join(("Cast", "Binding")),
+        "".join(("Scene", "Vocabulary")),
+        "".join(("Prompt", "Tuning")),
+        "".join(("Scene", "Version")),
+        "".join(("Scene", "Version", "Lock")),
+        "".join(("AI", "Review")),
+    ):
+        assert not hasattr(course_planner_models, legacy_name)
 
 
 def _scene_pack() -> ScenePack:

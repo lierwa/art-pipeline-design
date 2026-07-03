@@ -260,6 +260,19 @@ def test_reorder_chapters_rejects_missing_or_foreign_ids(tmp_path: Path) -> None
         planner_store.reorder_chapters(pack.id, [chapter.id, "chapter_missing"])
 
 
+def test_store_does_not_expose_legacy_review_runtime() -> None:
+    for legacy_name in (
+        "_".join(("create", "scene", "version")),
+        "_".join(("read", "scene", "versions")),
+        "_".join(("read", "scene", "version")),
+        "_".join(("lock", "scene", "version")),
+        "_".join(("write", "ai", "review", "and", "mark", "reviewed")),
+        "_".join(("scene", "version", "image", "path")),
+        "_".join(("scene", "version", "json", "path")),
+    ):
+        assert not hasattr(CoursePlannerStore, legacy_name)
+
+
 def test_legacy_write_chapters_api_is_not_available_for_scene_pack_chapters() -> None:
     assert not hasattr(CoursePlannerStore, "write_chapters")
 
