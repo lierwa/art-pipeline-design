@@ -5,7 +5,6 @@ import { AppWorkbenchContent, type AppWorkbenchProps } from "../components/AppWo
 import { TopAppBar } from "../components/TopAppBar";
 import { SceneCategoryBoardPage } from "../../features/coursePlanner/pages/SceneCategoryBoardPage";
 import { ChapterWorkspacePage } from "../../features/coursePlanner/pages/ChapterWorkspacePage";
-import { ImageAttemptReviewPage } from "../../features/coursePlanner/pages/ImageAttemptReviewPage";
 
 type AppRoutesProps = {
   workbenchProps: AppWorkbenchProps;
@@ -29,10 +28,6 @@ export function AppRoutes({ workbenchProps }: AppRoutesProps) {
         <Route path="/pipeline" element={<AppWorkbenchContent {...workbenchProps} />} />
         <Route path="/course-planner" element={<SceneCategoryBoardPage />} />
         <Route path="/course-planner/chapters/:chapterId" element={<ChapterWorkspacePage />} />
-        <Route
-          path="/course-planner/chapters/:chapterId/versions/:versionId/attempts/:attemptId"
-          element={<ImageAttemptReviewPage />}
-        />
         <Route path="/lesson-plan" element={<LessonPlanPage />} />
         <Route path="*" element={<Navigate to="/pipeline" replace />} />
       </Routes>

@@ -111,6 +111,22 @@ def test_scene_pack_and_chapter_hierarchy_round_trips_without_prompt_runtime() -
         "sort_order",
         "status",
     }
+    assert chapter.status == "draft"
+
+
+@pytest.mark.parametrize(
+    "legacy_status",
+    [
+        "_".join(("prompt", "ready")),
+        "_".join(("has", "attempts")),
+    ],
+)
+def test_chapter_rejects_legacy_prompt_runtime_status_values(legacy_status: str) -> None:
+    payload = _chapter().model_dump()
+    payload["status"] = legacy_status
+
+    with pytest.raises(ValidationError):
+        Chapter(**payload)
 
 
 def test_scene_pack_rejects_user_facing_course_generation_fields() -> None:

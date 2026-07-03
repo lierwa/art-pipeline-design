@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackagePreconditionError,
@@ -137,4 +139,12 @@ def _target_object_labels(package: ChapterScenePackage) -> list[str]:
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    # WHY: scene_context.json 会被导入索引与故障排查同时读取；先写临时文件再 replace，
+    # 可以避免中断时留下半份上下文，代价只是一次额外 rename。
+    temp_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    os.replace(temp_path, path)

@@ -110,6 +110,31 @@ def test_import_final_chapter_scene_requires_locked_final_scene(tmp_path: Path) 
         )
 
 
+def test_write_json_replaces_target_via_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target_path = tmp_path / "workspace" / "scene_context.json"
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = import_module.os.replace
+
+    def tracking_replace(source: Path | str, target: Path | str) -> None:
+        source_path = Path(source)
+        target_path_inner = Path(target)
+        replace_calls.append((source_path, target_path_inner))
+        assert source_path.name.startswith("scene_context.json.")
+        assert source_path.suffix == ".tmp"
+        assert source_path.exists()
+        original_replace(source, target)
+
+    monkeypatch.setattr(import_module.os, "replace", tracking_replace)
+
+    import_module._write_json(target_path, {"source": "course_planner"})
+
+    assert replace_calls == [(replace_calls[0][0], target_path)]
+    assert json.loads(target_path.read_text(encoding="utf-8")) == {
+        "source": "course_planner"
+    }
+    assert not replace_calls[0][0].exists()
+
+
 def _make_locked_final_scene(tmp_path: Path):
     store, chapter, asset = make_store_with_chapter_asset(tmp_path)
     package = store.read_chapter_scene_package(chapter.id)
