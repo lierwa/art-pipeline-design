@@ -41,7 +41,6 @@ export type Chapter = {
   seed: ChapterSeed;
   sortOrder: number;
   status: ChapterStatus;
-  adoptedPromptVersionId?: string | null;
 };
 
 export type ChapterCandidate = {
@@ -52,99 +51,11 @@ export type ChapterCandidate = {
   seed: ChapterSeed;
 };
 
-export type SceneDirectorPlan = {
-  storyEvent: string;
-  sceneComposition: string;
-  spatialStructure: string;
-  characterArrangement: string;
-  actionDesign: string;
-  styleAndConstraints: string;
-};
-
-export type PlannedObject = {
-  name: string;
-  roleInScene: string;
-  placementHint?: string | null;
-  priority: "core" | "required" | "recommended" | "avoid";
-};
-
-export type ObjectPlan = {
-  coreObjects: PlannedObject[];
-  requiredObjects: PlannedObject[];
-  recommendedObjects: PlannedObject[];
-  avoidOrMoveObjects: PlannedObject[];
-};
-
-export type CastBinding = {
-  characterId: string;
-  displayName: string;
-  roleInScene: "main" | "support" | "background";
-  actionIntent: string;
-  referenceImageIds: string[];
-  invariants: string[];
-};
-
-export type SceneVocabulary = {
-  narrativeAnchors: string[];
-  optionalVocabularyCandidates: string[];
-  ambientFurnishingPolicy: string;
-  avoidObjects: string[];
-};
-
-export type PromptTuning = {
-  styleAnchor: string;
-  styleReferenceImageIds: string[];
-  sceneReferenceImageIds: string[];
-  mustKeep: string[];
-  avoid: string[];
-};
-
-export type PromptPackage = {
-  fullPrompt: string;
-  shortPrompt?: string | null;
-  negativeConstraints: string;
-  revisionPrompt?: string | null;
-};
-
-export type PromptVersion = {
-  id: string;
-  chapterId: string;
-  versionLabel: string;
-  title: string;
-  status: "draft" | "prompt_ready" | "has_attempts" | "adopted" | "archived";
-  sceneDirectorPlan: SceneDirectorPlan;
-  castBindings: CastBinding[];
-  sceneVocabulary: SceneVocabulary;
-  promptTuning: PromptTuning;
-  objectPlan: ObjectPlan;
-  promptPackage: PromptPackage;
-  sourceVersionId?: string | null;
-  imageAttemptIds: string[];
-};
-
-export type ImageAttemptReview = {
-  summary: string;
-  strengths: string[];
-  issues: string[];
-  recommendation?: "accept" | "revise" | "reject" | null;
-};
-
-export type ImageAttempt = {
-  id: string;
-  promptVersionId: string;
-  uploadedImageId: string;
-  status: "uploaded" | "ai_reviewed" | "accepted" | "not_accepted" | "imported";
-  aiReview?: ImageAttemptReview | null;
-  humanDecision?: "accept" | "revise_version" | "keep_record" | "delete" | null;
-  pipelineImportId?: string | null;
-};
-
 export type RuntimeRole = "target" | "initial";
 
 export type ChapterScenePrompt = {
   prompt_text: string;
-  negative_constraints: string;
-  style_notes: string;
+  scene_spatial_contract: string;
   updated_at: string | null;
 };
 
@@ -155,34 +66,48 @@ export type TargetObjectItem = {
   priority: "core" | "required" | "recommended";
 };
 
-export type ChapterSceneReference = {
+export type AvoidObjectItem = {
   id: string;
-  original_filename: string;
-  storage_path: string;
-  media_type: "image/png";
-  created_at: string;
-  prompt_role: "style" | "scene" | "character" | "other";
-  notes: string;
+  label: string;
+  description: string;
+};
+
+export type PromptReadinessConfirmation = {
+  avoid_objects_reviewed: boolean;
+  style_reference_mode: "unreviewed" | "selected" | "confirmed_empty";
+};
+
+export type ChapterCastAssignment = {
+  id: string;
+  character_ip_id: string;
+  role_label: string;
+  action_intent: string;
+  reference_image_ids: string[];
+};
+
+export type ChapterReferenceSelection = {
+  id: string;
+  reference_image_id: string;
+  prompt_role: "character" | "style" | "scene" | "other";
 };
 
 export type ImageReferenceSnapshot = {
-  reference_ids: string[];
-  locked_base_candidate_id: string | null;
+  reference_image_ids: string[];
+  current_empty_scene_image_id: string | null;
   notes: string;
 };
 
-export type EmptyBaseSceneCandidate = {
+export type EmptySceneImage = {
   id: string;
   original_filename: string;
   storage_path: string;
   media_type: "image/png";
   width: number;
   height: number;
-  status: "candidate" | "locked" | "inactive";
+  status: "available" | "removed";
   prompt_snapshot: string;
   reference_snapshot: ImageReferenceSnapshot;
   created_at: string;
-  locked_at: string | null;
 };
 
 export type CompleteSceneImage = {
@@ -192,19 +117,20 @@ export type CompleteSceneImage = {
   media_type: "image/png";
   width: number;
   height: number;
-  base_candidate_id: string;
+  empty_scene_image_id: string | null;
   status: "active" | "historical" | "deleted";
   prompt_snapshot: string;
   reference_snapshot: ImageReferenceSnapshot;
-  variation_prompt: string;
+  generation_note: string;
   pipeline_run_id: string | null;
   pipeline_run_status: string | null;
   created_at: string;
 };
 
 export type ChapterAssetLineage = {
-  source_run_id: string;
-  source_run_asset_id: string;
+  source_kind: "pipeline_run_asset" | "direct_upload";
+  source_run_id: string | null;
+  source_run_asset_id: string | null;
   source_complete_image_id: string | null;
 };
 
@@ -218,11 +144,6 @@ export type ChapterAsset = {
   linked_target_object_id: string | null;
   status: "available" | "removed";
   created_at: string;
-};
-
-export type ChapterSceneAssemblyBaseSize = {
-  width: number;
-  height: number;
 };
 
 export type ChapterSceneAssemblyTransform = {
@@ -251,24 +172,42 @@ export type ChapterSceneAssemblyGroup = {
 
 export type ChapterSceneAssemblyManifest = {
   schema_version: 1;
-  base_candidate_id: string | null;
-  base_size: ChapterSceneAssemblyBaseSize | null;
+  empty_scene_image_id: string | null;
+  empty_scene_size: { width: number; height: number } | null;
   placements: ChapterSceneAssemblyPlacement[];
   groups: ChapterSceneAssemblyGroup[];
   layer_order: string[];
   updated_at: string | null;
 };
 
+export type FinalChapterScene = {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  width: number;
+  height: number;
+  empty_scene_image_id: string;
+  assembly_snapshot: ChapterSceneAssemblyManifest;
+  prompt_snapshot: string;
+  reference_snapshot: ImageReferenceSnapshot;
+  created_at: string;
+};
+
 export type ChapterScenePackage = {
   chapter_id: string;
+  current_empty_scene_image_id: string | null;
   prompt: ChapterScenePrompt;
+  prompt_confirmations: PromptReadinessConfirmation;
+  cast_assignments: ChapterCastAssignment[];
+  reference_selections: ChapterReferenceSelection[];
   target_objects: TargetObjectItem[];
-  references: ChapterSceneReference[];
-  base_candidates: EmptyBaseSceneCandidate[];
-  locked_base_candidate_id: string | null;
+  avoid_objects: AvoidObjectItem[];
+  empty_scene_images: EmptySceneImage[];
   complete_images: CompleteSceneImage[];
   chapter_assets: ChapterAsset[];
   assembly: ChapterSceneAssemblyManifest;
+  final_scene: FinalChapterScene | null;
 };
 
 export type AsyncOperationState = {
@@ -293,10 +232,7 @@ export type CoursePlannerState = {
   activeScenePackId: string | null;
   candidatesByScenePackId: Record<string, ChapterCandidate[]>;
   chaptersByScenePackId: Record<string, Chapter[]>;
-  promptVersionsByChapterId: Record<string, PromptVersion[]>;
-  imageAttemptsByVersionId: Record<string, ImageAttempt[]>;
   selectedChapterId: string | null;
-  selectedPromptVersionId: string | null;
   asyncStatus: AsyncStatusMap;
   tasks: AiTaskRecord[];
 };

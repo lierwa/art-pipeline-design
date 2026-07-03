@@ -2,52 +2,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   acceptChapterCandidate,
-  adoptPromptVersion,
-  createImageAttempt,
-  createPromptVersion,
   createScenePack,
   deleteChapter,
   deleteChapterCandidate,
-  deletePromptVersion,
   deleteScenePack,
-  duplicatePromptVersion,
   fetchCoursePlannerState,
   generateChapterCandidates,
-  generatePromptPackage,
-  importImageAttempt,
-  listImageAttempts,
-  listPromptVersions,
   reorderChapters,
-  reviewImageAttempt,
   reviseChapterCandidates,
-  updateImageAttempt,
-  updatePromptVersion,
   updateScenePack,
-  uploadImageAttempt,
 } from "../api";
-import type { AsyncOperationState, Chapter, ChapterCandidate, CoursePlannerState, ImageAttempt, PromptVersion, ScenePack } from "../types";
-import type { CreateScenePackRequest, GenerateChapterCandidatesRequest, PromptVersionCreateRequest, UpdateScenePackRequest, ImageAttemptPatchRequest } from "../api";
+import type { AsyncOperationState, Chapter, ChapterCandidate, CoursePlannerState, ScenePack } from "../types";
+import type { CreateScenePackRequest, GenerateChapterCandidatesRequest, UpdateScenePackRequest } from "../api";
 import {
   appendChapterId,
   findChapter,
-  findPromptVersion,
   mergeById,
   orderedChapters,
-  preferredPromptVersionId,
-  preferredPromptVersionIdForChapter,
-  promptVersionBelongsToChapter,
   reorderLocalChapters,
   upsertById,
 } from "./stateHelpers";
+
 const EMPTY_COURSE_PLANNER_STATE: CoursePlannerState = {
   scenePacks: [],
   activeScenePackId: null,
   candidatesByScenePackId: {},
   chaptersByScenePackId: {},
-  promptVersionsByChapterId: {},
-  imageAttemptsByVersionId: {},
   selectedChapterId: null,
-  selectedPromptVersionId: null,
   asyncStatus: {},
   tasks: [],
 };
@@ -70,16 +51,6 @@ export function useCoursePlannerState() {
     () => findChapter(state, state.selectedChapterId),
     [state, state.selectedChapterId],
   );
-  const promptVersionsForSelectedChapter = state.selectedChapterId
-    ? state.promptVersionsByChapterId[state.selectedChapterId] ?? []
-    : [];
-  const selectedPromptVersion = useMemo(
-    () => findPromptVersion(state, state.selectedPromptVersionId),
-    [state, state.selectedPromptVersionId],
-  );
-  const imageAttemptsForSelectedPromptVersion = state.selectedPromptVersionId
-    ? state.imageAttemptsByVersionId[state.selectedPromptVersionId] ?? []
-    : [];
 
   const applyState = useCallback((update: CoursePlannerState | ((current: CoursePlannerState) => CoursePlannerState)) => {
     const next = typeof update === "function" ? update(stateRef.current) : update;
@@ -216,7 +187,6 @@ export function useCoursePlannerState() {
           [scenePackId]: orderedChapters(upsertById(current.chaptersByScenePackId[scenePackId] ?? [], response.chapter)),
         },
         selectedChapterId: response.chapter.id,
-        selectedPromptVersionId: preferredPromptVersionIdForChapter(current, response.chapter.id),
       }));
       return response.chapter;
     });
@@ -244,128 +214,12 @@ export function useCoursePlannerState() {
           [scenePackId]: (current.chaptersByScenePackId[scenePackId] ?? []).filter((chapter) => chapter.id !== chapterId),
         },
         selectedChapterId: current.selectedChapterId === chapterId ? null : current.selectedChapterId,
-        selectedPromptVersionId: current.selectedChapterId === chapterId ? null : current.selectedPromptVersionId,
       }));
-    });
-  }
-
-  async function handleListPromptVersions(chapterId: string) {
-    return runOperation(`listPromptVersions:${chapterId}`, async () => {
-      const versions = await listPromptVersions(chapterId);
-      applyState((current) => ({
-        ...current,
-        promptVersionsByChapterId: { ...current.promptVersionsByChapterId, [chapterId]: versions },
-        // WHY: PromptVersion selection is scoped to the loaded Chapter; otherwise uploads/reviews attach to the wrong lineage.
-        selectedPromptVersionId: current.selectedChapterId === chapterId ? preferredPromptVersionId(versions) : current.selectedPromptVersionId,
-      }));
-      return versions;
-    });
-  }
-
-  async function handleCreatePromptVersion(chapterId: string, request: PromptVersionCreateRequest = {}) {
-    return runPromptVersionOperation(`createPromptVersion:${chapterId}`, () => createPromptVersion(chapterId, request));
-  }
-
-  async function handleDuplicatePromptVersion(versionId: string) {
-    return runPromptVersionOperation(`duplicatePromptVersion:${versionId}`, () => duplicatePromptVersion(versionId));
-  }
-
-  async function handleUpdatePromptVersion(versionId: string, patch: Partial<PromptVersion>) {
-    return runPromptVersionOperation(`updatePromptVersion:${versionId}`, () => updatePromptVersion(versionId, patch));
-  }
-
-  async function handleAdoptPromptVersion(chapterId: string, versionId: string) {
-    return runOperation(`adoptPromptVersion:${versionId}`, async () => {
-      const response = await adoptPromptVersion(chapterId, versionId);
-      upsertChapter(response.chapter);
-      applyState((current) => ({
-        ...current,
-        promptVersionsByChapterId: {
-          ...current.promptVersionsByChapterId,
-          [response.chapter.id]: response.promptVersions,
-        },
-        selectedChapterId: response.chapter.id,
-        selectedPromptVersionId: versionId,
-      }));
-      return response;
-    });
-  }
-
-  async function handleDeletePromptVersion(versionId: string) {
-    return runOperation(`deletePromptVersion:${versionId}`, async () => {
-      const version = await deletePromptVersion(versionId);
-      if (version.status === "archived") {
-        removePromptVersionById(version.id);
-      } else {
-        upsertPromptVersion(version);
-      }
-      return version;
-    });
-  }
-
-  async function handleGeneratePromptPackage(versionId: string) {
-    return runPromptVersionOperation(`generatePromptPackage:${versionId}`, () => generatePromptPackage(versionId));
-  }
-
-  async function handleListImageAttempts(versionId: string) {
-    return runOperation(`listImageAttempts:${versionId}`, async () => {
-      const attempts = await listImageAttempts(versionId);
-      applyState((current) => ({
-        ...current,
-        imageAttemptsByVersionId: { ...current.imageAttemptsByVersionId, [versionId]: attempts },
-      }));
-      return attempts;
-    });
-  }
-
-  async function handleCreateImageAttempt(versionId: string, uploadedImageId: string) {
-    return runImageAttemptOperation(`uploadAttempt:${versionId}`, () => createImageAttempt(versionId, uploadedImageId));
-  }
-
-  async function handleUploadImageAttempt(versionId: string, file: File) {
-    return runImageAttemptOperation(`uploadAttempt:${versionId}`, () => uploadImageAttempt(versionId, file));
-  }
-
-  async function handleReviewImageAttempt(attemptId: string) {
-    return runImageAttemptOperation(`reviewAttempt:${attemptId}`, () => reviewImageAttempt(attemptId));
-  }
-
-  async function handleUpdateImageAttempt(attemptId: string, patch: ImageAttemptPatchRequest) {
-    return runImageAttemptOperation(`updateAttempt:${attemptId}`, () => updateImageAttempt(attemptId, patch));
-  }
-
-  async function handleImportImageAttempt(attemptId: string) {
-    return runImageAttemptOperation(`importAttempt:${attemptId}`, () => importImageAttempt(attemptId));
-  }
-
-  function runPromptVersionOperation(key: string, operation: () => Promise<PromptVersion>) {
-    return runOperation(key, async () => {
-      const version = await operation();
-      upsertPromptVersion(version);
-      return version;
-    });
-  }
-
-  function runImageAttemptOperation(key: string, operation: () => Promise<ImageAttempt>) {
-    return runOperation(key, async () => {
-      const attempt = await operation();
-      upsertImageAttempt(attempt);
-      return attempt;
     });
   }
 
   function upsertScenePack(pack: ScenePack) {
     applyState((current) => ({ ...current, scenePacks: upsertById(current.scenePacks, pack) }));
-  }
-
-  function upsertChapter(chapter: Chapter) {
-    applyState((current) => ({
-      ...current,
-      chaptersByScenePackId: {
-        ...current.chaptersByScenePackId,
-        [chapter.scenePackId]: orderedChapters(upsertById(current.chaptersByScenePackId[chapter.scenePackId] ?? [], chapter)),
-      },
-    }));
   }
 
   function replaceCandidates(scenePackId: string, candidates: ChapterCandidate[]) {
@@ -398,59 +252,12 @@ export function useCoursePlannerState() {
     }));
   }
 
-  function upsertPromptVersion(version: PromptVersion) {
-    applyState((current) => ({
-      ...current,
-      promptVersionsByChapterId: {
-        ...current.promptVersionsByChapterId,
-        [version.chapterId]: upsertById(current.promptVersionsByChapterId[version.chapterId] ?? [], version),
-      },
-      selectedPromptVersionId: current.selectedChapterId === version.chapterId ? version.id : current.selectedPromptVersionId,
-    }));
-  }
-
-  function removePromptVersionById(versionId: string) {
-    applyState((current) => {
-      const promptVersionsByChapterId = Object.fromEntries(
-        Object.entries(current.promptVersionsByChapterId).map(([chapterId, versions]) => [
-          chapterId,
-          versions.filter((candidate) => candidate.id !== versionId),
-        ]),
-      );
-      const fallbackVersions = current.selectedChapterId
-        ? promptVersionsByChapterId[current.selectedChapterId] ?? []
-        : [];
-      return {
-        ...current,
-        promptVersionsByChapterId,
-        // WHY: DELETE 的用户语义是“移出当前工作台”，后端返回的 archived 版本只证明删除成功；
-        // 前端按 versionId 从所有投影移除，避免响应缺失 chapterId 或旧投影导致“删不掉”。
-        selectedPromptVersionId: current.selectedPromptVersionId === versionId
-          ? preferredPromptVersionId(fallbackVersions)
-          : current.selectedPromptVersionId,
-      };
-    });
-  }
-
-  function upsertImageAttempt(attempt: ImageAttempt) {
-    applyState((current) => ({
-      ...current,
-      imageAttemptsByVersionId: {
-        ...current.imageAttemptsByVersionId,
-        [attempt.promptVersionId]: upsertById(current.imageAttemptsByVersionId[attempt.promptVersionId] ?? [], attempt),
-      },
-    }));
-  }
-
   return {
     ...state,
     activeScenePack,
     candidatesForActiveScenePack,
     chaptersForActiveScenePack,
-    imageAttemptsForSelectedPromptVersion,
-    promptVersionsForSelectedChapter,
     selectedChapter,
-    selectedPromptVersion,
     state,
     createScenePack: handleCreateScenePack,
     updateScenePack: handleUpdateScenePack,
@@ -461,32 +268,10 @@ export function useCoursePlannerState() {
     acceptChapterCandidate: handleAcceptCandidate,
     reorderChapters: handleReorderChapters,
     deleteChapter: handleDeleteChapter,
-    listPromptVersions: handleListPromptVersions,
-    createPromptVersion: handleCreatePromptVersion,
-    duplicatePromptVersion: handleDuplicatePromptVersion,
-    updatePromptVersion: handleUpdatePromptVersion,
-    adoptPromptVersion: handleAdoptPromptVersion,
-    deletePromptVersion: handleDeletePromptVersion,
-    generatePromptPackage: handleGeneratePromptPackage,
-    listImageAttempts: handleListImageAttempts,
-    createImageAttempt: handleCreateImageAttempt,
-    uploadImageAttempt: handleUploadImageAttempt,
-    reviewImageAttempt: handleReviewImageAttempt,
-    updateImageAttempt: handleUpdateImageAttempt,
-    importImageAttempt: handleImportImageAttempt,
     refresh,
     clearAsyncStatus,
     setActiveScenePackId: (activeScenePackId: string | null) => applyState((current) => ({ ...current, activeScenePackId })),
-    setSelectedChapterId: (selectedChapterId: string | null) => applyState((current) => ({
-      ...current,
-      // WHY: Chapter selection owns PromptVersion selection, otherwise uploads can target a previous Chapter lineage.
-      selectedChapterId,
-      selectedPromptVersionId: preferredPromptVersionIdForChapter(current, selectedChapterId),
-    })),
-    setSelectedPromptVersionId: (selectedPromptVersionId: string | null) => applyState((current) => ({
-      ...current,
-      selectedPromptVersionId: promptVersionBelongsToChapter(current, selectedPromptVersionId, current.selectedChapterId) ? selectedPromptVersionId : null,
-    })),
+    setSelectedChapterId: (selectedChapterId: string | null) => applyState((current) => ({ ...current, selectedChapterId })),
   };
 }
 

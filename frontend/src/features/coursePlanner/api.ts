@@ -3,9 +3,6 @@ import type {
   ChapterCandidate,
   ChapterSeed,
   CoursePlannerState,
-  ImageAttempt,
-  PromptPackage,
-  PromptVersion,
   ScenePack,
 } from "./types";
 import {
@@ -23,32 +20,32 @@ import type { CoursePlannerFetcher } from "./apiClient";
 
 export type { CoursePlannerFetcher } from "./apiClient";
 export type {
-  BaseCandidateUploadInput,
   ChapterAssetUploadInput,
   ChapterScenePromptInput,
   ChapterScenePromptTargetObjectInput,
   CompleteImageUploadInput,
+  DirectChapterAssetUploadInput,
+  EmptySceneImageUploadInput,
   ReferenceUploadInput,
   RunAssociationInput,
 } from "./scenePackageApi";
 export {
   associateCompleteImageRun,
   fetchChapterScenePackage,
-  lockEmptyBaseScene,
+  lockFinalChapterScene,
   saveChapterSceneAssembly,
+  selectEmptySceneImage,
   updateChapterScenePrompt,
   uploadChapterAssetFromRunAsset,
   uploadChapterSceneReference,
   uploadCompleteSceneImage,
-  uploadEmptyBaseSceneCandidate,
+  uploadDirectChapterAsset,
+  uploadEmptySceneImage,
 } from "./scenePackageApi";
 
 export type CreateScenePackRequest = Pick<ScenePack, "title" | "intent" | "notes">;
 export type UpdateScenePackRequest = Partial<Pick<ScenePack, "title" | "intent" | "notes" | "status">>;
 export type GenerateChapterCandidatesRequest = { feedback?: string };
-export type PromptVersionCreateRequest = { feedback?: string; sourceVersionId?: string };
-export type PromptVersionAdoptResponse = { chapter: Chapter; promptVersions: PromptVersion[] };
-export type ImageAttemptPatchRequest = Partial<Pick<ImageAttempt, "status" | "humanDecision">>;
 
 export type AcceptChapterCandidateResponse = {
   chapter: Chapter;
@@ -134,146 +131,18 @@ export function deleteChapter(scenePackId: string, chapterId: string, fetcher: C
   return requestVoid(fetcher, `${scenePackPath(scenePackId)}/chapters/${encodePathPart(chapterId)}`, { method: "DELETE" }, "Could not delete Chapter.");
 }
 
-export async function listPromptVersions(chapterId: string, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion[]> {
-  const payload = toCamel(await requestJson(fetcher, `${chapterPath(chapterId)}/prompt-versions`, { method: "GET" }, "Could not list Prompt Versions."));
-  return arrayFromPayload<PromptVersion>(payload, "promptVersions");
-}
-
-export async function createPromptVersion(chapterId: string, request: PromptVersionCreateRequest = {}, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion> {
-  const payload = toCamel(await requestJson(fetcher, `${chapterPath(chapterId)}/prompt-versions`, jsonRequest("POST", request), "Could not create Prompt Version."));
-  return payloadValue<PromptVersion>(payload, "promptVersion");
-}
-
-export async function duplicatePromptVersion(versionId: string, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion> {
-  const payload = toCamel(await requestJson(fetcher, `${promptVersionPath(versionId)}/duplicate`, { method: "POST" }, "Could not duplicate Prompt Version."));
-  return payloadValue<PromptVersion>(payload, "promptVersion");
-}
-
-export async function adoptPromptVersion(
-  chapterId: string,
-  versionId: string,
-  fetcher: CoursePlannerFetcher = fetch,
-): Promise<PromptVersionAdoptResponse> {
-  return toCamel(await requestJson(
-    fetcher,
-    `${chapterPath(chapterId)}/prompt-versions/${encodePathPart(versionId)}/adopt`,
-    { method: "POST" },
-    "Could not adopt Prompt Version.",
-  )) as PromptVersionAdoptResponse;
-}
-
-export async function updatePromptVersion(versionId: string, patch: Partial<PromptVersion>, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion> {
-  const payload = toCamel(await requestJson(fetcher, promptVersionPath(versionId), jsonRequest("PATCH", toSnake(patch)), "Could not update Prompt Version."));
-  return payloadValue<PromptVersion>(payload, "promptVersion");
-}
-
-export async function deletePromptVersion(versionId: string, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion> {
-  const payload = toCamel(await requestJson(fetcher, promptVersionPath(versionId), { method: "DELETE" }, "Could not delete Prompt Version."));
-  return payloadValue<PromptVersion>(payload, "promptVersion");
-}
-
-export async function generatePromptPackage(versionId: string, fetcher: CoursePlannerFetcher = fetch): Promise<PromptVersion> {
-  const payload = toCamel(await requestJson(fetcher, `${promptVersionPath(versionId)}/prompt-package`, { method: "POST" }, "Could not generate Prompt Package."));
-  return payloadValue<PromptVersion>(payload, "promptVersion");
-}
-
-export async function createImageAttempt(versionId: string, uploadedImageId: string, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt> {
-  const payload = toCamel(await requestJson(fetcher, `${promptVersionPath(versionId)}/image-attempts`, jsonRequest("POST", { uploadedImageId }), "Could not create Image Attempt."));
-  return payloadValue<ImageAttempt>(payload, "imageAttempt");
-}
-
-export async function uploadImageAttempt(versionId: string, file: File, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt> {
-  const body = new FormData();
-  body.append("file", file);
-  const payload = toCamel(await requestJson(
-    fetcher,
-    `${promptVersionPath(versionId)}/image-attempts/upload`,
-    { method: "POST", body },
-    "Could not upload Image Attempt.",
-  ));
-  return payloadValue<ImageAttempt>(payload, "imageAttempt");
-}
-
-export async function listImageAttempts(versionId: string, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt[]> {
-  const payload = toCamel(await requestJson(fetcher, `${promptVersionPath(versionId)}/image-attempts`, { method: "GET" }, "Could not list Image Attempts."));
-  return arrayFromPayload<ImageAttempt>(payload, "imageAttempts");
-}
-
-export async function reviewImageAttempt(attemptId: string, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt> {
-  const payload = toCamel(await requestJson(fetcher, `${imageAttemptPath(attemptId)}/review`, { method: "POST" }, "Could not review Image Attempt."));
-  return payloadValue<ImageAttempt>(payload, "imageAttempt");
-}
-
-export async function updateImageAttempt(attemptId: string, patch: ImageAttemptPatchRequest, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt> {
-  const payload = toCamel(await requestJson(fetcher, imageAttemptPath(attemptId), jsonRequest("PATCH", patch), "Could not update Image Attempt."));
-  return payloadValue<ImageAttempt>(payload, "imageAttempt");
-}
-
-export async function importImageAttempt(attemptId: string, fetcher: CoursePlannerFetcher = fetch): Promise<ImageAttempt> {
-  const payload = toCamel(await requestJson(fetcher, `${imageAttemptPath(attemptId)}/import`, { method: "POST" }, "Could not import Image Attempt."));
-  return payloadValue<ImageAttempt>(payload, "imageAttempt");
-}
-
 function normalizeState(payload: unknown): CoursePlannerState {
   const state = toCamel(payload) as Partial<CoursePlannerState>;
   const scenePacks = state.scenePacks ?? [];
   const chapters = arrayFromPayload<Chapter>(state, "chapters");
-  const promptVersions = arrayFromPayload<PromptVersion>(state, "promptVersions").map(normalizePromptVersion);
-  const imageAttempts = arrayFromPayload<ImageAttempt>(state, "imageAttempts");
   return {
     scenePacks,
     activeScenePackId: state.activeScenePackId ?? scenePacks[0]?.id ?? null,
     candidatesByScenePackId: state.candidatesByScenePackId ?? {},
     chaptersByScenePackId: state.chaptersByScenePackId ?? groupBy(chapters, (chapter) => chapter.scenePackId, orderedChapters),
-    promptVersionsByChapterId: normalizePromptVersionsByChapterId(state.promptVersionsByChapterId) ?? groupBy(promptVersions, (version) => version.chapterId),
-    imageAttemptsByVersionId: state.imageAttemptsByVersionId ?? groupBy(imageAttempts, (attempt) => attempt.promptVersionId),
     selectedChapterId: state.selectedChapterId ?? null,
-    selectedPromptVersionId: state.selectedPromptVersionId ?? null,
     asyncStatus: state.asyncStatus ?? {},
     tasks: state.tasks ?? [],
-  };
-}
-
-function normalizePromptVersionsByChapterId(value: CoursePlannerState["promptVersionsByChapterId"] | undefined): CoursePlannerState["promptVersionsByChapterId"] | undefined {
-  if (!value) {
-    return undefined;
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([chapterId, versions]) => [
-      chapterId,
-      versions.map(normalizePromptVersion),
-    ]),
-  );
-}
-
-function normalizePromptVersion(version: PromptVersion): PromptVersion {
-  return {
-    ...version,
-    castBindings: version.castBindings ?? [],
-    sceneVocabulary: version.sceneVocabulary ?? emptySceneVocabulary(),
-    promptTuning: version.promptTuning ?? {
-      styleAnchor: version.sceneDirectorPlan?.styleAndConstraints ?? "",
-      styleReferenceImageIds: [],
-      sceneReferenceImageIds: [],
-      mustKeep: [],
-      avoid: [],
-    },
-    objectPlan: version.objectPlan ?? {
-      coreObjects: [],
-      requiredObjects: [],
-      recommendedObjects: [],
-      avoidOrMoveObjects: [],
-    },
-  };
-}
-
-function emptySceneVocabulary(): PromptVersion["sceneVocabulary"] {
-  // WHY: 02 中栏预览以 scene-first vocabulary 为单一事实源；缺失该字段时宁可显式留空，也不能把 legacy objectPlan 误投影成新的叙事词真相。
-  return {
-    narrativeAnchors: [],
-    optionalVocabularyCandidates: [],
-    ambientFurnishingPolicy: "",
-    avoidObjects: [],
   };
 }
 
@@ -311,17 +180,3 @@ function chapterSeedRequest(seed: ChapterSeed) {
 function scenePackPath(scenePackId: string): string {
   return `${API_ROOT}/scene-packs/${encodePathPart(scenePackId)}`;
 }
-
-function chapterPath(chapterId: string): string {
-  return `${API_ROOT}/chapters/${encodePathPart(chapterId)}`;
-}
-
-function promptVersionPath(versionId: string): string {
-  return `${API_ROOT}/prompt-versions/${encodePathPart(versionId)}`;
-}
-
-function imageAttemptPath(attemptId: string): string {
-  return `${API_ROOT}/image-attempts/${encodePathPart(attemptId)}`;
-}
-
-export type { PromptPackage };

@@ -1,4 +1,5 @@
 import type {
+  AvoidObjectItem,
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
   TargetObjectItem,
@@ -15,24 +16,30 @@ import {
 import type { CoursePlannerFetcher } from "./apiClient";
 
 export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label" | "description" | "priority">;
+export type ChapterScenePromptAvoidObjectInput = Pick<AvoidObjectItem, "label" | "description">;
+export type PromptReadinessConfirmationInput = {
+  avoidObjectsReviewed: boolean;
+  styleReferenceMode: "unreviewed" | "selected" | "confirmed_empty";
+};
 export type ChapterScenePromptInput = {
   promptText: string;
-  negativeConstraints?: string;
-  styleNotes?: string;
+  sceneSpatialContract?: string;
   targetObjects?: ChapterScenePromptTargetObjectInput[];
+  avoidObjects?: ChapterScenePromptAvoidObjectInput[];
+  promptConfirmations?: PromptReadinessConfirmationInput;
 };
 export type ReferenceUploadInput = {
   promptRole?: "style" | "scene" | "character" | "other";
   notes?: string;
 };
-export type BaseCandidateUploadInput = {
-  referenceIds?: string[];
+export type EmptySceneImageUploadInput = {
+  referenceImageIds?: string[];
   promptSnapshot?: string;
 };
 export type CompleteImageUploadInput = {
-  referenceIds?: string[];
+  referenceImageIds?: string[];
   promptSnapshot?: string;
-  variationPrompt?: string;
+  generationNote?: string;
 };
 export type RunAssociationInput = {
   runId: string;
@@ -43,6 +50,10 @@ export type ChapterAssetUploadInput = {
   sourceRunAssetId: string;
   displayName: string;
   sourceCompleteImageId?: string;
+  linkedTargetObjectId?: string;
+};
+export type DirectChapterAssetUploadInput = {
+  displayName: string;
   linkedTargetObjectId?: string;
 };
 
@@ -84,34 +95,34 @@ export async function uploadChapterSceneReference(
   );
 }
 
-export async function uploadEmptyBaseSceneCandidate(
+export async function uploadEmptySceneImage(
   chapterId: string,
   file: File,
-  input: BaseCandidateUploadInput = {},
+  input: EmptySceneImageUploadInput = {},
   fetcher: CoursePlannerFetcher = fetch,
 ): Promise<ChapterScenePackage> {
   const body = new FormData();
   body.append("file", file);
-  appendStringListField(body, "referenceIds", input.referenceIds);
+  appendStringListField(body, "referenceImageIds", input.referenceImageIds);
   appendOptionalStringField(body, "promptSnapshot", input.promptSnapshot);
   return requestScenePackage(
     fetcher,
-    `${scenePackagePath(chapterId)}/base-candidates`,
+    `${scenePackagePath(chapterId)}/empty-scene-images`,
     { method: "POST", body },
-    "Could not upload empty base scene candidate.",
+    "Could not upload Empty Scene Image.",
   );
 }
 
-export async function lockEmptyBaseScene(
+export async function selectEmptySceneImage(
   chapterId: string,
-  candidateId: string,
+  emptySceneImageId: string,
   fetcher: CoursePlannerFetcher = fetch,
 ): Promise<ChapterScenePackage> {
   return requestScenePackage(
     fetcher,
-    `${scenePackagePath(chapterId)}/base-candidates/${encodePathPart(candidateId)}/lock`,
-    { method: "POST" },
-    "Could not lock empty base scene.",
+    `${scenePackagePath(chapterId)}/current-empty-scene`,
+    jsonRequest("POST", { emptySceneImageId }),
+    "Could not select Empty Scene Image.",
   );
 }
 
@@ -123,9 +134,9 @@ export async function uploadCompleteSceneImage(
 ): Promise<ChapterScenePackage> {
   const body = new FormData();
   body.append("file", file);
-  appendStringListField(body, "referenceIds", input.referenceIds);
+  appendStringListField(body, "referenceImageIds", input.referenceImageIds);
   appendOptionalStringField(body, "promptSnapshot", input.promptSnapshot);
-  appendOptionalStringField(body, "variationPrompt", input.variationPrompt);
+  appendOptionalStringField(body, "generationNote", input.generationNote);
   return requestScenePackage(
     fetcher,
     `${scenePackagePath(chapterId)}/complete-images`,
@@ -172,6 +183,24 @@ export async function uploadChapterAssetFromRunAsset(
   );
 }
 
+export async function uploadDirectChapterAsset(
+  chapterId: string,
+  file: File,
+  input: DirectChapterAssetUploadInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("displayName", input.displayName);
+  appendOptionalStringField(body, "linkedTargetObjectId", input.linkedTargetObjectId);
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/chapter-assets/direct-upload`,
+    { method: "POST", body },
+    "Could not upload direct Scene Asset.",
+  );
+}
+
 export async function saveChapterSceneAssembly(
   chapterId: string,
   manifest: ChapterSceneAssemblyManifest,
@@ -185,22 +214,38 @@ export async function saveChapterSceneAssembly(
   );
 }
 
-function chapterScenePromptPatchBody(
-  input: ChapterScenePromptInput,
-): Record<string, unknown> {
+export async function lockFinalChapterScene(
+  chapterId: string,
+  file: File,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  const body = new FormData();
+  body.append("file", file);
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/final-scene`,
+    { method: "POST", body },
+    "Could not lock Final Chapter Scene.",
+  );
+}
+
+function chapterScenePromptPatchBody(input: ChapterScenePromptInput): Record<string, unknown> {
   const body: Record<string, unknown> = {
     promptText: input.promptText,
   };
-  // WHY: PATCH 省略字段表示“保持现状”；只有调用方显式给空串/空数组时，
-  // 才应该把 scene package 里的 metadata 或 targetObjects 清空。
-  if (input.negativeConstraints !== undefined) {
-    body.negativeConstraints = input.negativeConstraints;
-  }
-  if (input.styleNotes !== undefined) {
-    body.styleNotes = input.styleNotes;
+  // WHY: PATCH 省略字段表示“沿用当前 chapter scene package 事实”，
+  // 只有显式传入空串或空数组时才应该清空对应内容，避免前端投影误删用户已确认的数据。
+  if (input.sceneSpatialContract !== undefined) {
+    body.sceneSpatialContract = input.sceneSpatialContract;
   }
   if (input.targetObjects !== undefined) {
     body.targetObjects = input.targetObjects;
+  }
+  if (input.avoidObjects !== undefined) {
+    body.avoidObjects = input.avoidObjects;
+  }
+  if (input.promptConfirmations !== undefined) {
+    body.promptConfirmations = input.promptConfirmations;
   }
   return body;
 }
@@ -215,8 +260,8 @@ async function requestScenePackage(
   init: RequestInit,
   fallbackError: string,
 ): Promise<ChapterScenePackage> {
-  // WHY: scene-package foundation 直接复用后端 snake_case 作为前后端共享合同，
-  // 避免在 Chapter Workspace 迁移期间一边写新组装数据，一边再制造一套 camelCase 镜像真相。
+  // WHY: scene-package 当前以 backend snake_case 作为唯一合同源，
+  // 前端这里不再做 camelCase 镜像，避免 Task 5 页面迁移期间再次分叉事实源。
   const payload = await requestJson(fetcher, input, init, fallbackError);
   return payloadValue<ChapterScenePackage>(payload, "scenePackage");
 }

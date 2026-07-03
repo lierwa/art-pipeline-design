@@ -1,17 +1,10 @@
-import type { Chapter, CoursePlannerState, PromptVersion, ScenePack } from "../types";
+import type { Chapter, CoursePlannerState, ScenePack } from "../types";
 
 export function findChapter(state: CoursePlannerState, chapterId: string | null): Chapter | null {
   if (!chapterId) {
     return null;
   }
   return Object.values(state.chaptersByScenePackId).flat().find((chapter) => chapter.id === chapterId) ?? null;
-}
-
-export function findPromptVersion(state: CoursePlannerState, versionId: string | null): PromptVersion | null {
-  if (!versionId) {
-    return null;
-  }
-  return Object.values(state.promptVersionsByChapterId).flat().find((version) => version.id === versionId) ?? null;
 }
 
 export function orderedChapters(chapters: Chapter[]): Chapter[] {
@@ -26,18 +19,6 @@ export function reorderLocalChapters(chapters: Chapter[], chapterIds: string[]):
       return chapter ? { ...chapter, sortOrder: index + 1 } : null;
     })
     .filter((chapter): chapter is Chapter => Boolean(chapter));
-}
-
-export function preferredPromptVersionId(versions: PromptVersion[]): string | null {
-  return versions.find((version) => version.status === "adopted")?.id ?? versions[versions.length - 1]?.id ?? null;
-}
-
-export function preferredPromptVersionIdForChapter(state: CoursePlannerState, chapterId: string | null): string | null {
-  return chapterId ? preferredPromptVersionId(state.promptVersionsByChapterId[chapterId] ?? []) : null;
-}
-
-export function promptVersionBelongsToChapter(state: CoursePlannerState, versionId: string | null, chapterId: string | null): boolean {
-  return Boolean(versionId && chapterId && findPromptVersion(state, versionId)?.chapterId === chapterId);
 }
 
 export function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
