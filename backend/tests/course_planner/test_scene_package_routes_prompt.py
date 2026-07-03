@@ -49,13 +49,6 @@ def test_patch_scene_package_prompt_updates_new_model_surface(
                 "avoidObjectsReviewed": True,
                 "styleReferenceMode": "confirmed_empty",
             },
-            "referenceSelections": [
-                {
-                    "referenceImageId": "reference_style_001",
-                    "promptRole": "style",
-                    "notes": "warm palette",
-                }
-            ],
         },
     )
 
@@ -66,7 +59,34 @@ def test_patch_scene_package_prompt_updates_new_model_surface(
     assert payload["target_objects"][0]["label"] == "book"
     assert payload["avoid_objects"][0]["label"] == "shattered glass"
     assert payload["prompt_confirmations"]["avoid_objects_reviewed"] is True
-    assert payload["reference_selections"][0]["reference_image_id"] == "reference_style_001"
+    assert payload["reference_selections"] == []
+
+
+def test_patch_scene_package_prompt_rejects_reference_selections_before_library_validation(
+    client: TestClient,
+) -> None:
+    chapter_id = _create_chapter(client)
+
+    response = client.patch(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
+        json={
+            "promptText": "Low-shadow room scene.",
+            "referenceSelections": [
+                {
+                    "referenceImageId": "reference_style_001",
+                    "promptRole": "style",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    errors = response.json()["detail"]
+    assert any(
+        error["type"] == "extra_forbidden"
+        and error["loc"][-1] == "referenceSelections"
+        for error in errors
+    )
 
 
 def test_patch_scene_package_prompt_invalid_body_returns_400(client: TestClient) -> None:
@@ -103,12 +123,6 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_lists(
                 }
             ],
             "avoidObjects": [{"label": "shattered glass"}],
-            "referenceSelections": [
-                {
-                    "referenceImageId": "reference_style_001",
-                    "promptRole": "style",
-                }
-            ],
         },
     )
     preserve_response = client.patch(
@@ -121,7 +135,6 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_lists(
             "promptText": "Brighter breakfast room.",
             "sceneSpatialContract": "",
             "avoidObjects": [],
-            "referenceSelections": [],
         },
     )
 
@@ -139,15 +152,106 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_lists(
             "description": "",
         }
     ]
-    assert preserved_payload["reference_selections"][0]["reference_image_id"] == (
-        "reference_style_001"
-    )
+    assert preserved_payload["reference_selections"] == []
 
     assert clear_response.status_code == 200
     cleared_payload = clear_response.json()["scenePackage"]
     assert cleared_payload["prompt"]["scene_spatial_contract"] == ""
     assert cleared_payload["avoid_objects"] == []
     assert cleared_payload["reference_selections"] == []
+
+
+def test_prompt_patch_default_snapshots_support_empty_complete_and_final_scene(
+    client: TestClient,
+) -> None:
+    chapter_id = _create_chapter(client)
+
+    prompt_response = client.patch(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
+        json={
+            "promptText": "Cozy bedroom cleanup scene.",
+            "sceneSpatialContract": "Bed against back wall, desk by window, walkway clear.",
+            "targetObjects": [{"label": "book", "description": "yellow cover"}],
+            "avoidObjects": [{"label": "broken glass"}],
+            "promptConfirmations": {
+                "avoidObjectsReviewed": True,
+                "styleReferenceMode": "confirmed_empty",
+            },
+        },
+    )
+    empty_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
+        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
+    )
+    empty_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
+    select_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
+        json={"emptySceneImageId": empty_id},
+    )
+    complete_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/complete-images",
+        files={"file": ("complete.png", _png_bytes(width=120, height=80), "image/png")},
+    )
+    complete_id = complete_response.json()["scenePackage"]["complete_images"][0]["id"]
+    asset_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
+        data={"displayName": "book"},
+        files={"file": ("book.png", _png_bytes(width=32, height=32), "image/png")},
+    )
+    asset_id = asset_response.json()["scenePackage"]["chapter_assets"][0]["id"]
+    assembly_response = client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/assembly",
+        json={
+            "schema_version": 1,
+            "empty_scene_image_id": empty_id,
+            "empty_scene_size": {"width": 120, "height": 80},
+            "placements": [
+                {
+                    "id": "placement_001",
+                    "asset_id": asset_id,
+                    "display_name": "book",
+                    "runtime_role": "target",
+                    "transform": {
+                        "cx": 0.5,
+                        "cy": 0.5,
+                        "w": 0.2,
+                        "h": 0.2,
+                        "rotation_deg": 0,
+                    },
+                    "requires_placed": [],
+                }
+            ],
+            "groups": [],
+            "layer_order": ["placement_001"],
+        },
+    )
+    final_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene",
+        files={"file": ("final.png", _png_bytes(width=120, height=80), "image/png")},
+    )
+
+    assert prompt_response.status_code == 200
+    assert empty_response.status_code == 200
+    assert select_response.status_code == 200
+    assert complete_response.status_code == 200
+    assert asset_response.status_code == 200
+    assert assembly_response.status_code == 200
+    assert final_response.status_code == 200
+    assert complete_id.startswith("complete_scene_")
+    empty_snapshot = empty_response.json()["scenePackage"]["empty_scene_images"][0][
+        "prompt_snapshot"
+    ]
+    complete_snapshot = complete_response.json()["scenePackage"]["complete_images"][0][
+        "prompt_snapshot"
+    ]
+    final_snapshot = final_response.json()["scenePackage"]["final_scene"][
+        "prompt_snapshot"
+    ]
+    assert "Cozy bedroom cleanup scene." in empty_snapshot
+    assert "Bed against back wall" in empty_snapshot
+    assert "Target objects: book" in complete_snapshot
+    assert "Selected empty scene image" in complete_snapshot
+    assert "broken glass" in final_snapshot
 
 
 def test_upload_empty_scene_and_select_current_image(client: TestClient) -> None:

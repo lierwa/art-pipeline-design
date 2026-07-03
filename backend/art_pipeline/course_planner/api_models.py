@@ -62,16 +62,6 @@ class PromptReadinessConfirmationRequest(BaseModel):
     )
 
 
-class ChapterReferenceSelectionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    reference_image_id: str = Field(alias="referenceImageId", min_length=1)
-    prompt_role: Literal["character", "style", "scene", "other"] = Field(
-        alias="promptRole"
-    )
-    notes: str = ""
-
-
 class ChapterScenePromptPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -91,10 +81,6 @@ class ChapterScenePromptPatchRequest(BaseModel):
     prompt_confirmations: PromptReadinessConfirmationRequest | None = Field(
         default=None,
         alias="promptConfirmations",
-    )
-    reference_selections: list[ChapterReferenceSelectionRequest] | None = Field(
-        default=None,
-        alias="referenceSelections",
     )
 
 

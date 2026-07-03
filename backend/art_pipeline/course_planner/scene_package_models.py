@@ -47,10 +47,11 @@ class ChapterCastAssignment(CoursePlannerModel):
 
 
 class ChapterReferenceSelection(CoursePlannerModel):
+    # WHY: Chapter 这里只持久化已验证过的库图片 id 与 prompt 角色；
+    # 备注说明属于 Reference Library 事实源，避免 chapter-local 再分叉出第二条解释通道。
     id: str = Field(min_length=1)
     reference_image_id: str = Field(min_length=1)
     prompt_role: Literal["character", "style", "scene", "other"]
-    notes: str = ""
 
 
 class AssemblyTransform(CoursePlannerModel):

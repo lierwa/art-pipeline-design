@@ -15,7 +15,6 @@ from art_pipeline.course_planner.scene_package_media_store import (
 )
 from art_pipeline.course_planner.scene_package_models import (
     AvoidObjectItem,
-    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterSceneAssemblyManifest,
     ChapterScenePackage,
@@ -52,7 +51,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         target_objects: list[dict[str, str]] | None = None,
         avoid_objects: list[dict[str, str]] | None = None,
         prompt_confirmations: dict[str, object] | None = None,
-        reference_selections: list[dict[str, str]] | None = None,
     ) -> ChapterScenePackage:
         current = self.read_chapter_scene_package(chapter_id)
         prompt = ChapterScenePrompt(
@@ -79,11 +77,8 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             if prompt_confirmations is None
             else PromptReadinessConfirmation.model_validate(prompt_confirmations)
         )
-        normalized_reference_selections = (
-            current.reference_selections
-            if reference_selections is None
-            else self._normalize_reference_selections(reference_selections)
-        )
+        # WHY: Task 6 的库路由/校验未落地前，prompt PATCH 只能更新文字与 readiness；
+        # reference_selections 必须继续由已验证的数据源写入，避免默认快照阶段拿到裸 id 后失真。
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
@@ -91,7 +86,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
                     "target_objects": normalized_targets,
                     "avoid_objects": normalized_avoid_objects,
                     "prompt_confirmations": normalized_confirmations,
-                    "reference_selections": normalized_reference_selections,
                 }
             )
         )
@@ -256,23 +250,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
                 }
             )
             for index, target in enumerate(avoid_objects, start=1)
-        ]
-
-    def _normalize_reference_selections(
-        self,
-        reference_selections: list[dict[str, str]],
-    ) -> list[ChapterReferenceSelection]:
-        return [
-            ChapterReferenceSelection.model_validate(
-                {
-                    "id": selection.get("id")
-                    or f"reference_selection_{index:03d}",
-                    "reference_image_id": selection["reference_image_id"],
-                    "prompt_role": selection["prompt_role"],
-                    "notes": selection.get("notes", ""),
-                }
-            )
-            for index, selection in enumerate(reference_selections, start=1)
         ]
 
     def _historicalize_complete_images_for_replaced_empty_scene(

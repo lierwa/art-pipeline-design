@@ -63,13 +63,6 @@ def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
             "avoid_objects_reviewed": True,
             "style_reference_mode": "confirmed_empty",
         },
-        reference_selections=[
-            {
-                "reference_image_id": "reference_style_001",
-                "prompt_role": "style",
-                "notes": "warm palette",
-            }
-        ],
     )
 
     reloaded = store.read_chapter_scene_package(chapter.id)
@@ -86,7 +79,7 @@ def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
     ]
     assert reloaded.prompt_confirmations.avoid_objects_reviewed is True
     assert reloaded.prompt_confirmations.style_reference_mode == "confirmed_empty"
-    assert reloaded.reference_selections[0].reference_image_id == "reference_style_001"
+    assert reloaded.reference_selections == []
 
 
 def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explicit_empty(
@@ -114,7 +107,6 @@ def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explici
         prompt_text="A brighter bedroom empty scene.",
         scene_spatial_contract="",
         avoid_objects=[],
-        reference_selections=[],
     )
 
     assert preserved.prompt.prompt_text == "A brighter bedroom empty scene."

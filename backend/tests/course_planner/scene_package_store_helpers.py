@@ -12,7 +12,6 @@ from art_pipeline.course_planner.scene_package_models import (
     AssemblyTransform,
     ChapterAsset,
     ChapterAssetLineage,
-    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterScenePackage,
     CompleteSceneImage,
@@ -48,25 +47,6 @@ def make_store_with_prompt(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter]
         avoid_objects=[{"label": "shattered glass"}],
     )
     return store, chapter
-
-
-def make_store_with_prompt_and_reference_selection(
-    tmp_path: Path,
-) -> tuple[CoursePlannerStore, Chapter, str]:
-    store, chapter = make_store_with_prompt(tmp_path)
-    package = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        reference_selections=[
-            {
-                "reference_image_id": "reference_style_001",
-                "prompt_role": "style",
-                "notes": "warm palette",
-            }
-        ],
-    )
-    return store, chapter, package.reference_selections[0].reference_image_id
-
 
 def make_store_with_empty_scene_image(
     tmp_path: Path,
@@ -257,19 +237,6 @@ def make_stub_chapter_asset(asset_id: str = "chapter_asset_001") -> ChapterAsset
         linked_target_object_id="target_object_001",
         created_at="2026-07-03T10:06:00Z",
     )
-
-
-def make_stub_reference_selection(
-    reference_image_id: str = "reference_style_001",
-) -> ChapterReferenceSelection:
-    return ChapterReferenceSelection(
-        id="reference_selection_001",
-        reference_image_id=reference_image_id,
-        prompt_role="style",
-        notes="warm palette",
-    )
-
-
 def make_png_bytes(*, width: int = 8, height: int = 6) -> bytes:
     image = Image.new("RGBA", (width, height), (120, 45, 200, 255))
     buffer = BytesIO()

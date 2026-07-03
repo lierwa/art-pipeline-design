@@ -68,11 +68,6 @@ async def patch_scene_package_prompt(
                 if "prompt_confirmations" in payload.model_fields_set
                 else None
             ),
-            reference_selections=(
-                _reference_selection_updates(payload)
-                if "reference_selections" in payload.model_fields_set
-                else None
-            ),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
@@ -348,18 +343,6 @@ def _prompt_confirmation_updates(
     if payload.prompt_confirmations is None:
         return {}
     return payload.prompt_confirmations.model_dump(mode="python", by_alias=False)
-
-
-def _reference_selection_updates(
-    payload: ChapterScenePromptPatchRequest,
-) -> list[dict[str, str]]:
-    if payload.reference_selections is None:
-        return []
-    return [
-        selection.model_dump(mode="python", by_alias=False)
-        for selection in payload.reference_selections
-    ]
-
 
 def _optional_prompt_snapshot(value: object) -> str | None:
     if value is None:

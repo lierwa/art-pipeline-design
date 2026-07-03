@@ -17,7 +17,6 @@ from scene_package_store_helpers import (
     make_store_with_complete_image,
     make_store_with_empty_scene_image,
     make_store_with_prompt,
-    make_store_with_prompt_and_reference_selection,
     make_store_with_selected_empty_scene,
     make_store_with_two_empty_scene_images_and_assembly,
     scene_package_json_path,
@@ -27,16 +26,14 @@ from scene_package_store_helpers import (
 def test_add_empty_scene_image_captures_prompt_and_reference_snapshot(
     tmp_path: Path,
 ) -> None:
-    store, chapter, reference_image_id = make_store_with_prompt_and_reference_selection(
-        tmp_path
-    )
+    store, chapter = make_store_with_prompt(tmp_path)
 
     package = store.add_empty_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=120, height=80),
         original_filename="empty.png",
         prompt_snapshot="Custom empty scene prompt snapshot.",
-        reference_image_ids=[reference_image_id],
+        reference_image_ids=[],
     )
 
     image = package.empty_scene_images[0]
@@ -47,7 +44,7 @@ def test_add_empty_scene_image_captures_prompt_and_reference_snapshot(
     assert image.height == 80
     assert image.status == "available"
     assert image.prompt_snapshot == "Custom empty scene prompt snapshot."
-    assert image.reference_snapshot.reference_image_ids == [reference_image_id]
+    assert image.reference_snapshot.reference_image_ids == []
     assert image.reference_snapshot.current_empty_scene_image_id is None
 
 
