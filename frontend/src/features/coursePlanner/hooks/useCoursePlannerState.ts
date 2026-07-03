@@ -269,6 +269,7 @@ export function useCoursePlannerState() {
     reorderChapters: handleReorderChapters,
     deleteChapter: handleDeleteChapter,
     refresh,
+    runAsyncOperation: runOperation,
     clearAsyncStatus,
     setActiveScenePackId: (activeScenePackId: string | null) => applyState((current) => ({ ...current, activeScenePackId })),
     setSelectedChapterId: (selectedChapterId: string | null) => applyState((current) => ({ ...current, selectedChapterId })),

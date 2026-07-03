@@ -37,7 +37,7 @@ export function SelectedChapterSequence({
       <div className="planning-panel-header">
         <div>
           <h2>Chapter List</h2>
-          <p>{chapters.length > 0 ? "拖拽排序，打开 Designer 继续做 Prompt Version。" : "接受候选后会出现在这里。"}</p>
+          <p>{chapters.length > 0 ? "拖拽排序，打开 Designer 继续处理 Scene Studio。" : "接受候选后会出现在这里。"}</p>
         </div>
       </div>
 

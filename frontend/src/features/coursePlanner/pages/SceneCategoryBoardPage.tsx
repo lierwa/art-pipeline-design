@@ -10,6 +10,7 @@ import {
   CoursePlannerStatusBadge,
 } from "../components/CoursePlannerChrome";
 import "../components/coursePlanner.css";
+import "../components/coursePlannerPanels.css";
 import { PlanningBriefPanel } from "../components/PlanningBriefPanel";
 import { SceneCategoryList } from "../components/SceneCategoryList";
 import { SelectedChapterSequence } from "../components/SelectedChapterSequence";
