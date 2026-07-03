@@ -19,7 +19,13 @@ from art_pipeline.course_planner.ai_tasks import (
     read_ai_task_record,
     run_ai_task,
 )
+from art_pipeline.course_planner.import_to_pipeline import (
+    import_final_chapter_scene_to_pipeline,
+)
 from art_pipeline.course_planner.models import Chapter, ChapterSeed, ScenePack
+from art_pipeline.course_planner.scene_package_errors import (
+    ScenePackagePreconditionError,
+)
 from art_pipeline.course_planner.scene_package_routes import (
     register_scene_package_routes,
 )
@@ -219,6 +225,23 @@ def delete_chapter(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"deletedChapterId": chapterId}
+
+
+@router.post("/chapters/{chapterId}/scene-package/final-scene/import")
+def post_import_final_scene(request: Request, chapterId: str) -> dict[str, object]:
+    try:
+        result = import_final_chapter_scene_to_pipeline(
+            planner_store=_store(request),
+            workspace_root=request.app.state.workspace_root,
+            chapter_id=chapterId,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Chapter or final scene not found.") from exc
+    except ScenePackagePreconditionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"run": result.run.model_dump(mode="json")}
 
 
 @router.get("/ai-tasks/{taskId}")

@@ -5,8 +5,11 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
-
+from art_pipeline.course_planner.scene_package_errors import (
+    ScenePackagePreconditionError,
+)
+from art_pipeline.course_planner.scene_package_media import read_scene_package_png_size
+from art_pipeline.course_planner.scene_package_models import ChapterScenePackage
 from art_pipeline.course_planner.store import CoursePlannerStore
 from art_pipeline.elements import SourceMetadata, WorkspaceState
 from art_pipeline.workspace.store import (
@@ -26,41 +29,42 @@ class CoursePlannerImportResult:
     run: WorkspaceRunSummary
 
 
-def import_locked_scene_version_to_pipeline(
+def import_final_chapter_scene_to_pipeline(
     *,
     planner_store: CoursePlannerStore,
     workspace_root: Path,
-    course_id: str,
-    space_id: str,
     chapter_id: str,
-    version_id: str,
 ) -> CoursePlannerImportResult:
-    version = planner_store.read_scene_version(course_id, space_id, chapter_id, version_id)
-    if version.status != "locked":
-        raise ValueError("Scene version must be locked before importing to pipeline.")
+    package = planner_store.read_chapter_scene_package(chapter_id)
+    final_scene = package.final_scene
+    if final_scene is None:
+        raise ScenePackagePreconditionError(
+            "Final chapter scene must be locked before importing to pipeline."
+        )
 
-    keywords = planner_store.read_scene_keywords(course_id, space_id, chapter_id)
-    source_image_path = planner_store.scene_version_image_path(
-        course_id,
-        space_id,
+    source_image_path, _ = planner_store.read_chapter_scene_package_media(
         chapter_id,
-        version,
+        "final_scene",
+        final_scene.id,
     )
+    detection_vocabulary = _target_object_labels(package)
     return _create_workspace_run_from_png(
         workspace_root=workspace_root,
         source_image_path=source_image_path,
-        source_filename=f"{course_id}_{space_id}_{chapter_id}_{version.id}.png",
-        title=f"{chapter_id} {version.id}",
-        detection_vocabulary=keywords.keywords,
-        scene_context=_scene_version_context(
-            planner_store=planner_store,
-            course_id=course_id,
-            space_id=space_id,
-            chapter_id=chapter_id,
-            version_id=version.id,
-            keywords=keywords.keywords,
-            image_path=source_image_path,
-        ),
+        source_filename=f"{chapter_id}_{final_scene.id}.png",
+        title=f"{chapter_id} {final_scene.id}",
+        detection_vocabulary=detection_vocabulary,
+        scene_context={
+            "source": "course_planner",
+            "chapter_id": chapter_id,
+            "final_scene_id": final_scene.id,
+            "final_scene_storage_path": final_scene.storage_path,
+            # WHY: import 产物必须绑定锁定 Final Scene 当时选中的 empty scene，
+            # 不能回读 chapter 当前选择，否则后续替换画布后会把旧 run 误指向新事实源。
+            "selected_empty_scene_image_id": final_scene.empty_scene_image_id,
+            "target_object_labels": detection_vocabulary,
+        },
+        png_label="Final chapter scene image",
     )
 
 
@@ -72,8 +76,9 @@ def _create_workspace_run_from_png(
     title: str,
     detection_vocabulary: list[str],
     scene_context: dict[str, object],
+    png_label: str,
 ) -> CoursePlannerImportResult:
-    width, height = _load_png_size(source_image_path)
+    width, height = _read_png_size(source_image_path, png_label)
 
     workspace_root = Path(workspace_root).resolve()
     next_id = next_run_id(workspace_root, source_filename)
@@ -119,50 +124,16 @@ def _create_workspace_run_from_png(
         raise
 
 
-def _load_png_size(path: Path) -> tuple[int, int]:
-    try:
-        with Image.open(path) as image:
-            image.load()
-            if image.format != "PNG":
-                raise ValueError("Scene version image must be a PNG.")
-            return image.width, image.height
-    except UnidentifiedImageError as exc:
-        raise ValueError("Scene version image must be a valid PNG.") from exc
+def _read_png_size(path: Path, label: str) -> tuple[int, int]:
+    return read_scene_package_png_size(path.read_bytes(), label)
 
 
-def _scene_version_context(
-    *,
-    planner_store: CoursePlannerStore,
-    course_id: str,
-    space_id: str,
-    chapter_id: str,
-    version_id: str,
-    keywords: list[str],
-    image_path: Path,
-) -> dict[str, object]:
-    version_json_path = planner_store.scene_version_json_path(
-        course_id,
-        space_id,
-        chapter_id,
-        version_id,
-    )
-    return {
-        "source": "course_planner",
-        "course_id": course_id,
-        "space_id": space_id,
-        "chapter_id": chapter_id,
-        "scene_version_id": version_id,
-        "scene_version_path": _scene_library_relative_path(planner_store, version_json_path),
-        "image_path": _scene_library_relative_path(planner_store, image_path),
-        "keywords": keywords,
-    }
-
-
-def _scene_library_relative_path(
-    planner_store: CoursePlannerStore,
-    path: Path,
-) -> str:
-    return path.resolve().relative_to(planner_store.scene_library_root).as_posix()
+def _target_object_labels(package: ChapterScenePackage) -> list[str]:
+    labels: list[str] = []
+    for item in package.target_objects:
+        if item.label not in labels:
+            labels.append(item.label)
+    return labels
 
 
 def _write_json(path: Path, payload: object) -> None:

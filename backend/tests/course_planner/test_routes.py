@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 from route_test_helpers import (
     FakeProvider,
@@ -12,6 +15,7 @@ from route_test_helpers import (
     create_scene_pack,
     scene_pack_payload,
 )
+from art_pipeline.workspace.store import read_runs, read_state
 
 
 def test_scene_pack_crud_and_state_use_hierarchy_contract(tmp_path: Path) -> None:
@@ -204,3 +208,104 @@ def test_cross_pack_chapter_delete_rejects_ownership_before_descendant_check(
     assert response.status_code == 404
     assert response.json()["detail"] == "Chapter not found."
     assert owner_chapters_response.json()["chapters"][0]["id"] == owned_chapter_id
+
+
+def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path) -> None:
+    client = client_with_provider(tmp_path)
+    scene_pack_id = create_scene_pack(client)
+    chapter_id = create_chapter(client, scene_pack_id)
+    client.patch(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
+        json={
+            "promptText": "Bedroom reading corner.",
+            "sceneSpatialContract": "Desk by the window, lamp near the book stack.",
+            "targetObjects": [
+                {"label": "book", "priority": "required"},
+                {"label": "lamp", "priority": "recommended"},
+            ],
+            "avoidObjects": [],
+            "promptConfirmations": {
+                "avoidObjectsReviewed": True,
+                "styleReferenceMode": "confirmed_empty",
+            },
+        },
+    )
+    empty_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
+        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
+    )
+    empty_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
+    client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
+        json={"emptySceneImageId": empty_id},
+    )
+    asset_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
+        data={"displayName": "book", "linkedTargetObjectId": "target_object_001"},
+        files={"file": ("book.png", _png_bytes(width=32, height=32), "image/png")},
+    )
+    asset_id = asset_response.json()["scenePackage"]["chapter_assets"][0]["id"]
+    client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/assembly",
+        json={
+            "schema_version": 1,
+            "empty_scene_image_id": empty_id,
+            "empty_scene_size": {"width": 120, "height": 80},
+            "placements": [
+                {
+                    "id": "placement_001",
+                    "asset_id": asset_id,
+                    "display_name": "book",
+                    "runtime_role": "target",
+                    "transform": {"cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2, "rotation_deg": 0},
+                    "requires_placed": [],
+                }
+            ],
+            "groups": [],
+            "layer_order": ["placement_001"],
+        },
+    )
+    client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene",
+        files={"file": ("final.png", _png_bytes(width=120, height=80), "image/png")},
+    )
+
+    response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene/import"
+    )
+
+    assert response.status_code == 200
+    run = response.json()["run"]
+    run_root = client.app.state.workspace_root / "runs" / run["id"]
+    state = read_state(run_root)
+    assert state.detectionVocabulary == ["book", "lamp"]
+    scene_context = json.loads((run_root / "scene_context.json").read_text(encoding="utf-8"))
+    assert scene_context["source"] == "course_planner"
+    assert scene_context["chapter_id"] == chapter_id
+    assert scene_context["final_scene_id"].startswith("final_scene_")
+    assert scene_context["selected_empty_scene_image_id"] == empty_id
+    assert scene_context["target_object_labels"] == ["book", "lamp"]
+    assert scene_context["final_scene_storage_path"].startswith("final_scene/")
+    assert read_runs(client.app.state.workspace_root)[0].id == run["id"]
+
+
+def test_final_scene_import_route_requires_locked_final_scene(tmp_path: Path) -> None:
+    client = client_with_provider(tmp_path)
+    scene_pack_id = create_scene_pack(client)
+    chapter_id = create_chapter(client, scene_pack_id)
+
+    response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene/import"
+    )
+
+    assert response.status_code == 409
+    assert "Final chapter scene must be locked before importing to pipeline." in response.json()[
+        "detail"
+    ]
+
+
+def _png_bytes(*, width: int = 16, height: int = 12) -> bytes:
+    image = Image.new("RGBA", (width, height), (255, 0, 0, 255))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()

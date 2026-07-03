@@ -71,3 +71,64 @@
 - Deleted the old prompt/image runtime implementation instead of preserving dead endpoints or dead persistence helpers.
 - Removed the old prompt-builder backend path because it existed only to support the deleted PromptVersion flow.
 - Removed old prompt/image assertions from tests instead of updating tests to protect deleted behavior.
+
+## Task Reviewer Findings Requiring Fix
+
+Critical:
+- Restore a spec-aligned Course Planner import route. The surviving import path must import the current Final Chapter Scene, not legacy scene_version files, and must be exposed through backend routes.
+
+Important:
+- Reuse shared PNG/media helpers in import_to_pipeline.py instead of duplicate `_load_png_size` logic.
+
+## Reviewer Fix Implementation (2026-07-03)
+
+### Fix summary
+
+- Replaced the legacy scene-version import helper with `import_final_chapter_scene_to_pipeline(...)`.
+- Added backend route `POST /api/course-planner/chapters/{chapterId}/scene-package/final-scene/import`.
+- Switched import source-of-truth to `read_chapter_scene_package(chapter_id).final_scene` and resolved media bytes through scene-package media/path helpers.
+- Wrote run `scene_context.json` with:
+  - `source: course_planner`
+  - `chapter_id`
+  - `final_scene_id`
+  - `final_scene_storage_path`
+  - `selected_empty_scene_image_id`
+  - `target_object_labels`
+- Replaced local PNG parsing with shared `read_scene_package_png_size(...)`.
+
+### Files changed
+
+- `backend/art_pipeline/course_planner/import_to_pipeline.py`
+- `backend/art_pipeline/course_planner/routes.py`
+- `backend/tests/course_planner/test_import_to_pipeline.py`
+- `backend/tests/course_planner/test_routes.py`
+
+### Tests and results
+
+- Focused import tests:
+  - `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_import_to_pipeline.py tests/course_planner/test_routes.py -q`
+  - Result: `11 passed`
+
+- Task 3 required green suite:
+  - `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_routes.py tests/course_planner/test_store.py tests/course_planner/test_ai_tasks.py tests/course_planner/test_scene_package_models.py tests/course_planner/test_scene_package_prompt_projection.py tests/course_planner/test_scene_package_assembly_validation.py tests/course_planner/test_scene_package_store_media.py tests/course_planner/test_scene_package_store_lifecycle.py tests/course_planner/test_scene_package_routes_complete_assets.py tests/course_planner/test_scene_package_routes_assembly_media_delete.py tests/course_planner/test_scene_package_routes_prompt.py tests/course_planner/test_import_to_pipeline.py tests/course_planner/test_models.py -q`
+  - Result: `138 passed`
+
+### Grep gates
+
+- `rg -n "PromptVersion|ImageAttempt|prompt-versions|image-attempts|promptPackage|prompt_package|GeneratePromptVersionOutput|ImageAttemptReview" backend/art_pipeline/course_planner backend/tests/course_planner`
+  - Result: no output
+
+- `rg -n "import_locked_scene_version_to_pipeline|_load_png_size|scene_version_id|scene_version_path" backend/art_pipeline/course_planner/import_to_pipeline.py backend/art_pipeline/course_planner/routes.py backend/tests/course_planner/test_import_to_pipeline.py backend/tests/course_planner/test_routes.py`
+  - Result: no output
+
+### Line counts
+
+- `backend/art_pipeline/course_planner/import_to_pipeline.py`: `140`
+- `backend/art_pipeline/course_planner/routes.py`: `312`
+- `backend/tests/course_planner/test_import_to_pipeline.py`: `132`
+- `backend/tests/course_planner/test_routes.py`: `311`
+
+### Hygiene
+
+- `git diff --check`
+  - Result: clean
