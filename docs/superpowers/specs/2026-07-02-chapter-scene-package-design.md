@@ -2,7 +2,7 @@
 
 ## Summary
 
-The selected design is a single Chapter Scene Studio for authoring one Chapter Scene Package per Chapter. The system does not call Image2 directly. It manages copy-ready prompts, references, uploaded scene images, pipeline runs, chapter assets, and an engine-agnostic assembly manifest.
+The selected design is a single Chapter Scene Studio for authoring one Chapter Scene Package per Chapter. The system does not call Image2 directly. It manages copy-ready prompts, shared Character IP / Reference Library selections, uploaded scene images, pipeline runs, chapter assets, and an engine-agnostic assembly manifest.
 
 The new hierarchy is:
 
@@ -20,24 +20,26 @@ Scene Category
 
 - Current Chapter Scene Prompt.
 - Target Object List.
-- Chapter Reference List.
-- Empty Base Scene Candidates and one current Empty Base Scene.
-- Complete Scene Images tied to the current base.
+- Chapter Reference Selection, which points to reusable Reference Library images.
+- Empty Scene Image Candidates and one current Empty Scene Image for the assembly background.
+- Complete Scene Images used as source material for asset harvesting and visual ideas.
 - Pipeline run associations for complete images.
+- Direct Scene Asset Uploads.
 - Chapter Asset Pool.
 - Chapter Scene Assembly Manifest.
+- Final Chapter Scene.
 
 `Chapter Scene Prompt` is a current editable prompt source, not a versioned workflow. It projects into two copy-ready prompt views:
 
-- Base prompt: for creating empty base scene candidates externally in ChatGPT/Image2.
-- Complete prompt: for creating complete scene images externally in ChatGPT/Image2 using the current locked base as a required reference.
+- Empty scene prompt: for creating Empty Scene Image candidates externally in ChatGPT/Image2.
+- Complete prompt: for creating complete scene images externally in ChatGPT/Image2 as source material for object harvesting and assembly.
 
-`Prompt Ready` means the prompt is non-empty and the Target Object List is non-empty. Reference images are useful but not required for readiness.
+`Prompt Ready` means the chapter has enough confirmed facts to project a copy-ready external prompt: Character IP selection, cast action intent, character references, Target Object List, Avoid Object List confirmation, Scene Spatial Contract, and either style references or an explicit no-extra-style-reference decision.
 
-Uploaded base candidates and complete images store:
+Uploaded Empty Scene Image candidates and Complete Scene Images store:
 
 - `promptSnapshot`, defaulting to the current projected prompt but editable during upload.
-- `referenceSnapshot`, defaulting to the current relevant references but adjustable during upload.
+- `referenceSnapshot`, defaulting to the current selected library references but adjustable during upload.
 - Optional `variationPrompt` for complete images.
 
 Prompt edits do not invalidate existing uploaded images. If an uploaded image was created from older prompt/reference snapshots, the UI shows a lineage mismatch warning without blocking its use.
@@ -47,49 +49,59 @@ Prompt edits do not invalidate existing uploaded images. If an uploaded image wa
 Chapter Scene Studio is one stable workspace, not a strict wizard or four separate pages. It has a compact progress rail:
 
 ```text
-Prompt / Base / Images / Runs / Assembly
+Prompt / Empty Scene / Images / Runs / Assembly / Final
 ```
 
 The rail supports not ready, ready, warning, and error states.
 
 Progress rules:
 
-- Prompt ready: prompt and target objects exist.
-- Base ready: exactly one current Empty Base Scene is locked.
-- Images ready: at least one active Complete Scene Image exists for the current base.
+- Prompt ready: all explicit Prompt Ready gates are satisfied.
+- Empty Scene ready: one current Empty Scene Image is selected for the assembly background.
+- Images ready: at least one active Complete Scene Image exists as source material.
 - Runs ready: at least one active run has completed and at least one run asset has been added to the Chapter Asset Pool.
-- Assembly ready: manifest is valid, has at least one target placement, all target placements have valid transforms, dependencies reference existing placements, and dependency cycles do not exist.
+- Assembly ready: one Empty Scene Image is selected, at least one Scene Asset is placed, target objects are either covered or explicitly exempted, all placements have valid transforms and layer order, no placement references a deleted asset, and the Final Chapter Scene can be previewed from the assembly.
 
-### Base
+### Empty Scene
 
-Base candidates are uploaded manually after external ChatGPT/Image2 generation. They can be uploaded in batches. Candidates are compared manually with thumbnail/list and large preview; no AI score or review is used. `Lock as base` is only available from large preview/details.
+Empty Scene Image candidates are uploaded manually after external ChatGPT/Image2 generation or local preparation. They can be uploaded in batches. Candidates are compared manually with thumbnail/list and large preview; no AI score or review is used. Selecting the current Empty Scene Image establishes the assembly background; it does not lock the chapter's final asset.
 
-The Empty Base Scene is the current authority, not a permanent lock. It can be replaced through an explicit destructive action with second confirmation. Replacing the base:
+The Empty Scene Image is the background layer for Chapter Scene Assembly, not the final chapter authority. Replacing the Empty Scene Image:
 
-- Makes old complete images and their runs historical/inactive.
-- Clears current assembly placements.
-- Keeps Chapter Assets, but marks assets sourced from the old base with warning badges.
-- Updates the Complete Prompt required reference to the new base.
+- May require repositioning current assembly placements if the perspective or canvas changes.
+- Keeps Complete Scene Images and pipeline runs as source history unless the author explicitly removes them.
+- Keeps Chapter Assets, but marks assets that no longer align with the current Empty Scene Image or spatial contract with warning badges.
+- Updates the Empty Scene Prompt context, not the identity of the final chapter asset.
 
 ### Complete Images
 
-Complete Scene Images are uploaded manually after external ChatGPT/Image2 generation using the current base reference. They support batch upload. Uploads stay in the image list and do not auto-open previews.
+Complete Scene Images are uploaded manually after external ChatGPT/Image2 generation. They support batch upload. Uploads stay in the image list and do not auto-open previews.
 
 Each Complete Scene Image can be sent to the art pipeline manually. Sending to pipeline creates one independent pipeline run for that image, stays in the Studio, and displays status plus a link to the run details. Pipeline internals remain on the run side; Studio only shows run status summary and resulting assets.
+
+### Direct Scene Asset Uploads
+
+Authors can upload clean single-object images directly into the Chapter Asset Pool when they already have usable object art. Direct uploads are first-class Scene Asset sources and should not be forced through a Complete Scene Image just to satisfy pipeline lineage.
 
 ### Run Assets
 
 Run Asset Relationship Panel manages the relationship between current chapter runs and the Chapter Asset Pool.
 
-- Active view: runs associated with the current base.
-- Historical view: runs associated with inactive bases or old complete images.
+- Active view: runs associated with current Complete Scene Images.
+- Historical view: runs associated with removed or archived Complete Scene Images.
 - Active run assets can be multi-selected and added without confirmation.
-- Historical run assets can still be added, but require warning and confirmation because their source base differs.
+- Historical run assets can still be added, but require warning and confirmation because their source image may no longer match the current spatial contract.
 - Each Pipeline Run Asset has at most one direct added relationship to the current chapter.
 - Add to Chapter materializes a chapter-owned asset copy and keeps lineage back to the run asset.
 - Added assets do not auto-sync if the source run asset changes. Replacement from source is explicit.
 
+Directly uploaded Scene Assets enter the Chapter Asset Pool immediately with upload lineage instead of run lineage.
+
 Chapter Asset deletion never touches the source run asset. If the asset is used in assembly, deleting it requires confirmation and removes the corresponding placement and dependency references.
+
+### Final
+
+Lock Final publishes the current Chapter Scene Assembly as the current Final Chapter Scene snapshot. The snapshot records the selected Empty Scene Image, placement data, layer order, asset lineage, prompt snapshot, reference snapshot, and assembly snapshot needed to explain what was published. After locking, authors may keep editing the assembly draft; the published Final Chapter Scene changes only when Lock Final is run again.
 
 ## Asset Pool And Layer Tree
 
@@ -128,7 +140,7 @@ The runtime contract is not the tldraw snapshot. The authoritative contract is `
 
 Manifest principles:
 
-- Store `baseSize` with the Empty Base Scene original width and height.
+- Store Empty Scene Image size as the assembly canvas size.
 - Placement transform stores normalized center coordinates and normalized size: `cx`, `cy`, `w`, `h`.
 - Rotation is stored as `rotationDeg`.
 - Pixel values are UI/export derivations, not the primary manifest fields.
@@ -146,7 +158,7 @@ Autosave:
 - Debounce saves after editing pauses; do not write on every pointer move.
 - Save status shows Saving, Saved, or Save failed.
 - Save failure keeps editing enabled, preserves dirty state, and exposes Retry.
-- Other production actions such as upload, lock base, replace base, send to pipeline, add/remove assets remain explicit operations.
+- Other production actions such as upload, select Empty Scene Image, send to pipeline, add/remove assets, and Lock Final remain explicit operations.
 
 ## Runtime Roles And Dependencies
 
@@ -184,12 +196,15 @@ Chapter Scene Package is stored under the chapter in the scene library, not unde
 Target storage shape:
 
 ```text
+reference_library/
+  images/
+character_ip_library/
+  characters/
 scene_packs/<category_id>/chapters/<chapter_id>/
   chapter.json
   scene_package/
     package.json
-    references/
-    base_candidates/
+    empty_scene_images/
     complete_images/
     assets/
     assembly.json
@@ -199,13 +214,15 @@ The path can remain under legacy `scene_packs` during compatibility migration, w
 
 Files use system-generated storage names. Original filenames are metadata only, avoiding unsafe paths, duplicates, spaces, and cross-platform filename issues.
 
-References:
+Reference Library and Chapter Reference Selection:
 
-- Only explicitly added references enter the Chapter Scene Package.
+- Reference Images are reusable library assets, not prompt text and not chapter-private facts.
+- Uploading a reference image from the Studio creates a Reference Library Image first, then selects that image into the current Chapter Reference Selection.
+- Chapter Reference Selection records library image ids plus the chapter-local role: character, style, scene, or other.
 - `docs/assets` or local paths are never auto-imported.
-- Added references are copied into `scene_package/references/`.
-- Deleting a current reference requires confirmation and does not mutate historical snapshots.
-- Complete prompt always includes the current locked base as a required reference, without needing to duplicate it into the normal reference list.
+- Removing a reference from the current chapter only removes that chapter selection. It does not delete the library image and does not mutate historical upload snapshots.
+- Deleting a Reference Library Image requires confirmation and is blocked while any active chapter selection still references it.
+- Complete prompt uses the current Scene Spatial Contract, selected Reference Library images, and current Empty Scene Image as context; the Empty Scene Image is still not the final asset.
 
 Manifest delivery:
 
@@ -217,22 +234,21 @@ Manifest delivery:
 
 Any delete, remove, replace, clear, or unlink action that discards authoring work requires second confirmation using the existing confirmation component/pattern. High-risk non-destructive actions that can introduce mismatched source material also require confirmation. Examples:
 
-- Delete base candidate.
-- Replace base.
+- Delete Empty Scene Image candidate.
+- Replace Empty Scene Image.
 - Delete complete image.
 - Remove chapter asset.
 - Remove placement from assembly.
 - Clear placements caused by base replacement.
-- Add historical/inactive-base run asset back to current chapter.
+- Add historical run asset back to current chapter.
 
 ## Out Of Scope
 
 First version does not include:
 
 - Image2 API integration.
-- AI review or scoring for base candidates.
+- AI review or scoring for Empty Scene Image candidates.
 - PromptVersion / ImageAttempt workflow.
-- Global reference library.
 - Cross-chapter asset marketplace.
 - Nested groups.
 - Duplicate Placement.
