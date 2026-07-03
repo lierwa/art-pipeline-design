@@ -18,8 +18,30 @@ import {
   uploadEmptySceneImage,
 } from "../../src/features/coursePlanner/api";
 import type { ChapterSceneAssemblyManifest } from "../../src/features/coursePlanner/types";
+import {
+  coursePlannerState,
+  studioScenePackageFixture,
+} from "./chapterWorkspaceTestHelpers";
 
 describe("course planner scene package API client", () => {
+  it("exposes chapter workspace fixtures through the scene-package contract only", () => {
+    const state = coursePlannerState();
+    const scenePackage = studioScenePackageFixture();
+
+    expect(state.selectedChapterId).toBe("chapter_breakfast_kitchen");
+    expect(Object.keys(state).sort()).toEqual([
+      "activeScenePackId",
+      "asyncStatus",
+      "candidatesByScenePackId",
+      "chaptersByScenePackId",
+      "scenePacks",
+      "selectedChapterId",
+      "tasks",
+    ]);
+    expect(scenePackage.chapter_id).toBe("chapter_breakfast_kitchen");
+    expect(scenePackage.prompt.prompt_text).toContain("breakfast");
+  });
+
   it("uses scene-package routes and keeps the new package contract in snake_case", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
