@@ -6,6 +6,9 @@ from typing import Protocol, Sequence
 
 from PIL import Image, UnidentifiedImageError
 
+from art_pipeline.course_planner.media_storage_paths import (
+    resolve_relative_media_storage_path,
+)
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackageChildNotFoundError,
     ScenePackageValidationError,
@@ -77,23 +80,11 @@ def validate_scene_package_media_storage_path(
     root_path: Path,
     storage_path: str,
 ) -> Path:
-    if not storage_path:
-        raise _invalid_storage_path()
-    if "\\" in storage_path:
-        raise _invalid_storage_path()
-    relative_path = PurePosixPath(storage_path)
-    if relative_path.is_absolute():
-        raise _invalid_storage_path()
-    if any(part in ("", ".", "..") for part in relative_path.parts):
-        raise _invalid_storage_path()
-    candidate_path = root_path.joinpath(*relative_path.parts)
-    root_resolved = root_path.resolve()
-    candidate_resolved = candidate_path.resolve()
-    try:
-        candidate_resolved.relative_to(root_resolved)
-    except ValueError as exc:
-        raise _invalid_storage_path() from exc
-    return candidate_path
+    return resolve_relative_media_storage_path(
+        root_path,
+        storage_path,
+        error_factory=_invalid_storage_path,
+    )
 
 
 def sanitize_original_filename(original_filename: str) -> str:

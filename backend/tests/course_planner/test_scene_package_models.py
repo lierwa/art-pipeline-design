@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
+from pydantic import ValidationError
 
 from art_pipeline.course_planner.models import CharacterIpProfile, ReferenceLibraryImage
+from art_pipeline.course_planner.scene_package_errors import ScenePackageValidationError
 from art_pipeline.course_planner.scene_package_models import (
     AssemblyGroup,
     AssemblyPlacement,
@@ -186,6 +190,29 @@ def test_empty_scene_prompt_includes_confirmed_prompt_facts() -> None:
     assert "团团" in prompt
 
 
+def test_empty_scene_prompt_requires_library_records_for_selected_cast_and_references() -> None:
+    package = make_prompt_ready_package()
+
+    with pytest.raises(
+        ScenePackageValidationError,
+        match="requires library records",
+    ):
+        build_empty_scene_prompt(package)
+
+
+def test_complete_prompt_rejects_missing_selected_library_ids() -> None:
+    package = make_prompt_ready_package().model_copy(
+        update={"current_empty_scene_image_id": "empty_scene_001"}
+    )
+    libraries = make_library_payload_with_missing_style_reference()
+
+    with pytest.raises(
+        ScenePackageValidationError,
+        match="Missing reference library record for selection selection_style_001: reference_style_001",
+    ):
+        build_complete_prompt(package, libraries=libraries)
+
+
 def test_complete_prompt_includes_selected_empty_scene_reference_without_layer_order_leak() -> None:
     package = make_prompt_ready_package().model_copy(
         update={"current_empty_scene_image_id": "empty_scene_001"}
@@ -230,6 +257,16 @@ def test_manifest_rejects_layer_order_missing_placement() -> None:
     assert any("layer_order" in error for error in errors)
 
 
+def test_manifest_rejects_duplicate_layer_order_entries() -> None:
+    package = make_package_with_one_placement(
+        layer_order=["placement_001", "placement_001"]
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any("duplicate" in error.lower() and "layer_order" in error for error in errors)
+
+
 def test_manifest_rejects_mismatched_empty_scene_reference_for_placements() -> None:
     package = make_package_with_selected_empty_scene(
         assembly=make_manifest(
@@ -255,6 +292,22 @@ def test_manifest_rejects_unknown_or_unavailable_asset() -> None:
     assert any("asset" in error.lower() and "chapter_asset_001" in error for error in errors)
 
 
+def test_manifest_rejects_unknown_group_placement_reference() -> None:
+    package = make_package_with_selected_empty_scene(
+        assembly=make_manifest(
+            asset_id="chapter_asset_001",
+            group_placement_ids=["placement_001", "placement_missing"],
+        ),
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any(
+        "Group group_001 references unknown placement ids: placement_missing" == error
+        for error in errors
+    )
+
+
 def test_frontmost_layer_id_uses_first_layer_order_entry() -> None:
     package = make_package_with_two_placements(
         first_requires=[],
@@ -263,6 +316,66 @@ def test_frontmost_layer_id_uses_first_layer_order_entry() -> None:
     )
 
     assert frontmost_layer_id(package) == "placement_b"
+
+
+@pytest.mark.parametrize(
+    "model_factory",
+    [
+        lambda: EmptySceneImage(
+            id="empty_scene_001",
+            original_filename="empty.png",
+            storage_path="../escape.png",
+            media_type="image/png",
+            width=120,
+            height=80,
+            prompt_snapshot="Empty scene prompt.",
+            created_at="2026-07-03T10:00:00Z",
+        ),
+        lambda: CompleteSceneImage(
+            id="complete_scene_001",
+            original_filename="complete.png",
+            storage_path="../escape.png",
+            media_type="image/png",
+            width=120,
+            height=80,
+            prompt_snapshot="Complete scene prompt.",
+            created_at="2026-07-03T10:00:00Z",
+        ),
+        lambda: ChapterAsset(
+            id="chapter_asset_001",
+            display_name="book",
+            original_filename="book.png",
+            storage_path="../escape.png",
+            media_type="image/png",
+            lineage=ChapterAssetLineage(
+                source_kind="pipeline_run_asset",
+                source_run_id="run_123",
+                source_run_asset_id="asset_456",
+            ),
+            created_at="2026-07-03T10:00:00Z",
+        ),
+        lambda: FinalChapterScene(
+            id="final_scene_001",
+            original_filename="final.png",
+            storage_path="../escape.png",
+            media_type="image/png",
+            width=120,
+            height=80,
+            empty_scene_image_id="empty_scene_001",
+            assembly_snapshot=make_manifest(asset_id="chapter_asset_001"),
+            prompt_snapshot="Final scene prompt.",
+            reference_snapshot=ImageReferenceSnapshot(
+                reference_image_ids=["reference_character_001"]
+            ),
+            created_at="2026-07-03T10:00:00Z",
+        ),
+    ],
+)
+def test_scene_package_media_models_reject_invalid_storage_paths(
+    model_factory: Callable[[], object],
+) -> None:
+    with pytest.raises(ValidationError, match="package-relative POSIX path"):
+        model_factory()
 
 
 def make_prompt_ready_package() -> ChapterScenePackage:
@@ -339,6 +452,17 @@ def make_library_payload() -> tuple[list[CharacterIpProfile], list[ReferenceLibr
             ),
         ],
     )
+
+
+def make_library_payload_with_missing_style_reference() -> tuple[
+    list[CharacterIpProfile],
+    list[ReferenceLibraryImage],
+]:
+    characters, reference_images = make_library_payload()
+    filtered_reference_images = [
+        image for image in reference_images if image.id != "reference_style_001"
+    ]
+    return characters, filtered_reference_images
 
 
 def make_package_with_selected_empty_scene(
@@ -445,6 +569,7 @@ def make_manifest(
     *,
     asset_id: str,
     empty_scene_image_id: str = "empty_scene_001",
+    group_placement_ids: list[str] | None = None,
 ) -> ChapterSceneAssembly:
     return ChapterSceneAssembly(
         empty_scene_image_id=empty_scene_image_id,
@@ -468,7 +593,7 @@ def make_manifest(
             AssemblyGroup(
                 id="group_001",
                 display_name="book set",
-                placement_ids=["placement_001"],
+                placement_ids=group_placement_ids or ["placement_001"],
             )
         ],
         layer_order=["placement_001"],

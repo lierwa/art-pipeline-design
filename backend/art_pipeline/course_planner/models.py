@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from art_pipeline.course_planner.media_storage_paths import (
+    validate_relative_media_storage_path_value,
+)
 
 
 class CoursePlannerModel(BaseModel):
@@ -62,6 +66,16 @@ class ReferenceLibraryImage(CoursePlannerModel):
     notes: str = ""
     created_at: str = Field(min_length=1)
     status: Literal["available", "deleted"] = "available"
+
+    @field_validator("storage_path")
+    @classmethod
+    def _validate_storage_path(cls, value: str) -> str:
+        return validate_relative_media_storage_path_value(
+            value,
+            error_factory=lambda: ValueError(
+                "Reference library image storage_path must be a relative POSIX path."
+            ),
+        )
 
 
 class CharacterIpProfile(CoursePlannerModel):

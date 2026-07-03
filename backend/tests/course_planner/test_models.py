@@ -192,6 +192,19 @@ def test_reference_library_image_defaults_to_available_png_asset() -> None:
     assert image.tags == ["style", "living-room"]
 
 
+def test_reference_library_image_rejects_invalid_storage_path() -> None:
+    with pytest.raises(ValidationError, match="relative POSIX path"):
+        ReferenceLibraryImage(
+            id="reference_image_001",
+            original_filename="living-room-style.png",
+            storage_path="../escape.png",
+            media_type="image/png",
+            width=96,
+            height=64,
+            created_at="2026-07-03T10:00:00Z",
+        )
+
+
 def test_character_ip_profile_defaults_to_available_with_reference_links() -> None:
     character = CharacterIpProfile(
         id="character_tuantuan",

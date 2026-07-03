@@ -9,7 +9,6 @@ from art_pipeline.course_planner.models import (
     Space,
 )
 from art_pipeline.course_planner.prompt_builder import build_image2_prompt_package
-from art_pipeline.course_planner.store import CoursePlannerStore
 
 __all__ = [
     "Chapter",
@@ -21,3 +20,11 @@ __all__ = [
     "Space",
     "build_image2_prompt_package",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name == "CoursePlannerStore":
+        from art_pipeline.course_planner.store import CoursePlannerStore
+
+        return CoursePlannerStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
