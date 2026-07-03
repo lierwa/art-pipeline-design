@@ -51,6 +51,30 @@ class ScenePack(CoursePlannerModel):
     chapter_list_locked: bool = False
 
 
+class ReferenceLibraryImage(CoursePlannerModel):
+    id: str = Field(min_length=1)
+    original_filename: str = Field(min_length=1)
+    storage_path: str = Field(min_length=1)
+    media_type: Literal["image/png"]
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    tags: list[str] = Field(default_factory=list)
+    notes: str = ""
+    created_at: str = Field(min_length=1)
+    status: Literal["available", "deleted"] = "available"
+
+
+class CharacterIpProfile(CoursePlannerModel):
+    id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    visual_invariants: str = ""
+    personality_cues: str = ""
+    reference_image_ids: list[str] = Field(default_factory=list)
+    status: Literal["available", "archived"] = "available"
+    created_at: str = Field(min_length=1)
+    updated_at: str | None = None
+
+
 class CharacterConceptHint(CoursePlannerModel):
     cast_mode: Literal["main_cast_and_supporting_cast"] = "main_cast_and_supporting_cast"
     main_cast_hint: str = Field(min_length=1)

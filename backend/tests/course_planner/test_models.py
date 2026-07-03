@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from art_pipeline.course_planner.models import (
     CharacterConceptHint,
+    CharacterIpProfile,
     Chapter,
     ChapterSeed,
     CourseProject,
@@ -13,6 +14,7 @@ from art_pipeline.course_planner.models import (
     PlannedObject,
     PromptPackage,
     PromptVersion,
+    ReferenceLibraryImage,
     SceneDirectorPlan,
     SceneKeywords,
     ScenePack,
@@ -171,6 +173,38 @@ def test_prompt_version_owns_director_object_and_prompt_package() -> None:
     assert version.object_plan.core_objects[0].name == "milk"
     assert version.prompt_package.full_prompt.startswith("Warm kitchen")
     assert version.image_attempt_ids == []
+
+
+def test_reference_library_image_defaults_to_available_png_asset() -> None:
+    image = ReferenceLibraryImage(
+        id="reference_image_001",
+        original_filename="living-room-style.png",
+        storage_path="reference_library/images/reference_image_001/image.png",
+        media_type="image/png",
+        width=96,
+        height=64,
+        tags=["style", "living-room"],
+        notes="暖色低冲突室内",
+        created_at="2026-07-03T10:00:00Z",
+    )
+
+    assert image.status == "available"
+    assert image.tags == ["style", "living-room"]
+
+
+def test_character_ip_profile_defaults_to_available_with_reference_links() -> None:
+    character = CharacterIpProfile(
+        id="character_tuantuan",
+        display_name="团团",
+        visual_invariants="圆脸，小学生，浅色睡衣",
+        personality_cues="认真但轻松",
+        reference_image_ids=["reference_image_001"],
+        created_at="2026-07-03T10:00:00Z",
+    )
+
+    assert character.status == "available"
+    assert character.reference_image_ids == ["reference_image_001"]
+    assert character.updated_at is None
 
 
 def _scene_pack() -> ScenePack:
