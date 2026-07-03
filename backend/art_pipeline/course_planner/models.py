@@ -38,8 +38,8 @@ class Chapter(CoursePlannerModel):
     summary: str
     seed: ChapterSeed
     sort_order: int = Field(ge=1)
-    # WHY: PromptVersion/ImageAttempt 已从后端工作流移除，Chapter 只保留仍由后端持久化、
-    # 且会驱动 scene-package / import 生命周期的状态，避免旧 review 词汇重新变成事实源。
+    # WHY: Chapter 只保留仍由后端持久化、且会驱动 scene-package / import
+    # 生命周期的状态，避免已删除的评审词汇重新变成事实源。
     status: Literal["draft", "designing", "imported"] = "draft"
 
 
