@@ -10,40 +10,102 @@ from art_pipeline.course_planner.scene_package_models import (
     AssemblyGroup,
     AssemblyPlacement,
     AssemblyTransform,
-    ChapterAssetLineage,
-    ChapterSceneAssembly,
     ChapterAsset,
+    ChapterAssetLineage,
+    ChapterReferenceSelection,
+    ChapterSceneAssembly,
+    ChapterScenePackage,
     CompleteSceneImage,
-    EmptyBaseSceneCandidate,
+    EmptySceneImage,
 )
 from art_pipeline.course_planner.store import CoursePlannerStore
 
 
-def make_store_with_chapter(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter]:
-    store = CoursePlannerStore(tmp_path / "scene_library")
+def seeded_course_planner_store(tmp_path: Path) -> CoursePlannerStore:
+    return CoursePlannerStore(tmp_path / "scene_library")
+
+
+def seed_chapter(store: CoursePlannerStore) -> Chapter:
     scene_pack = store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = store.create_chapter_from_seed(
+    return store.create_chapter_from_seed(
         scene_pack.id,
         chapter_seed(scene_pack_id=scene_pack.id, scene_pack_title=scene_pack.title),
     )
+
+
+def make_store_with_chapter(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter]:
+    store = seeded_course_planner_store(tmp_path)
+    return store, seed_chapter(store)
+
+
+def make_store_with_prompt(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter]:
+    store, chapter = make_store_with_chapter(tmp_path)
+    store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text="A low-shadow bedroom empty scene.",
+        scene_spatial_contract="Bed against back wall, desk by window, floor kept clear.",
+        target_objects=[{"label": "book"}],
+        avoid_objects=[{"label": "shattered glass"}],
+    )
     return store, chapter
+
+
+def make_store_with_prompt_and_reference_selection(
+    tmp_path: Path,
+) -> tuple[CoursePlannerStore, Chapter, str]:
+    store, chapter = make_store_with_prompt(tmp_path)
+    package = store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text="A low-shadow bedroom empty scene.",
+        reference_selections=[
+            {
+                "reference_image_id": "reference_style_001",
+                "prompt_role": "style",
+                "notes": "warm palette",
+            }
+        ],
+    )
+    return store, chapter, package.reference_selections[0].reference_image_id
+
+
+def make_store_with_empty_scene_image(
+    tmp_path: Path,
+) -> tuple[CoursePlannerStore, Chapter, EmptySceneImage]:
+    store, chapter = make_store_with_prompt(tmp_path)
+    package = store.add_empty_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=72, height=48),
+        original_filename="empty.png",
+        prompt_snapshot=None,
+        reference_image_ids=[],
+    )
+    return store, chapter, package.empty_scene_images[0]
+
+
+def make_store_with_selected_empty_scene(
+    tmp_path: Path,
+) -> tuple[CoursePlannerStore, Chapter, EmptySceneImage]:
+    store, chapter, image = make_store_with_empty_scene_image(tmp_path)
+    store.select_empty_scene_image(chapter.id, image.id)
+    selected = store.read_chapter_scene_package(chapter.id).empty_scene_images[0]
+    return store, chapter, selected
 
 
 def make_store_with_complete_image(
     tmp_path: Path,
 ) -> tuple[CoursePlannerStore, Chapter, CompleteSceneImage]:
-    store, chapter, locked_base_id, reference_id = make_store_with_locked_base(tmp_path)
+    store, chapter, image = make_store_with_selected_empty_scene(tmp_path)
     package = store.add_complete_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_ids=[reference_id],
-        variation_prompt="brighter morning light",
+        reference_image_ids=[],
+        generation_note="brighter morning light",
     )
-    image = package.complete_images[0]
-    assert image.base_candidate_id == locked_base_id
-    return store, chapter, image
+    complete = package.complete_images[0]
+    assert complete.empty_scene_image_id == image.id
+    return store, chapter, complete
 
 
 def make_store_with_chapter_asset(
@@ -61,6 +123,53 @@ def make_store_with_chapter_asset(
         linked_target_object_id="target_object_001",
     )
     return store, chapter, package.chapter_assets[0]
+
+
+def make_store_with_two_empty_scene_images_and_assembly(
+    tmp_path: Path,
+) -> tuple[CoursePlannerStore, Chapter, EmptySceneImage, EmptySceneImage]:
+    store, chapter = make_store_with_prompt(tmp_path)
+    first_package = store.add_empty_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=72, height=48),
+        original_filename="empty-old.png",
+        prompt_snapshot=None,
+        reference_image_ids=[],
+    )
+    second_package = store.add_empty_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=144, height=96),
+        original_filename="empty-new.png",
+        prompt_snapshot=None,
+        reference_image_ids=[],
+    )
+    old_image, new_image = second_package.empty_scene_images
+    store.select_empty_scene_image(chapter.id, old_image.id)
+    direct_package = store.add_direct_chapter_asset(
+        chapter.id,
+        image_bytes=make_png_bytes(width=32, height=32),
+        original_filename="book.png",
+        display_name="book",
+        linked_target_object_id="target_object_001",
+    )
+    store.save_chapter_scene_assembly(
+        chapter.id,
+        make_manifest(
+            asset_id=direct_package.chapter_assets[0].id,
+            empty_scene_image_id=old_image.id,
+            empty_scene_size={"width": old_image.width, "height": old_image.height},
+        ),
+    )
+    complete_package = store.add_complete_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=96, height=64),
+        original_filename="complete.png",
+        prompt_snapshot=None,
+        reference_image_ids=[],
+        generation_note="brighter morning light",
+    )
+    assert complete_package.complete_images[0].empty_scene_image_id == old_image.id
+    return store, chapter, old_image, new_image
 
 
 def scene_package_json_path(tmp_path: Path, chapter: Chapter) -> Path:
@@ -102,137 +211,15 @@ def chapter_seed(*, scene_pack_id: str, scene_pack_title: str) -> ChapterSeed:
     )
 
 
-def make_store_with_prompt_and_reference(
-    tmp_path: Path,
-) -> tuple[CoursePlannerStore, Chapter, str]:
-    store, chapter = make_store_with_chapter(tmp_path)
-    store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom base scene.",
-        negative_constraints="No hard shadows.",
-        style_notes="Soft watercolor edges.",
-        target_objects=[{"label": "book"}],
-    )
-    package = store.add_chapter_scene_reference(
-        chapter.id,
-        image_bytes=make_png_bytes(width=32, height=24),
-        original_filename="style.png",
-        prompt_role="style",
-    )
-    return store, chapter, package.references[0].id
-
-
-def make_store_with_base_candidate(
-    tmp_path: Path,
-) -> tuple[CoursePlannerStore, Chapter, EmptyBaseSceneCandidate]:
-    store, chapter, reference_id = make_store_with_prompt_and_reference(tmp_path)
-    package = store.add_empty_base_scene_candidate(
-        chapter.id,
-        image_bytes=make_png_bytes(width=72, height=48),
-        original_filename="base.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-    )
-    return store, chapter, package.base_candidates[0]
-
-
-def make_store_with_locked_base(
-    tmp_path: Path,
-) -> tuple[CoursePlannerStore, Chapter, str, str]:
-    store, chapter, reference_id = make_store_with_prompt_and_reference(tmp_path)
-    candidate_package = store.add_empty_base_scene_candidate(
-        chapter.id,
-        image_bytes=make_png_bytes(width=72, height=48),
-        original_filename="base.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-    )
-    locked_base_id = candidate_package.base_candidates[0].id
-    store.write_chapter_scene_package(
-        candidate_package.model_copy(update={"locked_base_candidate_id": locked_base_id})
-    )
-    return store, chapter, locked_base_id, reference_id
-
-
-def make_store_with_locked_base_and_assembly(
-    tmp_path: Path,
-) -> tuple[
-    CoursePlannerStore,
-    Chapter,
-    EmptyBaseSceneCandidate,
-    EmptyBaseSceneCandidate,
-]:
-    store, chapter, reference_id = make_store_with_prompt_and_reference(tmp_path)
-    initial_package = store.add_empty_base_scene_candidate(
-        chapter.id,
-        image_bytes=make_png_bytes(width=72, height=48),
-        original_filename="base-old.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-    )
-    initial_package = store.add_empty_base_scene_candidate(
-        chapter.id,
-        image_bytes=make_png_bytes(width=144, height=96),
-        original_filename="base-new.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-    )
-    old_candidate, new_candidate = initial_package.base_candidates
-    store.write_chapter_scene_package(
-        initial_package.model_copy(
-            update={
-                "locked_base_candidate_id": old_candidate.id,
-                "base_candidates": [
-                    old_candidate.model_copy(
-                        update={
-                            "status": "locked",
-                            "locked_at": "2026-07-02T10:00:00Z",
-                        }
-                    ),
-                    new_candidate,
-                ],
-            }
-        )
-    )
-    complete_package = store.add_complete_scene_image(
-        chapter.id,
-        image_bytes=make_png_bytes(width=96, height=64),
-        original_filename="complete.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-        variation_prompt="brighter morning light",
-    )
-    complete = complete_package.complete_images[0]
-    asset_package = store.add_chapter_asset_from_run_asset(
-        chapter.id,
-        source_run_id="run_123",
-        source_run_asset_id="asset_456",
-        source_complete_image_id=complete.id,
-        image_bytes=make_png_bytes(width=32, height=32),
-        original_filename="book.png",
-        display_name="book",
-        linked_target_object_id="target_object_001",
-    )
-    store.save_chapter_scene_assembly(
-        chapter.id,
-        make_manifest(
-            asset_id=asset_package.chapter_assets[0].id,
-            base_candidate_id=old_candidate.id,
-            base_size={"width": old_candidate.width, "height": old_candidate.height},
-        ),
-    )
-    return store, chapter, old_candidate, new_candidate
-
-
 def make_manifest(
     *,
     asset_id: str,
-    base_candidate_id: str | None,
-    base_size: dict[str, int] | None = None,
+    empty_scene_image_id: str = "empty_scene_001",
+    empty_scene_size: dict[str, int] | None = None,
 ) -> ChapterSceneAssembly:
     return ChapterSceneAssembly(
-        base_candidate_id=base_candidate_id,
-        base_size=base_size or {"width": 72, "height": 48},
+        empty_scene_image_id=empty_scene_image_id,
+        empty_scene_size=empty_scene_size or {"width": 72, "height": 48},
         placements=[
             AssemblyPlacement(
                 id="placement_001",
@@ -266,12 +253,20 @@ def make_stub_chapter_asset(asset_id: str = "chapter_asset_001") -> ChapterAsset
         original_filename="book.png",
         storage_path=f"assets/{asset_id}.png",
         media_type="image/png",
-        lineage=ChapterAssetLineage(
-            source_run_id="run_stub",
-            source_run_asset_id=f"source_{asset_id}",
-        ),
+        lineage=ChapterAssetLineage(source_kind="direct_upload"),
         linked_target_object_id="target_object_001",
-        created_at="2026-07-02T10:06:00Z",
+        created_at="2026-07-03T10:06:00Z",
+    )
+
+
+def make_stub_reference_selection(
+    reference_image_id: str = "reference_style_001",
+) -> ChapterReferenceSelection:
+    return ChapterReferenceSelection(
+        id="reference_selection_001",
+        reference_image_id=reference_image_id,
+        prompt_role="style",
+        notes="warm palette",
     )
 
 

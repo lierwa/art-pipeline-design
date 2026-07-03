@@ -5,7 +5,7 @@ from typing import Sequence
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackageValidationError,
-    UnknownBaseCandidateError,
+    UnknownEmptySceneImageError,
 )
 from art_pipeline.course_planner.scene_package_media import (
     validate_scene_package_media_storage_path,
@@ -14,12 +14,15 @@ from art_pipeline.course_planner.scene_package_media_store import (
     CoursePlannerScenePackageMediaStoreMixin,
 )
 from art_pipeline.course_planner.scene_package_models import (
+    AvoidObjectItem,
+    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterSceneAssemblyManifest,
     ChapterScenePackage,
     ChapterScenePrompt,
     CompleteSceneImage,
-    EmptyBaseSceneCandidate,
+    EmptySceneImage,
+    PromptReadinessConfirmation,
     TargetObjectItem,
     validate_assembly_manifest,
 )
@@ -45,20 +48,19 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         chapter_id: str,
         *,
         prompt_text: str,
-        negative_constraints: str | None = None,
-        style_notes: str | None = None,
+        scene_spatial_contract: str | None = None,
         target_objects: list[dict[str, str]] | None = None,
+        avoid_objects: list[dict[str, str]] | None = None,
+        prompt_confirmations: dict[str, object] | None = None,
+        reference_selections: list[dict[str, str]] | None = None,
     ) -> ChapterScenePackage:
         current = self.read_chapter_scene_package(chapter_id)
         prompt = ChapterScenePrompt(
             prompt_text=prompt_text,
-            negative_constraints=(
-                current.prompt.negative_constraints
-                if negative_constraints is None
-                else negative_constraints
-            ),
-            style_notes=(
-                current.prompt.style_notes if style_notes is None else style_notes
+            scene_spatial_contract=(
+                current.prompt.scene_spatial_contract
+                if scene_spatial_contract is None
+                else scene_spatial_contract
             ),
             updated_at=utc_now(),
         )
@@ -67,11 +69,29 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             if target_objects is None
             else self._normalize_target_objects(target_objects)
         )
+        normalized_avoid_objects = (
+            current.avoid_objects
+            if avoid_objects is None
+            else self._normalize_avoid_objects(avoid_objects)
+        )
+        normalized_confirmations = (
+            current.prompt_confirmations
+            if prompt_confirmations is None
+            else PromptReadinessConfirmation.model_validate(prompt_confirmations)
+        )
+        normalized_reference_selections = (
+            current.reference_selections
+            if reference_selections is None
+            else self._normalize_reference_selections(reference_selections)
+        )
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
                     "prompt": prompt,
                     "target_objects": normalized_targets,
+                    "avoid_objects": normalized_avoid_objects,
+                    "prompt_confirmations": normalized_confirmations,
+                    "reference_selections": normalized_reference_selections,
                 }
             )
         )
@@ -107,55 +127,53 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             current.model_copy(update={"assembly": normalized_manifest})
         )
 
-    def lock_empty_base_scene(
+    def select_empty_scene_image(
         self,
         chapter_id: str,
-        candidate_id: str,
+        image_id: str,
     ) -> ChapterScenePackage:
         current, _ = self._load_scene_package_for_write(chapter_id)
-        target_candidate = next(
-            (candidate for candidate in current.base_candidates if candidate.id == candidate_id),
+        image = next(
+            (
+                candidate
+                for candidate in current.empty_scene_images
+                if candidate.id == image_id and candidate.status == "available"
+            ),
             None,
         )
-        if target_candidate is None:
-            raise UnknownBaseCandidateError(f"Unknown base candidate id: {candidate_id}")
-
-        now = utc_now()
-        previous_locked_candidate_id = current.locked_base_candidate_id
-        is_replacement = (
-            previous_locked_candidate_id is not None
-            and previous_locked_candidate_id != target_candidate.id
-        )
-
-        updated_candidates = [
-            self._updated_base_candidate_status(
-                candidate,
-                target_candidate_id=target_candidate.id,
-                previous_locked_candidate_id=previous_locked_candidate_id,
-                locked_at=now,
+        if image is None:
+            raise UnknownEmptySceneImageError(
+                f"Unknown empty scene image id: {image_id}"
             )
-            for candidate in current.base_candidates
-        ]
+        replacing_canvas = (
+            current.current_empty_scene_image_id is not None
+            and current.current_empty_scene_image_id != image_id
+            and bool(current.assembly.placements)
+        )
+        next_assembly = current.assembly.model_copy(
+            update={
+                "empty_scene_image_id": image.id,
+                "empty_scene_size": {"width": image.width, "height": image.height},
+                "placements": [] if replacing_canvas else current.assembly.placements,
+                "groups": [] if replacing_canvas else current.assembly.groups,
+                "layer_order": [] if replacing_canvas else current.assembly.layer_order,
+                "updated_at": utc_now(),
+            }
+        )
         updated_complete_images = (
-            self._historicalize_complete_images_for_replaced_base(
+            self._historicalize_complete_images_for_replaced_empty_scene(
                 current.complete_images,
-                replaced_base_candidate_id=previous_locked_candidate_id,
+                replaced_empty_scene_image_id=current.current_empty_scene_image_id,
             )
-            if is_replacement
+            if replacing_canvas
             else current.complete_images
-        )
-        updated_assembly = self._assembly_for_locked_base(
-            current.assembly,
-            target_candidate=target_candidate,
-            clear_authoring_state=is_replacement,
         )
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
-                    "locked_base_candidate_id": target_candidate.id,
-                    "base_candidates": updated_candidates,
+                    "current_empty_scene_image_id": image.id,
+                    "assembly": next_assembly,
                     "complete_images": updated_complete_images,
-                    "assembly": updated_assembly,
                 }
             )
         )
@@ -225,78 +243,53 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             for index, target in enumerate(target_objects, start=1)
         ]
 
-    def _updated_base_candidate_status(
+    def _normalize_avoid_objects(
         self,
-        candidate: EmptyBaseSceneCandidate,
-        *,
-        target_candidate_id: str,
-        previous_locked_candidate_id: str | None,
-        locked_at: str,
-    ) -> EmptyBaseSceneCandidate:
-        if candidate.id == target_candidate_id:
-            return candidate.model_copy(
-                update={
-                    "status": "locked",
-                    "locked_at": locked_at,
+        avoid_objects: list[dict[str, str]],
+    ) -> list[AvoidObjectItem]:
+        return [
+            AvoidObjectItem.model_validate(
+                {
+                    "id": target.get("id") or f"avoid_object_{index:03d}",
+                    "label": target["label"],
+                    "description": target.get("description", ""),
                 }
             )
-        if previous_locked_candidate_id and candidate.id == previous_locked_candidate_id:
-            return candidate.model_copy(
-                update={
-                    "status": "inactive",
-                }
-            )
-        return candidate
+            for index, target in enumerate(avoid_objects, start=1)
+        ]
 
-    def _historicalize_complete_images_for_replaced_base(
+    def _normalize_reference_selections(
+        self,
+        reference_selections: list[dict[str, str]],
+    ) -> list[ChapterReferenceSelection]:
+        return [
+            ChapterReferenceSelection.model_validate(
+                {
+                    "id": selection.get("id")
+                    or f"reference_selection_{index:03d}",
+                    "reference_image_id": selection["reference_image_id"],
+                    "prompt_role": selection["prompt_role"],
+                    "notes": selection.get("notes", ""),
+                }
+            )
+            for index, selection in enumerate(reference_selections, start=1)
+        ]
+
+    def _historicalize_complete_images_for_replaced_empty_scene(
         self,
         complete_images: Sequence[CompleteSceneImage],
         *,
-        replaced_base_candidate_id: str | None,
+        replaced_empty_scene_image_id: str | None,
     ) -> list[CompleteSceneImage]:
-        if replaced_base_candidate_id is None:
+        if replaced_empty_scene_image_id is None:
             return list(complete_images)
         return [
             complete.model_copy(update={"status": "historical"})
-            if complete.base_candidate_id == replaced_base_candidate_id
+            if complete.empty_scene_image_id == replaced_empty_scene_image_id
             and complete.status == "active"
             else complete
             for complete in complete_images
         ]
-
-    def _assembly_for_locked_base(
-        self,
-        assembly: ChapterSceneAssembly,
-        *,
-        target_candidate: EmptyBaseSceneCandidate,
-        clear_authoring_state: bool,
-    ) -> ChapterSceneAssembly:
-        if clear_authoring_state:
-            # WHY: 替换 base 会直接改变后续摆放的空间坐标契约；旧 placement/group/layer
-            # 继续保留只会制造“看起来还在、实际上已失效”的假权威，所以这里必须整体清空。
-            return assembly.model_copy(
-                update={
-                    "base_candidate_id": target_candidate.id,
-                    "base_size": {
-                        "width": target_candidate.width,
-                        "height": target_candidate.height,
-                    },
-                    "placements": [],
-                    "groups": [],
-                    "layer_order": [],
-                    "updated_at": utc_now(),
-                }
-            )
-        return assembly.model_copy(
-            update={
-                "base_candidate_id": target_candidate.id,
-                "base_size": {
-                    "width": target_candidate.width,
-                    "height": target_candidate.height,
-                },
-                "updated_at": utc_now(),
-            }
-        )
 
 
 def _validate_scene_package_assembly(package: ChapterScenePackage) -> None:

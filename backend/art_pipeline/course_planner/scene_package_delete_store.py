@@ -8,63 +8,34 @@ from art_pipeline.course_planner.scene_package_models import ChapterScenePackage
 
 
 class CoursePlannerScenePackageDeleteStoreMixin:
-    def delete_chapter_scene_reference(
+    def delete_empty_scene_image(
         self,
         chapter_id: str,
-        reference_id: str,
+        image_id: str,
     ) -> ChapterScenePackage:
         current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
-        reference = next(
-            (item for item in current.references if item.id == reference_id),
+        image = next(
+            (item for item in current.empty_scene_images if item.id == image_id),
             None,
         )
-        if reference is None:
-            raise ScenePackageChildNotFoundError(reference_id)
-        if self._is_scene_reference_in_use(current, reference_id):
+        if image is None:
+            raise ScenePackageChildNotFoundError(image_id)
+        if self._is_empty_scene_image_in_use(current, image_id):
             raise ScenePackagePreconditionError(
-                f"Scene reference {reference_id} is still used by derived records."
+                f"Empty scene image {image_id} is still in use."
             )
         self._delete_scene_package_media_file(
             scene_pack_id,
             current.chapter_id,
-            reference.storage_path,
+            image.storage_path,
         )
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
-                    "references": [
-                        item for item in current.references if item.id != reference_id
-                    ]
-                }
-            )
-        )
-
-    def delete_empty_base_scene_candidate(
-        self,
-        chapter_id: str,
-        candidate_id: str,
-    ) -> ChapterScenePackage:
-        current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
-        candidate = next(
-            (item for item in current.base_candidates if item.id == candidate_id),
-            None,
-        )
-        if candidate is None:
-            raise ScenePackageChildNotFoundError(candidate_id)
-        if self._is_base_candidate_in_use(current, candidate_id):
-            raise ScenePackagePreconditionError(
-                f"Base candidate {candidate_id} is still in use."
-            )
-        self._delete_scene_package_media_file(
-            scene_pack_id,
-            current.chapter_id,
-            candidate.storage_path,
-        )
-        return self.write_chapter_scene_package(
-            current.model_copy(
-                update={
-                    "base_candidates": [
-                        item for item in current.base_candidates if item.id != candidate_id
+                    "empty_scene_images": [
+                        item
+                        for item in current.empty_scene_images
+                        if item.id != image_id
                     ]
                 }
             )
@@ -106,33 +77,19 @@ class CoursePlannerScenePackageDeleteStoreMixin:
         if path.exists():
             path.unlink()
 
-    def _is_scene_reference_in_use(
+    def _is_empty_scene_image_in_use(
         self,
         package: ChapterScenePackage,
-        reference_id: str,
+        image_id: str,
     ) -> bool:
-        if any(
-            reference_id in candidate.reference_snapshot.reference_ids
-            for candidate in package.base_candidates
-        ):
+        if package.current_empty_scene_image_id == image_id:
+            return True
+        if package.assembly.empty_scene_image_id == image_id:
+            return True
+        if package.final_scene and package.final_scene.empty_scene_image_id == image_id:
             return True
         return any(
-            reference_id in complete.reference_snapshot.reference_ids
-            for complete in package.complete_images
-            if complete.status != "deleted"
-        )
-
-    def _is_base_candidate_in_use(
-        self,
-        package: ChapterScenePackage,
-        candidate_id: str,
-    ) -> bool:
-        if package.locked_base_candidate_id == candidate_id:
-            return True
-        if package.assembly.base_candidate_id == candidate_id:
-            return True
-        return any(
-            complete.base_candidate_id == candidate_id
+            complete.empty_scene_image_id == image_id
             for complete in package.complete_images
             if complete.status != "deleted"
         )

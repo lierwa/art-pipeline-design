@@ -4,118 +4,87 @@ from pathlib import Path
 
 import pytest
 
-from art_pipeline.course_planner.scene_package_errors import ScenePackageValidationError
-from art_pipeline.course_planner.scene_package_models import ChapterScenePackage
-from art_pipeline.course_planner.store import CoursePlannerStore
+from art_pipeline.course_planner.scene_package_errors import (
+    ScenePackagePreconditionError,
+    ScenePackageValidationError,
+    UnknownEmptySceneImageError,
+)
 from scene_package_store_helpers import (
     make_manifest,
     make_png_bytes,
-    make_store_with_base_candidate,
-    make_store_with_chapter,
     make_store_with_chapter_asset,
+    make_store_with_chapter,
     make_store_with_complete_image,
-    make_store_with_locked_base,
-    make_store_with_locked_base_and_assembly,
-    make_store_with_prompt_and_reference,
-    make_stub_chapter_asset,
-    scene_package_assembly_json_path,
+    make_store_with_empty_scene_image,
+    make_store_with_prompt,
+    make_store_with_prompt_and_reference_selection,
+    make_store_with_selected_empty_scene,
+    make_store_with_two_empty_scene_images_and_assembly,
     scene_package_json_path,
 )
 
 
-def test_add_scene_reference_generates_storage_name(tmp_path: Path) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
-    image_bytes = make_png_bytes(width=16, height=12)
-
-    package = store.add_chapter_scene_reference(
-        chapter.id,
-        image_bytes=image_bytes,
-        original_filename="ChatGPT Image Jul 1.png",
-        prompt_role="style",
-        notes="reference only",
-    )
-
-    reference = package.references[0]
-    reference_path, media_type = store.read_chapter_scene_package_media(
-        chapter.id,
-        "references",
-        reference.id,
-    )
-
-    assert reference.original_filename == "ChatGPT Image Jul 1.png"
-    assert reference.storage_path.startswith("references/")
-    assert "ChatGPT Image" not in reference.storage_path
-    assert reference.storage_path == f"references/{reference.id}.png"
-    assert reference_path.read_bytes() == image_bytes
-    assert media_type == "image/png"
-
-
-def test_add_base_candidate_captures_prompt_and_reference_snapshot(tmp_path: Path) -> None:
-    store, chapter, reference_id = make_store_with_prompt_and_reference(tmp_path)
-
-    package = store.add_empty_base_scene_candidate(
-        chapter.id,
-        image_bytes=make_png_bytes(width=120, height=80),
-        original_filename="base.png",
-        prompt_snapshot=None,
-        reference_ids=[reference_id],
-    )
-
-    candidate = package.base_candidates[0]
-
-    assert candidate.original_filename == "base.png"
-    assert candidate.storage_path == f"base_candidates/{candidate.id}.png"
-    assert candidate.width == 120
-    assert candidate.height == 80
-    assert candidate.status == "candidate"
-    assert "A low-shadow bedroom base scene." in candidate.prompt_snapshot
-    assert "Target objects: book" in candidate.prompt_snapshot
-    assert "Style notes: Soft watercolor edges." in candidate.prompt_snapshot
-    assert "Negative constraints: No hard shadows." in candidate.prompt_snapshot
-    assert candidate.reference_snapshot.reference_ids == [reference_id]
-    assert candidate.reference_snapshot.locked_base_candidate_id is None
-
-
-def test_lock_base_candidate_sets_current_base(tmp_path: Path) -> None:
-    store, chapter, candidate = make_store_with_base_candidate(tmp_path)
-
-    package = store.lock_empty_base_scene(chapter.id, candidate.id)
-
-    assert package.locked_base_candidate_id == candidate.id
-    assert package.base_candidates[0].status == "locked"
-    assert package.base_candidates[0].locked_at is not None
-    assert package.assembly.base_candidate_id == candidate.id
-    assert package.assembly.base_size == {
-        "width": candidate.width,
-        "height": candidate.height,
-    }
-
-
-def test_lock_base_candidate_rejects_unknown_candidate_id(tmp_path: Path) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
-
-    with pytest.raises(ValueError, match="Unknown base candidate id"):
-        store.lock_empty_base_scene(chapter.id, "base_candidate_999")
-
-
-def test_replacing_base_historicizes_complete_images_and_clears_placements(
+def test_add_empty_scene_image_captures_prompt_and_reference_snapshot(
     tmp_path: Path,
 ) -> None:
-    store, chapter, old_candidate, new_candidate = make_store_with_locked_base_and_assembly(
+    store, chapter, reference_image_id = make_store_with_prompt_and_reference_selection(
         tmp_path
     )
 
-    package = store.lock_empty_base_scene(chapter.id, new_candidate.id)
+    package = store.add_empty_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=120, height=80),
+        original_filename="empty.png",
+        prompt_snapshot="Custom empty scene prompt snapshot.",
+        reference_image_ids=[reference_image_id],
+    )
 
-    assert package.locked_base_candidate_id == new_candidate.id
-    assert [candidate.status for candidate in package.base_candidates] == [
-        "inactive",
-        "locked",
-    ]
-    assert package.assembly.base_candidate_id == new_candidate.id
-    assert package.assembly.base_size == {
-        "width": new_candidate.width,
-        "height": new_candidate.height,
+    image = package.empty_scene_images[0]
+
+    assert image.original_filename == "empty.png"
+    assert image.storage_path == f"empty_scene_images/{image.id}.png"
+    assert image.width == 120
+    assert image.height == 80
+    assert image.status == "available"
+    assert image.prompt_snapshot == "Custom empty scene prompt snapshot."
+    assert image.reference_snapshot.reference_image_ids == [reference_image_id]
+    assert image.reference_snapshot.current_empty_scene_image_id is None
+
+
+def test_select_empty_scene_image_sets_current_without_locking_complete_images(
+    tmp_path: Path,
+) -> None:
+    store, chapter, image = make_store_with_empty_scene_image(tmp_path)
+
+    selected = store.select_empty_scene_image(chapter.id, image.id)
+
+    assert selected.current_empty_scene_image_id == image.id
+    assert selected.assembly.empty_scene_image_id == image.id
+    assert selected.assembly.empty_scene_size == {"width": 72, "height": 48}
+    assert selected.empty_scene_images[0].status == "available"
+
+
+def test_select_empty_scene_image_rejects_unknown_id(tmp_path: Path) -> None:
+    store, chapter = make_store_with_chapter(tmp_path)
+
+    with pytest.raises(UnknownEmptySceneImageError, match="Unknown empty scene image id"):
+        store.select_empty_scene_image(chapter.id, "empty_scene_999")
+
+
+def test_replacing_selected_empty_scene_historicizes_complete_images_and_clears_placements(
+    tmp_path: Path,
+) -> None:
+    store, chapter, old_image, new_image = make_store_with_two_empty_scene_images_and_assembly(
+        tmp_path
+    )
+
+    package = store.select_empty_scene_image(chapter.id, new_image.id)
+
+    assert package.current_empty_scene_image_id == new_image.id
+    assert package.assembly.empty_scene_image_id == new_image.id
+    assert package.assembly.empty_scene_size == {
+        "width": new_image.width,
+        "height": new_image.height,
     }
     assert package.assembly.placements == []
     assert package.assembly.groups == []
@@ -123,26 +92,34 @@ def test_replacing_base_historicizes_complete_images_and_clears_placements(
     assert [
         image.status
         for image in package.complete_images
-        if image.base_candidate_id == old_candidate.id
+        if image.empty_scene_image_id == old_image.id
     ] == ["historical"]
 
 
-def test_complete_image_requires_locked_base(tmp_path: Path) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
+def test_add_complete_scene_image_without_selected_empty_scene_is_allowed(
+    tmp_path: Path,
+) -> None:
+    store, chapter = make_store_with_prompt(tmp_path)
 
-    with pytest.raises(ValueError, match="locked base"):
-        store.add_complete_scene_image(
-            chapter.id,
-            image_bytes=make_png_bytes(),
-            original_filename="complete.png",
-            prompt_snapshot=None,
-            reference_ids=[],
-            variation_prompt="",
-        )
+    package = store.add_complete_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=96, height=64),
+        original_filename="complete.png",
+        prompt_snapshot=None,
+        reference_image_ids=[],
+        generation_note="",
+    )
+
+    complete = package.complete_images[0]
+
+    assert complete.empty_scene_image_id is None
+    assert complete.status == "active"
 
 
-def test_add_complete_scene_image_uses_locked_base_snapshot(tmp_path: Path) -> None:
-    store, chapter, locked_base_id, reference_id = make_store_with_locked_base(tmp_path)
+def test_add_complete_scene_image_uses_selected_empty_scene_snapshot(
+    tmp_path: Path,
+) -> None:
+    store, chapter, empty_scene = make_store_with_selected_empty_scene(tmp_path)
     image_bytes = make_png_bytes(width=96, height=64)
 
     package = store.add_complete_scene_image(
@@ -150,8 +127,8 @@ def test_add_complete_scene_image_uses_locked_base_snapshot(tmp_path: Path) -> N
         image_bytes=image_bytes,
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_ids=[reference_id],
-        variation_prompt="brighter morning light",
+        reference_image_ids=[],
+        generation_note="brighter morning light",
     )
 
     complete = package.complete_images[0]
@@ -162,16 +139,16 @@ def test_add_complete_scene_image_uses_locked_base_snapshot(tmp_path: Path) -> N
     )
 
     assert complete.storage_path == f"complete_images/{complete.id}.png"
-    assert complete.base_candidate_id == locked_base_id
+    assert complete.empty_scene_image_id == empty_scene.id
     assert complete.width == 96
     assert complete.height == 64
     assert complete.status == "active"
-    assert "A low-shadow bedroom base scene." in complete.prompt_snapshot
+    assert "A low-shadow bedroom empty scene." in complete.prompt_snapshot
+    assert "Bed against back wall" in complete.prompt_snapshot
     assert "Target objects: book" in complete.prompt_snapshot
-    assert f"Locked empty base scene reference: {locked_base_id}" in complete.prompt_snapshot
-    assert complete.reference_snapshot.reference_ids == [reference_id]
-    assert complete.reference_snapshot.locked_base_candidate_id == locked_base_id
-    assert complete.variation_prompt == "brighter morning light"
+    assert "Selected empty scene image" in complete.prompt_snapshot
+    assert complete.reference_snapshot.current_empty_scene_image_id == empty_scene.id
+    assert complete.generation_note == "brighter morning light"
     assert complete_path.read_bytes() == image_bytes
     assert media_type == "image/png"
 
@@ -179,7 +156,7 @@ def test_add_complete_scene_image_uses_locked_base_snapshot(tmp_path: Path) -> N
 def test_add_complete_scene_image_rejects_invalid_png_as_validation_error(
     tmp_path: Path,
 ) -> None:
-    store, chapter, _, _ = make_store_with_locked_base(tmp_path)
+    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
 
     with pytest.raises(ScenePackageValidationError, match="valid PNG"):
         store.add_complete_scene_image(
@@ -187,27 +164,27 @@ def test_add_complete_scene_image_rejects_invalid_png_as_validation_error(
             image_bytes=b"not-a-png",
             original_filename="complete.png",
             prompt_snapshot=None,
-            reference_ids=[],
-            variation_prompt="",
+            reference_image_ids=[],
+            generation_note="",
         )
 
 
 def test_add_complete_scene_image_rejects_unknown_reference_ids_as_validation_error(
     tmp_path: Path,
 ) -> None:
-    store, chapter, _, _ = make_store_with_locked_base(tmp_path)
+    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
 
     with pytest.raises(
         ScenePackageValidationError,
-        match="Unknown scene package reference ids",
+        match="Unknown scene package reference image ids",
     ):
         store.add_complete_scene_image(
             chapter.id,
             image_bytes=make_png_bytes(width=96, height=64),
             original_filename="complete.png",
-            prompt_snapshot=None,
-            reference_ids=["reference_missing"],
-            variation_prompt="",
+            prompt_snapshot="Custom complete prompt snapshot.",
+            reference_image_ids=["reference_missing"],
+            generation_note="",
         )
 
 
@@ -227,6 +204,32 @@ def test_associate_complete_image_with_pipeline_run(tmp_path: Path) -> None:
     assert updated.pipeline_run_status == "completed"
 
 
+def test_add_direct_chapter_asset_materializes_copy(tmp_path: Path) -> None:
+    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
+    image_bytes = make_png_bytes(width=32, height=32)
+
+    package = store.add_direct_chapter_asset(
+        chapter.id,
+        image_bytes=image_bytes,
+        original_filename="nested/direct/book.png",
+        display_name="book",
+        linked_target_object_id="target_object_001",
+    )
+
+    asset = package.chapter_assets[0]
+    asset_path = scene_package_json_path(tmp_path, chapter).parent / asset.storage_path
+
+    assert asset.display_name == "book"
+    assert asset.original_filename == "book.png"
+    assert asset.storage_path == f"assets/{asset.id}.png"
+    assert asset.media_type == "image/png"
+    assert asset.lineage.source_kind == "direct_upload"
+    assert asset.lineage.source_run_id is None
+    assert asset.linked_target_object_id == "target_object_001"
+    assert asset.status == "available"
+    assert asset_path.read_bytes() == image_bytes
+
+
 def test_add_chapter_asset_from_run_asset_materializes_copy(tmp_path: Path) -> None:
     store, chapter, image = make_store_with_complete_image(tmp_path)
     image_bytes = make_png_bytes(width=32, height=32)
@@ -243,19 +246,12 @@ def test_add_chapter_asset_from_run_asset_materializes_copy(tmp_path: Path) -> N
     )
 
     asset = package.chapter_assets[0]
-    asset_path = (
-        scene_package_json_path(tmp_path, chapter).parent / asset.storage_path
-    )
+    asset_path = scene_package_json_path(tmp_path, chapter).parent / asset.storage_path
 
-    assert asset.display_name == "book"
-    assert asset.original_filename == "book.png"
-    assert asset.storage_path == f"assets/{asset.id}.png"
-    assert asset.media_type == "image/png"
+    assert asset.lineage.source_kind == "pipeline_run_asset"
     assert asset.lineage.source_run_id == "run_123"
     assert asset.lineage.source_run_asset_id == "asset_456"
     assert asset.lineage.source_complete_image_id == image.id
-    assert asset.linked_target_object_id == "target_object_001"
-    assert asset.status == "available"
     assert asset_path.read_bytes() == image_bytes
 
 
@@ -285,22 +281,61 @@ def test_add_chapter_asset_from_run_asset_rejects_duplicate_available_source_ass
         )
 
 
-def test_replacing_base_preserves_existing_chapter_assets(tmp_path: Path) -> None:
-    store, chapter, old_candidate, new_candidate = make_store_with_locked_base_and_assembly(
-        tmp_path
+def test_lock_final_scene_requires_selected_empty_scene(tmp_path: Path) -> None:
+    store, chapter = make_store_with_prompt(tmp_path)
+
+    with pytest.raises(
+        ScenePackagePreconditionError,
+        match="selected Empty Scene Image",
+    ):
+        store.lock_final_chapter_scene(
+            chapter.id,
+            image_bytes=make_png_bytes(width=96, height=64),
+            original_filename="final.png",
+        )
+
+
+def test_lock_final_scene_requires_placed_asset(tmp_path: Path) -> None:
+    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
+
+    with pytest.raises(
+        ScenePackagePreconditionError,
+        match="placed Scene Asset",
+    ):
+        store.lock_final_chapter_scene(
+            chapter.id,
+            image_bytes=make_png_bytes(width=96, height=64),
+            original_filename="final.png",
+        )
+
+
+def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:
+    store, chapter, asset = make_store_with_chapter_asset(tmp_path)
+    package = store.read_chapter_scene_package(chapter.id)
+    store.save_chapter_scene_assembly(
+        chapter.id,
+        make_manifest(
+            asset_id=asset.id,
+            empty_scene_image_id=package.current_empty_scene_image_id or "empty_scene_001",
+            empty_scene_size=package.assembly.empty_scene_size,
+        ),
     )
-    seeded_package = store.read_chapter_scene_package(chapter.id)
 
-    package = store.lock_empty_base_scene(chapter.id, new_candidate.id)
+    locked = store.lock_final_chapter_scene(
+        chapter.id,
+        image_bytes=make_png_bytes(width=120, height=80),
+        original_filename="final.png",
+    )
 
-    assert [asset.model_dump(mode="json") for asset in package.chapter_assets] == [
-        asset.model_dump(mode="json") for asset in seeded_package.chapter_assets
-    ]
-    assert [
-        image.status
-        for image in package.complete_images
-        if image.base_candidate_id == old_candidate.id
-    ] == ["historical"]
+    assert locked.final_scene is not None
+    assert locked.final_scene.empty_scene_image_id == locked.current_empty_scene_image_id
+    assert locked.final_scene.assembly_snapshot.empty_scene_image_id == (
+        locked.current_empty_scene_image_id
+    )
+    assert locked.final_scene.reference_snapshot.current_empty_scene_image_id == (
+        locked.current_empty_scene_image_id
+    )
+    assert locked.final_scene.storage_path.startswith("final_scene/")
 
 
 @pytest.mark.parametrize(
@@ -308,26 +343,24 @@ def test_replacing_base_preserves_existing_chapter_assets(tmp_path: Path) -> Non
     [
         "/tmp/escape.png",
         "../escape.png",
-        "references/../../escape.png",
+        "empty_scene_images/../../escape.png",
     ],
 )
-
-
 def test_read_scene_package_media_rejects_storage_path_outside_package_root(
     tmp_path: Path,
     storage_path: str,
 ) -> None:
-    store, chapter, reference_id = make_store_with_prompt_and_reference(tmp_path)
+    store, chapter, _ = make_store_with_empty_scene_image(tmp_path)
     package_path = scene_package_json_path(tmp_path, chapter)
     package_payload = store.read_chapter_scene_package(chapter.id).model_dump(mode="json")
-    package_payload["references"][0]["storage_path"] = storage_path
+    package_payload["empty_scene_images"][0]["storage_path"] = storage_path
     store._write_json(package_path, package_payload)
 
     with pytest.raises(ValueError, match="package-relative"):
         store.read_chapter_scene_package_media(
             chapter.id,
-            "references",
-            reference_id,
+            "empty_scene_images",
+            "empty_scene_001",
         )
 
 
@@ -343,40 +376,32 @@ def test_scene_package_media_path_rejects_empty_storage_path(tmp_path: Path) -> 
 
 
 def test_upload_methods_sanitize_original_filename_metadata(tmp_path: Path) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
-    reference = store.add_chapter_scene_reference(
-        chapter.id,
-        image_bytes=make_png_bytes(width=20, height=10),
-        original_filename="/Users/alice/private.png",
-        prompt_role="style",
-    ).references[0]
-    store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom base scene.",
-        target_objects=[{"label": "book"}],
-    )
-    candidate_package = store.add_empty_base_scene_candidate(
+    store, chapter = make_store_with_prompt(tmp_path)
+    empty_scene = store.add_empty_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=72, height=48),
         original_filename=r"C:\foo\bar.png",
         prompt_snapshot=None,
-        reference_ids=[reference.id],
-    )
-    locked_base_id = candidate_package.base_candidates[0].id
-    store.write_chapter_scene_package(
-        candidate_package.model_copy(update={"locked_base_candidate_id": locked_base_id})
-    )
+        reference_image_ids=[],
+    ).empty_scene_images[0]
+    store.select_empty_scene_image(chapter.id, empty_scene.id)
     complete = store.add_complete_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="nested/final/scene.png",
         prompt_snapshot=None,
-        reference_ids=[reference.id],
-        variation_prompt="brighter morning light",
+        reference_image_ids=[],
+        generation_note="brighter morning light",
     ).complete_images[0]
+    direct_asset = store.add_direct_chapter_asset(
+        chapter.id,
+        image_bytes=make_png_bytes(width=20, height=10),
+        original_filename="/Users/alice/private.png",
+        display_name="book",
+    ).chapter_assets[0]
 
     package = store.read_chapter_scene_package(chapter.id)
 
-    assert package.references[0].original_filename == "private.png"
-    assert package.base_candidates[0].original_filename == "bar.png"
+    assert package.empty_scene_images[0].original_filename == "bar.png"
     assert complete.original_filename == "scene.png"
+    assert direct_asset.original_filename == "private.png"

@@ -6,11 +6,11 @@ from fastapi.responses import FileResponse
 from art_pipeline.course_planner.api_models import (
     ChapterScenePromptPatchRequest,
     CompleteSceneImageRunPatchRequest,
+    CurrentEmptySceneImageRequest,
 )
 from art_pipeline.course_planner.scene_package_models import ChapterSceneAssembly
 from art_pipeline.course_planner.scene_package_route_helpers import (
     SCENE_PACKAGE_ROUTE_ERRORS,
-    literal_form_value,
     optional_string_form_value,
     parse_json_model,
     required_string_form_value,
@@ -48,84 +48,51 @@ async def patch_scene_package_prompt(
         package = store_for_request(request).update_chapter_scene_prompt(
             chapterId,
             prompt_text=payload.prompt_text,
-            negative_constraints=(
-                payload.negative_constraints
-                if "negative_constraints" in payload.model_fields_set
+            scene_spatial_contract=(
+                payload.scene_spatial_contract
+                if "scene_spatial_contract" in payload.model_fields_set
                 else None
-            ),
-            style_notes=(
-                payload.style_notes if "style_notes" in payload.model_fields_set else None
             ),
             target_objects=(
                 _target_object_updates(payload)
                 if "target_objects" in payload.model_fields_set
                 else None
             ),
+            avoid_objects=(
+                _avoid_object_updates(payload)
+                if "avoid_objects" in payload.model_fields_set
+                else None
+            ),
+            prompt_confirmations=(
+                _prompt_confirmation_updates(payload)
+                if "prompt_confirmations" in payload.model_fields_set
+                else None
+            ),
+            reference_selections=(
+                _reference_selection_updates(payload)
+                if "reference_selections" in payload.model_fields_set
+                else None
+            ),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
     return scene_package_payload(package)
 
 
-@scene_package_router.post("/chapters/{chapterId}/scene-package/references")
-async def post_scene_reference(
-    request: Request,
-    chapterId: str,
-) -> dict[str, object]:
-    form = await request.form()
-    file = require_upload_file(form.get("file"))
-    prompt_role = literal_form_value(
-        form.get("promptRole"),
-        allowed=("style", "scene", "character", "other"),
-        default="other",
-        field_name="promptRole",
-    )
-    notes = string_form_value(form.get("notes"), default="")
-    try:
-        package = store_for_request(request).add_chapter_scene_reference(
-            chapterId,
-            image_bytes=await file.read(),
-            original_filename=file.filename or "upload.png",
-            prompt_role=prompt_role,
-            notes=notes,
-        )
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(exc) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.delete(
-    "/chapters/{chapterId}/scene-package/references/{referenceId}"
-)
-def delete_scene_reference(
-    request: Request,
-    chapterId: str,
-    referenceId: str,
-) -> dict[str, object]:
-    try:
-        package = store_for_request(request).delete_chapter_scene_reference(chapterId, referenceId)
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(
-            exc,
-            child_not_found_detail="Scene reference not found.",
-        ) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.post("/chapters/{chapterId}/scene-package/base-candidates")
-async def post_base_candidate(
+@scene_package_router.post("/chapters/{chapterId}/scene-package/empty-scene-images")
+async def post_empty_scene_image(
     request: Request,
     chapterId: str,
 ) -> dict[str, object]:
     form = await request.form()
     file = require_upload_file(form.get("file"))
     try:
-        package = store_for_request(request).add_empty_base_scene_candidate(
+        package = store_for_request(request).add_empty_scene_image(
             chapterId,
             image_bytes=await file.read(),
             original_filename=file.filename or "upload.png",
             prompt_snapshot=_optional_prompt_snapshot(form.get("promptSnapshot")),
-            reference_ids=string_list_form_value(form, "referenceIds"),
+            reference_image_ids=string_list_form_value(form, "referenceImageIds"),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
@@ -133,38 +100,39 @@ async def post_base_candidate(
 
 
 @scene_package_router.delete(
-    "/chapters/{chapterId}/scene-package/base-candidates/{candidateId}"
+    "/chapters/{chapterId}/scene-package/empty-scene-images/{imageId}"
 )
-def delete_base_candidate(
+def delete_empty_scene_image(
     request: Request,
     chapterId: str,
-    candidateId: str,
+    imageId: str,
 ) -> dict[str, object]:
     try:
-        package = store_for_request(request).delete_empty_base_scene_candidate(
-            chapterId,
-            candidateId,
-        )
+        package = store_for_request(request).delete_empty_scene_image(chapterId, imageId)
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(
             exc,
-            child_not_found_detail="Base candidate not found.",
+            child_not_found_detail="Empty scene image not found.",
         ) from exc
     return scene_package_payload(package)
 
 
-@scene_package_router.post(
-    "/chapters/{chapterId}/scene-package/base-candidates/{candidateId}/lock"
-)
-def post_lock_base_candidate(
+@scene_package_router.post("/chapters/{chapterId}/scene-package/current-empty-scene")
+async def post_current_empty_scene(
     request: Request,
     chapterId: str,
-    candidateId: str,
 ) -> dict[str, object]:
+    payload = await parse_json_model(request, CurrentEmptySceneImageRequest)
     try:
-        package = store_for_request(request).lock_empty_base_scene(chapterId, candidateId)
+        package = store_for_request(request).select_empty_scene_image(
+            chapterId,
+            payload.empty_scene_image_id,
+        )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(exc) from exc
+        raise scene_package_http_exception(
+            exc,
+            child_not_found_detail="Empty Scene Image not found.",
+        ) from exc
     return scene_package_payload(package)
 
 
@@ -181,8 +149,8 @@ async def post_complete_scene_image(
             image_bytes=await file.read(),
             original_filename=file.filename or "upload.png",
             prompt_snapshot=_optional_prompt_snapshot(form.get("promptSnapshot")),
-            reference_ids=string_list_form_value(form, "referenceIds"),
-            variation_prompt=string_form_value(form.get("variationPrompt"), default=""),
+            reference_image_ids=string_list_form_value(form, "referenceImageIds"),
+            generation_note=string_form_value(form.get("generationNote"), default=""),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
@@ -198,7 +166,10 @@ def delete_complete_scene_image(
     completeImageId: str,
 ) -> dict[str, object]:
     try:
-        package = store_for_request(request).delete_complete_scene_image(chapterId, completeImageId)
+        package = store_for_request(request).delete_complete_scene_image(
+            chapterId,
+            completeImageId,
+        )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(
             exc,
@@ -263,6 +234,49 @@ async def post_chapter_asset(
     return scene_package_payload(package)
 
 
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/chapter-assets/direct-upload"
+)
+async def post_direct_chapter_asset(
+    request: Request,
+    chapterId: str,
+) -> dict[str, object]:
+    form = await request.form()
+    file = require_upload_file(form.get("file"))
+    try:
+        package = store_for_request(request).add_direct_chapter_asset(
+            chapterId,
+            image_bytes=await file.read(),
+            original_filename=file.filename or "upload.png",
+            display_name=required_string_form_value(form.get("displayName"), "displayName"),
+            linked_target_object_id=optional_string_form_value(
+                form.get("linkedTargetObjectId"),
+                "linkedTargetObjectId",
+            ),
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return scene_package_payload(package)
+
+
+@scene_package_router.post("/chapters/{chapterId}/scene-package/final-scene")
+async def post_final_scene(
+    request: Request,
+    chapterId: str,
+) -> dict[str, object]:
+    form = await request.form()
+    file = require_upload_file(form.get("file"))
+    try:
+        package = store_for_request(request).lock_final_chapter_scene(
+            chapterId,
+            image_bytes=await file.read(),
+            original_filename=file.filename or "upload.png",
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return scene_package_payload(package)
+
+
 @scene_package_router.put("/chapters/{chapterId}/scene-package/assembly")
 async def put_scene_package_assembly(
     request: Request,
@@ -311,6 +325,39 @@ def _target_object_updates(
             "priority": target.priority,
         }
         for target in payload.target_objects
+    ]
+
+
+def _avoid_object_updates(
+    payload: ChapterScenePromptPatchRequest,
+) -> list[dict[str, str]]:
+    if payload.avoid_objects is None:
+        return []
+    return [
+        {
+            "label": target.label,
+            "description": target.description,
+        }
+        for target in payload.avoid_objects
+    ]
+
+
+def _prompt_confirmation_updates(
+    payload: ChapterScenePromptPatchRequest,
+) -> dict[str, object]:
+    if payload.prompt_confirmations is None:
+        return {}
+    return payload.prompt_confirmations.model_dump(mode="python", by_alias=False)
+
+
+def _reference_selection_updates(
+    payload: ChapterScenePromptPatchRequest,
+) -> list[dict[str, str]]:
+    if payload.reference_selections is None:
+        return []
+    return [
+        selection.model_dump(mode="python", by_alias=False)
+        for selection in payload.reference_selections
     ]
 
 

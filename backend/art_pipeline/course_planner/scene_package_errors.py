@@ -10,9 +10,9 @@ class ScenePackageChildNotFoundError(FileNotFoundError):
     pass
 
 
-class UnknownBaseCandidateError(ScenePackagePreconditionError):
+class UnknownCompleteSceneImageError(ScenePackageChildNotFoundError):
     pass
 
 
-class UnknownCompleteSceneImageError(ScenePackageChildNotFoundError):
+class UnknownEmptySceneImageError(ScenePackageChildNotFoundError):
     pass

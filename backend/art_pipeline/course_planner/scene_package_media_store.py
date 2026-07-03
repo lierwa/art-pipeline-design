@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackagePreconditionError,
@@ -19,91 +18,59 @@ from art_pipeline.course_planner.scene_package_models import (
     ChapterAsset,
     ChapterAssetLineage,
     ChapterScenePackage,
-    ChapterSceneReference,
     CompleteSceneImage,
-    EmptyBaseSceneCandidate,
+    EmptySceneImage,
+    FinalChapterScene,
     ImageReferenceSnapshot,
-    build_base_prompt,
     build_complete_prompt,
+    build_empty_scene_prompt,
 )
 from art_pipeline.workspace.store import utc_now
 
 
 class CoursePlannerScenePackageMediaStoreMixin:
-    def add_chapter_scene_reference(
-        self,
-        chapter_id: str,
-        *,
-        image_bytes: bytes,
-        original_filename: str,
-        prompt_role: Literal["style", "scene", "character", "other"] = "other",
-        notes: str = "",
-    ) -> ChapterScenePackage:
-        current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
-        validate_scene_package_png_bytes(image_bytes, "Scene package reference image")
-        reference_id, storage_path = next_scene_package_media_slot(
-            current.references,
-            kind="references",
-            prefix="reference",
-        )
-        reference = ChapterSceneReference(
-            id=reference_id,
-            original_filename=sanitize_original_filename(original_filename),
-            storage_path=storage_path,
-            media_type="image/png",
-            created_at=utc_now(),
-            prompt_role=prompt_role,
-            notes=notes,
-        )
-        self._write_scene_package_media_file(
-            scene_pack_id,
-            current.chapter_id,
-            reference.storage_path,
-            image_bytes,
-        )
-        return self.write_chapter_scene_package(
-            current.model_copy(update={"references": [*current.references, reference]})
-        )
-
-    def add_empty_base_scene_candidate(
+    def add_empty_scene_image(
         self,
         chapter_id: str,
         *,
         image_bytes: bytes,
         original_filename: str,
         prompt_snapshot: str | None,
-        reference_ids: list[str],
+        reference_image_ids: list[str],
     ) -> ChapterScenePackage:
         current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
-        width, height = read_scene_package_png_size(
-            image_bytes,
-            "Base scene candidate image",
+        width, height = read_scene_package_png_size(image_bytes, "Empty scene image")
+        image_id, storage_path = next_scene_package_media_slot(
+            current.empty_scene_images,
+            kind="empty_scene_images",
+            prefix="empty_scene",
         )
-        candidate_id, storage_path = next_scene_package_media_slot(
-            current.base_candidates,
-            kind="base_candidates",
-            prefix="base_candidate",
-        )
-        candidate = EmptyBaseSceneCandidate(
-            id=candidate_id,
+        image = EmptySceneImage(
+            id=image_id,
             original_filename=sanitize_original_filename(original_filename),
             storage_path=storage_path,
             media_type="image/png",
             width=width,
             height=height,
-            prompt_snapshot=self._resolve_base_prompt_snapshot(current, prompt_snapshot),
-            reference_snapshot=self._build_reference_snapshot(current, reference_ids),
+            prompt_snapshot=self._resolve_empty_scene_prompt_snapshot(
+                current,
+                prompt_snapshot,
+            ),
+            reference_snapshot=self._build_reference_snapshot(
+                current,
+                reference_image_ids,
+            ),
             created_at=utc_now(),
         )
         self._write_scene_package_media_file(
             scene_pack_id,
             current.chapter_id,
-            candidate.storage_path,
+            image.storage_path,
             image_bytes,
         )
         return self.write_chapter_scene_package(
             current.model_copy(
-                update={"base_candidates": [*current.base_candidates, candidate]}
+                update={"empty_scene_images": [*current.empty_scene_images, image]}
             )
         )
 
@@ -114,25 +81,11 @@ class CoursePlannerScenePackageMediaStoreMixin:
         image_bytes: bytes,
         original_filename: str,
         prompt_snapshot: str | None,
-        reference_ids: list[str],
-        variation_prompt: str,
+        reference_image_ids: list[str],
+        generation_note: str,
     ) -> ChapterScenePackage:
         current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
-        locked_base_candidate_id = current.locked_base_candidate_id
-        if not locked_base_candidate_id:
-            raise ScenePackagePreconditionError(
-                "Complete scene image upload requires a locked base."
-            )
-        if locked_base_candidate_id not in {
-            candidate.id for candidate in current.base_candidates
-        }:
-            raise ScenePackagePreconditionError(
-                "Locked base candidate must exist before complete upload."
-            )
-        width, height = read_scene_package_png_size(
-            image_bytes,
-            "Complete scene image",
-        )
+        width, height = read_scene_package_png_size(image_bytes, "Complete scene image")
         complete_id, storage_path = next_scene_package_media_slot(
             current.complete_images,
             kind="complete_images",
@@ -145,17 +98,17 @@ class CoursePlannerScenePackageMediaStoreMixin:
             media_type="image/png",
             width=width,
             height=height,
-            base_candidate_id=locked_base_candidate_id,
+            empty_scene_image_id=current.current_empty_scene_image_id,
             prompt_snapshot=self._resolve_complete_prompt_snapshot(
                 current,
                 prompt_snapshot,
             ),
             reference_snapshot=self._build_reference_snapshot(
                 current,
-                reference_ids,
-                locked_base_candidate_id=locked_base_candidate_id,
+                reference_image_ids,
+                current_empty_scene_image_id=current.current_empty_scene_image_id,
             ),
-            variation_prompt=variation_prompt,
+            generation_note=generation_note,
             created_at=utc_now(),
         )
         self._write_scene_package_media_file(
@@ -198,6 +151,44 @@ class CoursePlannerScenePackageMediaStoreMixin:
             current.model_copy(update={"complete_images": updated_complete_images})
         )
 
+    def add_direct_chapter_asset(
+        self,
+        chapter_id: str,
+        *,
+        image_bytes: bytes,
+        original_filename: str,
+        display_name: str,
+        linked_target_object_id: str | None = None,
+    ) -> ChapterScenePackage:
+        current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
+        validate_scene_package_png_bytes(image_bytes, "Direct scene asset image")
+        asset_id, storage_path = next_scene_package_media_slot(
+            current.chapter_assets,
+            kind="assets",
+            prefix="chapter_asset",
+        )
+        asset = ChapterAsset(
+            id=asset_id,
+            display_name=display_name,
+            original_filename=sanitize_original_filename(original_filename),
+            storage_path=storage_path,
+            media_type="image/png",
+            lineage=ChapterAssetLineage(source_kind="direct_upload"),
+            linked_target_object_id=linked_target_object_id,
+            created_at=utc_now(),
+        )
+        self._write_scene_package_media_file(
+            scene_pack_id,
+            current.chapter_id,
+            asset.storage_path,
+            image_bytes,
+        )
+        return self.write_chapter_scene_package(
+            current.model_copy(
+                update={"chapter_assets": [*current.chapter_assets, asset]}
+            )
+        )
+
     def add_chapter_asset_from_run_asset(
         self,
         chapter_id: str,
@@ -229,6 +220,7 @@ class CoursePlannerScenePackageMediaStoreMixin:
             storage_path=storage_path,
             media_type="image/png",
             lineage=ChapterAssetLineage(
+                source_kind="pipeline_run_asset",
                 source_run_id=source_run_id,
                 source_run_asset_id=source_run_asset_id,
                 source_complete_image_id=source_complete_image_id,
@@ -246,6 +238,61 @@ class CoursePlannerScenePackageMediaStoreMixin:
             current.model_copy(
                 update={"chapter_assets": [*current.chapter_assets, asset]}
             )
+        )
+
+    def lock_final_chapter_scene(
+        self,
+        chapter_id: str,
+        *,
+        image_bytes: bytes,
+        original_filename: str,
+    ) -> ChapterScenePackage:
+        current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
+        if not current.current_empty_scene_image_id:
+            raise ScenePackagePreconditionError(
+                "Lock Final requires a selected Empty Scene Image."
+            )
+        if not current.assembly.placements:
+            raise ScenePackagePreconditionError(
+                "Lock Final requires at least one placed Scene Asset."
+            )
+        width, height = read_scene_package_png_size(
+            image_bytes,
+            "Final chapter scene image",
+        )
+        final_id, storage_path = next_scene_package_media_slot(
+            [current.final_scene] if current.final_scene else [],
+            kind="final_scene",
+            prefix="final_scene",
+        )
+        final_scene = FinalChapterScene(
+            id=final_id,
+            original_filename=sanitize_original_filename(original_filename),
+            storage_path=storage_path,
+            media_type="image/png",
+            width=width,
+            height=height,
+            empty_scene_image_id=current.current_empty_scene_image_id,
+            assembly_snapshot=current.assembly,
+            prompt_snapshot=build_complete_prompt(current),
+            reference_snapshot=self._build_reference_snapshot(
+                current,
+                [
+                    selection.reference_image_id
+                    for selection in current.reference_selections
+                ],
+                current_empty_scene_image_id=current.current_empty_scene_image_id,
+            ),
+            created_at=utc_now(),
+        )
+        self._write_scene_package_media_file(
+            scene_pack_id,
+            current.chapter_id,
+            final_scene.storage_path,
+            image_bytes,
+        )
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"final_scene": final_scene})
         )
 
     def read_chapter_scene_package_media(
@@ -277,14 +324,14 @@ class CoursePlannerScenePackageMediaStoreMixin:
             image_bytes,
         )
 
-    def _resolve_base_prompt_snapshot(
+    def _resolve_empty_scene_prompt_snapshot(
         self,
         package: ChapterScenePackage,
         prompt_snapshot: str | None,
     ) -> str:
         if prompt_snapshot is not None:
             return prompt_snapshot
-        return build_base_prompt(package)
+        return build_empty_scene_prompt(package)
 
     def _resolve_complete_prompt_snapshot(
         self,
@@ -298,27 +345,29 @@ class CoursePlannerScenePackageMediaStoreMixin:
     def _build_reference_snapshot(
         self,
         package: ChapterScenePackage,
-        reference_ids: list[str],
+        reference_image_ids: list[str],
         *,
-        locked_base_candidate_id: str | None = None,
+        current_empty_scene_image_id: str | None = None,
     ) -> ImageReferenceSnapshot:
-        known_reference_ids = {reference.id for reference in package.references}
-        missing_reference_ids = [
-            reference_id
-            for reference_id in reference_ids
-            if reference_id not in known_reference_ids
+        known_reference_image_ids = {
+            selection.reference_image_id for selection in package.reference_selections
+        }
+        missing_reference_image_ids = [
+            reference_image_id
+            for reference_image_id in reference_image_ids
+            if reference_image_id not in known_reference_image_ids
         ]
-        if missing_reference_ids:
+        if missing_reference_image_ids:
             raise ScenePackageValidationError(
-                "Unknown scene package reference ids: "
-                + ", ".join(missing_reference_ids)
+                "Unknown scene package reference image ids: "
+                + ", ".join(missing_reference_image_ids)
             )
         return ImageReferenceSnapshot(
-            reference_ids=list(reference_ids),
-            locked_base_candidate_id=(
-                package.locked_base_candidate_id
-                if locked_base_candidate_id is None
-                else locked_base_candidate_id
+            reference_image_ids=list(reference_image_ids),
+            current_empty_scene_image_id=(
+                package.current_empty_scene_image_id
+                if current_empty_scene_image_id is None
+                else current_empty_scene_image_id
             ),
         )
 

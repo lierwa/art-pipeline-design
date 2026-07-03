@@ -46,15 +46,55 @@ class TargetObjectRequest(BaseModel):
     priority: Literal["core", "required", "recommended"] = "required"
 
 
-class ChapterScenePromptPatchRequest(BaseModel):
+class AvoidObjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    label: str = Field(min_length=1)
+    description: str = ""
+
+
+class PromptReadinessConfirmationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    avoid_objects_reviewed: bool = Field(alias="avoidObjectsReviewed")
+    style_reference_mode: Literal["unreviewed", "selected", "confirmed_empty"] = Field(
+        alias="styleReferenceMode"
+    )
+
+
+class ChapterReferenceSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    reference_image_id: str = Field(alias="referenceImageId", min_length=1)
+    prompt_role: Literal["character", "style", "scene", "other"] = Field(
+        alias="promptRole"
+    )
+    notes: str = ""
+
+
+class ChapterScenePromptPatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     prompt_text: str = Field(alias="promptText")
-    negative_constraints: str | None = Field(default=None, alias="negativeConstraints")
-    style_notes: str | None = Field(default=None, alias="styleNotes")
+    scene_spatial_contract: str | None = Field(
+        default=None,
+        alias="sceneSpatialContract",
+    )
     target_objects: list[TargetObjectRequest] | None = Field(
         default=None,
         alias="targetObjects",
+    )
+    avoid_objects: list[AvoidObjectRequest] | None = Field(
+        default=None,
+        alias="avoidObjects",
+    )
+    prompt_confirmations: PromptReadinessConfirmationRequest | None = Field(
+        default=None,
+        alias="promptConfirmations",
+    )
+    reference_selections: list[ChapterReferenceSelectionRequest] | None = Field(
+        default=None,
+        alias="referenceSelections",
     )
 
 
@@ -76,6 +116,12 @@ class ChapterOrderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     chapter_ids: list[str] = Field(alias="chapterIds")
+
+
+class CurrentEmptySceneImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    empty_scene_image_id: str = Field(alias="emptySceneImageId", min_length=1)
 
 
 class PromptVersionCreateRequest(BaseModel):

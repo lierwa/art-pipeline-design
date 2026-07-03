@@ -6,13 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from art_pipeline.course_planner.scene_package_errors import (
-    ScenePackagePreconditionError,
-    UnknownBaseCandidateError,
-    UnknownCompleteSceneImageError,
+    ScenePackageChildNotFoundError,
 )
 from art_pipeline.course_planner.store import CoursePlannerStore
 from route_test_helpers import client_with_provider
-from scene_package_route_test_helpers import _create_chapter, _create_locked_base, _png_bytes, _upload_reference
+from scene_package_route_test_helpers import _create_chapter, _png_bytes
 
 
 @pytest.fixture
@@ -29,7 +27,7 @@ def test_get_scene_package_lazily_creates_package(client: TestClient) -> None:
     assert response.json()["scenePackage"]["chapter_id"] == chapter_id
 
 
-def test_patch_scene_package_prompt_updates_prompt_and_targets(
+def test_patch_scene_package_prompt_updates_new_model_surface(
     client: TestClient,
 ) -> None:
     chapter_id = _create_chapter(client)
@@ -38,13 +36,24 @@ def test_patch_scene_package_prompt_updates_prompt_and_targets(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
         json={
             "promptText": "Low-shadow room scene.",
-            "negativeConstraints": "No strong shadows.",
-            "styleNotes": "Soft watercolor edges.",
+            "sceneSpatialContract": "Bed against back wall, desk by window, floor kept clear.",
             "targetObjects": [
                 {
                     "label": "book",
                     "description": "Yellow cover.",
                     "priority": "required",
+                }
+            ],
+            "avoidObjects": [{"label": "shattered glass", "description": "unsafe prop"}],
+            "promptConfirmations": {
+                "avoidObjectsReviewed": True,
+                "styleReferenceMode": "confirmed_empty",
+            },
+            "referenceSelections": [
+                {
+                    "referenceImageId": "reference_style_001",
+                    "promptRole": "style",
+                    "notes": "warm palette",
                 }
             ],
         },
@@ -53,11 +62,11 @@ def test_patch_scene_package_prompt_updates_prompt_and_targets(
     assert response.status_code == 200
     payload = response.json()["scenePackage"]
     assert payload["prompt"]["prompt_text"] == "Low-shadow room scene."
-    assert payload["prompt"]["negative_constraints"] == "No strong shadows."
-    assert payload["prompt"]["style_notes"] == "Soft watercolor edges."
+    assert payload["prompt"]["scene_spatial_contract"].startswith("Bed against back wall")
     assert payload["target_objects"][0]["label"] == "book"
-    assert payload["target_objects"][0]["description"] == "Yellow cover."
-    assert payload["target_objects"][0]["priority"] == "required"
+    assert payload["avoid_objects"][0]["label"] == "shattered glass"
+    assert payload["prompt_confirmations"]["avoid_objects_reviewed"] is True
+    assert payload["reference_selections"][0]["reference_image_id"] == "reference_style_001"
 
 
 def test_patch_scene_package_prompt_invalid_body_returns_400(client: TestClient) -> None:
@@ -65,7 +74,7 @@ def test_patch_scene_package_prompt_invalid_body_returns_400(client: TestClient)
 
     missing_field_response = client.patch(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
-        json={"negativeConstraints": "No strong shadows."},
+        json={"sceneSpatialContract": "No prompt text."},
     )
     invalid_field_response = client.patch(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
@@ -76,7 +85,7 @@ def test_patch_scene_package_prompt_invalid_body_returns_400(client: TestClient)
     assert invalid_field_response.status_code == 400
 
 
-def test_patch_scene_package_prompt_preserves_omitted_metadata_and_targets(
+def test_patch_scene_package_prompt_preserves_omitted_metadata_and_lists(
     client: TestClient,
 ) -> None:
     chapter_id = _create_chapter(client)
@@ -85,13 +94,19 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_targets(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
         json={
             "promptText": "Low-shadow room scene.",
-            "negativeConstraints": "No strong shadows.",
-            "styleNotes": "Soft watercolor edges.",
+            "sceneSpatialContract": "Bed against back wall, desk by window, floor kept clear.",
             "targetObjects": [
                 {
                     "label": "book",
                     "description": "Yellow cover.",
                     "priority": "required",
+                }
+            ],
+            "avoidObjects": [{"label": "shattered glass"}],
+            "referenceSelections": [
+                {
+                    "referenceImageId": "reference_style_001",
+                    "promptRole": "style",
                 }
             ],
         },
@@ -104,9 +119,9 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_targets(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
         json={
             "promptText": "Brighter breakfast room.",
-            "negativeConstraints": "",
-            "styleNotes": "",
-            "targetObjects": [],
+            "sceneSpatialContract": "",
+            "avoidObjects": [],
+            "referenceSelections": [],
         },
     )
 
@@ -114,116 +129,78 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_targets(
     assert preserve_response.status_code == 200
     preserved_payload = preserve_response.json()["scenePackage"]
     assert preserved_payload["prompt"]["prompt_text"] == "Brighter breakfast room."
-    assert preserved_payload["prompt"]["negative_constraints"] == "No strong shadows."
-    assert preserved_payload["prompt"]["style_notes"] == "Soft watercolor edges."
-    assert preserved_payload["target_objects"] == [
+    assert preserved_payload["prompt"]["scene_spatial_contract"].startswith(
+        "Bed against back wall"
+    )
+    assert preserved_payload["avoid_objects"] == [
         {
-            "id": "target_object_001",
-            "label": "book",
-            "description": "Yellow cover.",
-            "priority": "required",
+            "id": "avoid_object_001",
+            "label": "shattered glass",
+            "description": "",
         }
     ]
+    assert preserved_payload["reference_selections"][0]["reference_image_id"] == (
+        "reference_style_001"
+    )
 
     assert clear_response.status_code == 200
     cleared_payload = clear_response.json()["scenePackage"]
-    assert cleared_payload["prompt"]["negative_constraints"] == ""
-    assert cleared_payload["prompt"]["style_notes"] == ""
-    assert cleared_payload["target_objects"] == []
+    assert cleared_payload["prompt"]["scene_spatial_contract"] == ""
+    assert cleared_payload["avoid_objects"] == []
+    assert cleared_payload["reference_selections"] == []
 
 
-def test_upload_scene_reference_returns_scene_package(client: TestClient) -> None:
+def test_upload_empty_scene_and_select_current_image(client: TestClient) -> None:
     chapter_id = _create_chapter(client)
-
-    response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/references",
-        data={"promptRole": "style", "notes": "warm palette"},
-        files={"file": ("style.png", _png_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 200
-    reference = response.json()["scenePackage"]["references"][0]
-    assert reference["original_filename"] == "style.png"
-    assert reference["prompt_role"] == "style"
-    assert reference["notes"] == "warm palette"
-
-
-def test_upload_scene_reference_rejects_invalid_png_bytes(client: TestClient) -> None:
-    chapter_id = _create_chapter(client)
-
-    response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/references",
-        files={"file": ("style.png", b"not-a-png", "image/png")},
-    )
-
-    assert response.status_code == 400
-    assert "valid PNG" in response.json()["detail"]
-
-
-def test_upload_scene_reference_missing_file_returns_400(client: TestClient) -> None:
-    chapter_id = _create_chapter(client)
-
-    response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/references",
-        data={"promptRole": "style"},
-    )
-
-    assert response.status_code == 400
-
-
-def test_add_base_candidate_and_lock_it(client: TestClient) -> None:
-    chapter_id = _create_chapter(client)
-    reference_id = _upload_reference(client, chapter_id)
 
     upload_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/base-candidates",
-        data={
-            "referenceIds": reference_id,
-            "promptSnapshot": "Custom base prompt snapshot.",
-        },
-        files={"file": ("base.png", _png_bytes(width=120, height=80), "image/png")},
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
+        data={"promptSnapshot": "Custom empty scene prompt snapshot."},
+        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
     )
 
-    candidate_id = upload_response.json()["scenePackage"]["base_candidates"][0]["id"]
-    lock_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/base-candidates/{candidate_id}/lock"
+    empty_scene_id = upload_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
+    select_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
+        json={"emptySceneImageId": empty_scene_id},
     )
 
     assert upload_response.status_code == 200
-    candidate = upload_response.json()["scenePackage"]["base_candidates"][0]
-    assert candidate["width"] == 120
-    assert candidate["prompt_snapshot"] == "Custom base prompt snapshot."
-    assert (
-        candidate["reference_snapshot"]["reference_ids"]
-        == [reference_id]
+    image = upload_response.json()["scenePackage"]["empty_scene_images"][0]
+    assert image["width"] == 120
+    assert image["prompt_snapshot"] == "Custom empty scene prompt snapshot."
+    assert image["reference_snapshot"]["reference_image_ids"] == []
+    assert select_response.status_code == 200
+    assert select_response.json()["scenePackage"]["current_empty_scene_image_id"] == (
+        empty_scene_id
     )
-    assert lock_response.status_code == 200
-    assert lock_response.json()["scenePackage"]["locked_base_candidate_id"] == candidate_id
 
 
-def test_lock_missing_base_candidate_returns_409(client: TestClient) -> None:
+def test_select_missing_empty_scene_returns_404(client: TestClient) -> None:
     chapter_id = _create_chapter(client)
 
     response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/base-candidates/base_candidate_999/lock"
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
+        json={"emptySceneImageId": "empty_scene_999"},
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 404
 
 
-def test_lock_unknown_base_candidate_uses_exception_type_not_message(
+def test_select_unknown_empty_scene_uses_exception_type_not_message(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     chapter_id = _create_chapter(client)
 
-    def fake_lock(self: CoursePlannerStore, chapter_id: str, candidate_id: str):
-        raise UnknownBaseCandidateError("not the legacy message")
+    def fake_select(self: CoursePlannerStore, chapter_id: str, image_id: str):
+        raise ScenePackageChildNotFoundError("not the legacy message")
 
-    monkeypatch.setattr(CoursePlannerStore, "lock_empty_base_scene", fake_lock)
+    monkeypatch.setattr(CoursePlannerStore, "select_empty_scene_image", fake_select)
 
     response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/base-candidates/base_candidate_999/lock"
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
+        json={"emptySceneImageId": "empty_scene_999"},
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 404
