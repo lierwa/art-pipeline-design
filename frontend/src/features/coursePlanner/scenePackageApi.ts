@@ -28,10 +28,6 @@ export type ChapterScenePromptInput = {
   avoidObjects?: ChapterScenePromptAvoidObjectInput[];
   promptConfirmations?: PromptReadinessConfirmationInput;
 };
-export type ReferenceUploadInput = {
-  promptRole?: "style" | "scene" | "character" | "other";
-  notes?: string;
-};
 export type EmptySceneImageUploadInput = {
   referenceImageIds?: string[];
   promptSnapshot?: string;
@@ -74,24 +70,6 @@ export async function updateChapterScenePrompt(
     `${scenePackagePath(chapterId)}/prompt`,
     jsonRequest("PATCH", chapterScenePromptPatchBody(input)),
     "Could not update Chapter Scene prompt.",
-  );
-}
-
-export async function uploadChapterSceneReference(
-  chapterId: string,
-  file: File,
-  input: ReferenceUploadInput = {},
-  fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterScenePackage> {
-  const body = new FormData();
-  body.append("file", file);
-  appendOptionalStringField(body, "promptRole", input.promptRole);
-  appendOptionalStringField(body, "notes", input.notes);
-  return requestScenePackage(
-    fetcher,
-    `${scenePackagePath(chapterId)}/references`,
-    { method: "POST", body },
-    "Could not upload Chapter Scene reference.",
   );
 }
 

@@ -14,7 +14,6 @@ import {
   updateChapterScenePrompt,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
-  uploadChapterSceneReference,
   uploadEmptySceneImage,
 } from "../../src/features/coursePlanner/api";
 import type { ChapterSceneAssemblyManifest } from "../../src/features/coursePlanner/types";
@@ -54,8 +53,6 @@ describe("course planner scene package API client", () => {
 
     const packageResult = await fetchChapterScenePackage("chapter_001", fetcher);
     const promptResult = await updateChapterScenePrompt("chapter_001", promptPatchInput(), fetcher);
-    const referenceFile = new File(["reference"], "style-board.png", { type: "image/png" });
-    const referenceResult = await uploadChapterSceneReference("chapter_001", referenceFile, referenceUploadInput(), fetcher);
     const emptyFile = new File(["empty"], "empty.png", { type: "image/png" });
     const emptyResult = await uploadEmptySceneImage("chapter_001", emptyFile, emptySceneUploadInput(), fetcher);
     const selectedResult = await selectEmptySceneImage("chapter_001", "empty_scene_001", fetcher);
@@ -74,7 +71,6 @@ describe("course planner scene package API client", () => {
     expect(calls.map((call) => [call.input, call.init?.method ?? "GET"])).toEqual([
       ["/api/course-planner/chapters/chapter_001/scene-package", "GET"],
       ["/api/course-planner/chapters/chapter_001/scene-package/prompt", "PATCH"],
-      ["/api/course-planner/chapters/chapter_001/scene-package/references", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/empty-scene-images", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/current-empty-scene", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/complete-images", "POST"],
@@ -84,15 +80,14 @@ describe("course planner scene package API client", () => {
       ["/api/course-planner/chapters/chapter_001/scene-package/final-scene", "POST"],
     ]);
     expect(JSON.parse(String(calls[1].init?.body))).toEqual(promptPatchRequestPayload());
-    expect(JSON.parse(String(calls[4].init?.body))).toEqual({ emptySceneImageId: "empty_scene_001" });
-    expect(JSON.parse(String(calls[6].init?.body))).toEqual({ runId: "run_123", runStatus: "completed" });
-    expect(JSON.parse(String(calls[8].init?.body))).toEqual(assemblyManifestFixture());
+    expect(JSON.parse(String(calls[3].init?.body))).toEqual({ emptySceneImageId: "empty_scene_001" });
+    expect(JSON.parse(String(calls[5].init?.body))).toEqual({ runId: "run_123", runStatus: "completed" });
+    expect(JSON.parse(String(calls[7].init?.body))).toEqual(assemblyManifestFixture());
     expect(packageResult.chapter_id).toBe("chapter_001");
     expect(packageResult.prompt.prompt_text).toBe("Low-shadow room scene.");
     expect(packageResult.prompt_confirmations.style_reference_mode).toBe("confirmed_empty");
     expect(packageResult.reference_selections[0].prompt_role).toBe("style");
     expect(promptResult.target_objects[0].description).toBe("Yellow cover.");
-    expect(referenceResult.target_objects[0].label).toBe("book");
     expect(emptyResult.empty_scene_images[0].reference_snapshot.reference_image_ids).toEqual(["reference_001", "reference_002"]);
     expect(selectedResult.current_empty_scene_image_id).toBe("empty_scene_001");
     expect(completeResult.complete_images[0].generation_note).toBe("brighter morning light");
@@ -142,24 +137,18 @@ describe("course planner scene package API client", () => {
       });
     }) as typeof fetch;
 
-    const referenceFile = new File(["reference"], "style-board.png", { type: "image/png" });
     const emptyFile = new File(["empty"], "empty.png", { type: "image/png" });
     const completeFile = new File(["complete"], "complete.png", { type: "image/png" });
     const assetFile = new File(["asset"], "pillow.png", { type: "image/png" });
 
-    await uploadChapterSceneReference("chapter_001", referenceFile, referenceUploadInput(), fetcher);
     await uploadEmptySceneImage("chapter_001", emptyFile, emptySceneUploadInput(), fetcher);
     await uploadCompleteSceneImage("chapter_001", completeFile, completeImageUploadInput(), fetcher);
     await uploadDirectChapterAsset("chapter_001", assetFile, directAssetUploadInput(), fetcher);
 
-    const referenceBody = calls[0].init?.body as FormData;
-    const emptyBody = calls[1].init?.body as FormData;
-    const completeBody = calls[2].init?.body as FormData;
-    const assetBody = calls[3].init?.body as FormData;
+    const emptyBody = calls[0].init?.body as FormData;
+    const completeBody = calls[1].init?.body as FormData;
+    const assetBody = calls[2].init?.body as FormData;
 
-    expect(referenceBody.get("file")).toBe(referenceFile);
-    expect(referenceBody.get("promptRole")).toBe("style");
-    expect(referenceBody.get("notes")).toBe("warm palette");
     expect(emptyBody.get("file")).toBe(emptyFile);
     expect(emptyBody.get("promptSnapshot")).toBe("Custom empty prompt snapshot.");
     expect(emptyBody.getAll("referenceImageIds")).toEqual(["reference_001", "reference_002"]);
@@ -243,13 +232,6 @@ function promptPatchRequestPayload() {
   };
 }
 
-function referenceUploadInput() {
-  return {
-    promptRole: "style" as const,
-    notes: "warm palette",
-  };
-}
-
 function emptySceneUploadInput() {
   return {
     referenceImageIds: ["reference_001", "reference_002"],
@@ -284,9 +266,6 @@ function scenePackageResponseFor(input: string, init?: RequestInit): unknown {
     return { scenePackage: scenePackageFixture() };
   }
   if (input.endsWith("/scene-package/prompt") && init?.method === "PATCH") {
-    return { scenePackage: scenePackageFixture() };
-  }
-  if (input.endsWith("/scene-package/references") && init?.method === "POST") {
     return { scenePackage: scenePackageFixture() };
   }
   if (input.endsWith("/scene-package/empty-scene-images") && init?.method === "POST") {

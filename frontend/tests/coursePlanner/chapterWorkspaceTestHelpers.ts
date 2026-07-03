@@ -14,7 +14,6 @@ export type ChapterWorkspaceFetchMockOptions = {
   scenePackage?: ChapterScenePackage;
   fetchScenePackage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   updateScenePrompt?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  uploadReference?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   selectEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadCompleteSceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
@@ -47,9 +46,6 @@ export function installChapterWorkspaceFetchMock(options: ChapterWorkspaceFetchM
     }
     if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/prompt`) && init?.method === "PATCH") {
       return options.updateScenePrompt?.(input, init) ?? jsonResponse({ scenePackage: await patchScenePrompt(scenePackage, init) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/references`) && init?.method === "POST") {
-      return options.uploadReference?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendReference(scenePackage, init)) });
     }
     if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/empty-scene-images`) && init?.method === "POST") {
       return options.uploadEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendEmptySceneImage(scenePackage, init)) });
@@ -270,23 +266,6 @@ function studioAssemblyFixture(overrides: Partial<ChapterSceneAssemblyManifest> 
 
 async function parseJsonBody<T>(init: RequestInit | undefined): Promise<T> {
   return JSON.parse(String(init?.body ?? "{}")) as T;
-}
-
-function appendReference(current: ChapterScenePackage, init: RequestInit | undefined): ChapterScenePackage {
-  const body = init?.body as FormData;
-  const selectionId = `reference_selection_${current.reference_selections.length + 1}`;
-  const referenceId = `${selectionId}_image`;
-  return {
-    ...current,
-    reference_selections: [
-      ...current.reference_selections,
-      {
-        id: selectionId,
-        reference_image_id: referenceId,
-        prompt_role: (String(body.get("promptRole") ?? "other") as ChapterScenePackage["reference_selections"][number]["prompt_role"]),
-      },
-    ],
-  };
 }
 
 function appendEmptySceneImage(current: ChapterScenePackage, init: RequestInit | undefined): ChapterScenePackage {

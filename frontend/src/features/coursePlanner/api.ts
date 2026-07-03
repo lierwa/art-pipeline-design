@@ -26,7 +26,6 @@ export type {
   CompleteImageUploadInput,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
-  ReferenceUploadInput,
   RunAssociationInput,
 } from "./scenePackageApi";
 export {
@@ -37,7 +36,6 @@ export {
   selectEmptySceneImage,
   updateChapterScenePrompt,
   uploadChapterAssetFromRunAsset,
-  uploadChapterSceneReference,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
