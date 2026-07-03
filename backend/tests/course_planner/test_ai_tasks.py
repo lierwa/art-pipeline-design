@@ -9,16 +9,8 @@ from pydantic import BaseModel, ValidationError
 from art_pipeline.course_planner.ai_tasks import (
     CoursePlannerAiService,
     GenerateChapterCandidatesOutput,
-    GeneratePromptVersionOutput,
 )
-from art_pipeline.course_planner.models import (
-    Chapter,
-    ChapterSeed,
-    CharacterConceptHint,
-    ImageAttemptReview,
-    PromptVersion,
-    ScenePack,
-)
+from art_pipeline.course_planner.models import Chapter, ChapterSeed, ScenePack
 from art_pipeline.course_planner.store import CoursePlannerStore
 
 
@@ -113,7 +105,10 @@ def test_generate_chapter_candidates_returns_batch_unique_candidate_ids(
     first_ids = {candidate["id"] for candidate in first_batch}
     second_ids = {candidate["id"] for candidate in second_batch}
     assert first_ids.isdisjoint(second_ids)
-    assert all(candidate_id.startswith("candidate_") for candidate_id in first_ids | second_ids)
+    assert all(
+        candidate_id.startswith("candidate_")
+        for candidate_id in first_ids | second_ids
+    )
 
 
 def test_generate_chapter_candidates_rejects_invalid_candidate_without_business_write(
@@ -138,133 +133,20 @@ def test_generate_chapter_candidates_rejects_invalid_candidate_without_business_
     assert _task_error_path(store, "generate_chapter_candidates", scene_pack.id).exists()
 
 
-def test_prompt_version_schema_requires_plans_not_prompt_version_ids() -> None:
-    schema = GeneratePromptVersionOutput.model_json_schema()
-
-    assert "id" not in schema["properties"]
-    assert "chapter_id" not in schema["properties"]
-    assert "scene_director_plan" in schema["properties"]
-    assert "cast_bindings" in schema["properties"]
-    assert "scene_vocabulary" in schema["properties"]
-    assert "prompt_tuning" in schema["properties"]
-    assert "object_plan" not in schema["properties"]
-
-
-def test_generate_prompt_version_builds_package_from_generated_plans(
+def test_generate_chapter_candidates_failure_writes_error_artifact(
     tmp_path: Path,
 ) -> None:
     store = CoursePlannerStore(tmp_path / "scene_library")
-    scene_pack, chapter = _scene_pack_with_chapter(store)
-    service = CoursePlannerAiService(
-        store=store,
-        provider=FakeProvider(_prompt_version_output()),
-    )
-
-    payload = service.generate_prompt_version(scene_pack, chapter, feedback="强调红苹果")
-
-    assert payload["title"] == "厨房水槽构图"
-    assert payload["scene_director_plan"]["story_event"] == "团团在水槽前清洗红苹果。"
-    assert payload["cast_bindings"][0]["character_id"] == "tuantuan"
-    assert payload["scene_vocabulary"]["narrative_anchors"] == ["red apple", "sink faucet"]
-    assert payload["scene_vocabulary"]["optional_vocabulary_candidates"] == ["cup", "plate", "chair", "window"]
-    assert "红苹果" in payload["prompt_package"]["full_prompt"]
-    assert "tuantuan" in payload["prompt_package"]["full_prompt"]
-    assert "Do not force every candidate object into the image" in payload["prompt_package"]["full_prompt"]
-    assert "Required objects by priority:" not in payload["prompt_package"]["full_prompt"]
-    assert "ChatGPT Image2" in payload["prompt_package"]["full_prompt"]
-    assert "Reference image usage:" in payload["prompt_package"]["full_prompt"]
-    assert "Scene Director Plan:" not in payload["prompt_package"]["full_prompt"]
-    prompt = service.provider.requests[0][0]
-    assert chapter.seed.chapter_title in prompt
-    assert "SceneDirectorPlan" in prompt
-    assert "CastBinding" in prompt
-    assert "SceneVocabulary" in prompt
-    assert "ObjectPlan" not in prompt
-    assert "ChatGPT Image2" in prompt
-    assert "style reference" in prompt
-    assert "character consistency" in prompt
-    assert "reference_asset_ids" in prompt
-    assert "target_level" not in prompt
-
-
-def test_review_image_attempt_is_scoped_to_prompt_version_and_attempt(
-    tmp_path: Path,
-) -> None:
-    store = CoursePlannerStore(tmp_path / "scene_library")
-    scene_pack, chapter = _scene_pack_with_chapter(store)
-    version = store.create_prompt_version(chapter.id, _prompt_version_payload())
-    attempt = store.create_image_attempt(version.id, "upload_001")
-    service = CoursePlannerAiService(
-        store=store,
-        provider=FakeProvider(
-            {
-                "summary": "画面符合水槽清洗苹果的版本目标。",
-                "strengths": ["主体清楚"],
-                "issues": ["背景餐桌略弱"],
-                "recommendation": "accept",
-            }
-        ),
-    )
-
-    review = service.review_image_attempt(scene_pack, chapter, version, attempt)
-
-    assert review == ImageAttemptReview(
-        summary="画面符合水槽清洗苹果的版本目标。",
-        strengths=["主体清楚"],
-        issues=["背景餐桌略弱"],
-        recommendation="accept",
-    )
-    prompt = service.provider.requests[0][0]
-    assert version.id in prompt
-    assert attempt.id in prompt
-    assert "PromptVersion" in prompt
-    assert "ImageAttempt" in prompt
-
-
-def test_generate_prompt_version_failure_writes_error_artifact(tmp_path: Path) -> None:
-    store = CoursePlannerStore(tmp_path / "scene_library")
-    scene_pack, chapter = _scene_pack_with_chapter(store)
+    scene_pack = store.create_scene_pack(title="室内家庭篇", intent="厨房日常场景")
     service = CoursePlannerAiService(
         store=store,
         provider=FakeProvider(RuntimeError("codex failed")),
     )
 
     with pytest.raises(RuntimeError, match="codex failed"):
-        service.generate_prompt_version(scene_pack, chapter)
+        service.generate_chapter_candidates(scene_pack)
 
-    assert _task_error_path(
-        store,
-        "generate_prompt_version",
-        scene_pack.id,
-        chapter.id,
-    ).exists()
-
-
-def _scene_pack_with_chapter(store: CoursePlannerStore) -> tuple[ScenePack, Chapter]:
-    scene_pack = store.create_scene_pack(title="室内家庭篇", intent="厨房日常场景")
-    chapter = store.create_chapter_from_seed(scene_pack.id, _chapter_seed(scene_pack))
-    return scene_pack, chapter
-
-
-def _chapter_seed(scene_pack: ScenePack) -> ChapterSeed:
-    return ChapterSeed(
-        scene_pack_id=scene_pack.id,
-        scene_pack_title=scene_pack.title,
-        chapter_id="pending",
-        chapter_title="清洗苹果",
-        chapter_intent="孩子在厨房水槽前清洗苹果。",
-        scene_domain="厨房",
-        daily_moment="早餐前",
-        event_seed="孩子发现苹果需要先洗干净。",
-        spatial_seed="水槽在前景，餐桌在后方。",
-        object_coverage_hint=["水槽", "苹果", "餐桌"],
-        character_concept_hint=CharacterConceptHint(
-            main_cast_hint="主角孩子",
-            supporting_cast_hint="家长在背景准备早餐",
-            constraints=["动作适合儿童"],
-        ),
-        style_notes="温暖厨房光线。",
-    )
+    assert _task_error_path(store, "generate_chapter_candidates", scene_pack.id).exists()
 
 
 def _candidate_output() -> dict[str, object]:
@@ -273,16 +155,16 @@ def _candidate_output() -> dict[str, object]:
         "candidates": [
             {
                 "chapter_title": "清洗苹果",
-                "chapter_intent": "孩子在厨房水槽前清洗苹果。",
+                "chapter_intent": "团团在厨房水槽前清洗苹果。",
                 "scene_domain": "厨房",
                 "daily_moment": "早餐前",
                 "event_seed": "孩子发现苹果需要先洗干净。",
                 "spatial_seed": "水槽在前景，餐桌在后方。",
                 "object_coverage_hint": ["水槽", "苹果", "餐桌"],
                 "character_concept_hint": {
-                    "main_cast_hint": "主角孩子",
-                    "supporting_cast_hint": "家长在背景准备早餐",
-                    "constraints": ["动作适合儿童"],
+                    "main_cast_hint": "团团作为主角猫",
+                    "supporting_cast_hint": "阿布在背景记录",
+                    "constraints": ["角色表情清楚", "只使用猫咪主角团"],
                 },
                 "style_notes": "温暖厨房光线。",
             },
@@ -290,80 +172,24 @@ def _candidate_output() -> dict[str, object]:
                 "chapter_title": "摆好餐盘",
                 "chapter_intent": "孩子把餐盘放到餐桌中央。",
                 "scene_domain": "厨房",
+                "daily_moment": "早餐前",
                 "event_seed": "孩子为家人准备吃苹果的位置。",
-                "spatial_seed": "餐盘在餐桌中央。",
-                "object_coverage_hint": ["餐桌", "餐盘"],
-                "character_concept_hint": {"main_cast_hint": "主角孩子"},
+                "spatial_seed": "餐盘在餐桌中央，椅子围绕桌边。",
+                "object_coverage_hint": ["餐桌", "餐盘", "椅子"],
+                "character_concept_hint": {
+                    "main_cast_hint": "主角孩子",
+                    "constraints": ["餐盘必须清楚"],
+                },
             },
         ],
     }
 
 
-def _prompt_version_output() -> dict[str, object]:
-    return {
-        "title": "厨房水槽构图",
-        "scene_director_plan": _prompt_version_payload()["scene_director_plan"],
-        "cast_bindings": _prompt_version_payload()["cast_bindings"],
-        "scene_vocabulary": _prompt_version_payload()["scene_vocabulary"],
-        "prompt_tuning": _prompt_version_payload()["prompt_tuning"],
-    }
-
-
-def _prompt_version_payload() -> dict[str, object]:
-    return {
-        "id": "ignored",
-        "chapter_id": "ignored",
-        "version_label": "ignored",
-        "title": "厨房水槽构图",
-        "scene_director_plan": {
-            "story_event": "团团在水槽前清洗红苹果。",
-            "scene_composition": "中景构图，水槽和苹果位于视觉中心。",
-            "spatial_structure": "水槽前景，餐桌后景，冰箱左侧。",
-            "character_arrangement": "团团站在水槽前，阿布在背景记录。",
-            "action_design": "团团双手托着苹果放在水流下。",
-            "style_and_constraints": "温暖绘本风格，避免文字和水印。",
-        },
-        "cast_bindings": [
-            {
-                "character_id": "tuantuan",
-                "display_name": "团团",
-                "role_in_scene": "main",
-                "action_intent": "在水槽前清洗红苹果。",
-                "reference_image_ids": ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
-                "invariants": ["白色蓬松猫", "黄色小包", "背带裤"],
-            },
-            {
-                "character_id": "abu",
-                "display_name": "阿布",
-                "role_in_scene": "support",
-                "action_intent": "在背景观察并记录。",
-                "reference_image_ids": ["docs/image-reference/04_主角轮廓与动作板.png"],
-                "invariants": ["暹罗猫", "圆眼镜", "绿本子"],
-            },
-        ],
-        "scene_vocabulary": {
-            "narrative_anchors": ["red apple", "sink faucet"],
-            "optional_vocabulary_candidates": ["cup", "plate", "chair", "window"],
-            "ambient_furnishing_policy": "自然补足温暖家庭厨房细节，但不要堆成物品目录。",
-            "avoid_objects": ["knife", "human child", "parent"],
-        },
-        "prompt_tuning": {
-            "style_anchor": "生活化猫咪主角团，暖色温柔绘本质感。",
-            "style_reference_image_ids": [
-                "docs/image-reference/01_主方向_生活化猫咪主角团.png"
-            ],
-            "scene_reference_image_ids": [
-                "docs/image-reference/05_生活场景适配换装板.png"
-            ],
-            "must_keep": ["single-species cat cast", "scene-first story moment"],
-            "avoid": ["human student", "object catalog layout"],
-        },
-        "prompt_package": {
-            "full_prompt": "placeholder",
-            "negative_constraints": "placeholder",
-        },
-    }
-
-
-def _task_error_path(store: CoursePlannerStore, *parts: str) -> Path:
-    return store.scene_library_root.joinpath("ai_tasks", *parts, "error.json")
+def _task_error_path(store: CoursePlannerStore, task_name: str, scene_pack_id: str) -> Path:
+    return (
+        store.scene_library_root
+        / "ai_tasks"
+        / task_name
+        / scene_pack_id
+        / "error.json"
+    )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from art_pipeline.course_planner.media_storage_paths import (
     validate_relative_media_storage_path_value,
@@ -41,7 +41,6 @@ class Chapter(CoursePlannerModel):
     status: Literal["draft", "designing", "prompt_ready", "has_attempts", "imported"] = (
         "draft"
     )
-    adopted_prompt_version_id: str | None = None
 
 
 class ScenePack(CoursePlannerModel):
@@ -109,7 +108,8 @@ class ChapterSeed(CoursePlannerModel):
     spatial_seed: str = Field(min_length=1)
     object_coverage_hint: list[str] = Field(default_factory=list)
     character_concept_hint: CharacterConceptHint
-    # WHY: ChapterSeed 只承载 01 到 02 的上下文；最终提示词属于 PromptPackage。
+    # WHY: ChapterSeed 只承载 ScenePack/Chapter 的生成上下文；后续 scene-package
+    # prompt 属于 Chapter 子资源，不应该回流成 ChapterSeed 的持久化事实。
     style_notes: str | None = None
 
 
@@ -158,103 +158,6 @@ class PromptTuning(CoursePlannerModel):
     scene_reference_image_ids: list[str] = Field(default_factory=list)
     must_keep: list[str] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
-
-
-class PromptPackage(CoursePlannerModel):
-    full_prompt: str = Field(min_length=1)
-    short_prompt: str | None = None
-    negative_constraints: str
-    revision_prompt: str | None = None
-
-
-class PromptVersion(CoursePlannerModel):
-    @model_validator(mode="before")
-    @classmethod
-    def _project_legacy_object_plan(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        payload = dict(data)
-        # WHY: 旧版本 JSON 仍可能只保存 object_plan。新链路的事实源是
-        # scene_vocabulary；这里仅做读取兼容，避免本地旧记录让 02 整页失效。
-        if "scene_vocabulary" not in payload:
-            payload["scene_vocabulary"] = _scene_vocabulary_from_object_plan_payload(
-                payload.get("object_plan"),
-            )
-        if "prompt_tuning" not in payload:
-            scene_plan = payload.get("scene_director_plan")
-            style_anchor = (
-                scene_plan.get("style_and_constraints", "")
-                if isinstance(scene_plan, dict)
-                else ""
-            )
-            payload["prompt_tuning"] = {"style_anchor": style_anchor}
-        payload.setdefault("cast_bindings", [])
-        payload.setdefault("object_plan", {})
-        return payload
-
-    id: str
-    chapter_id: str
-    version_label: str = Field(min_length=1)
-    title: str = Field(min_length=1)
-    status: Literal["draft", "prompt_ready", "has_attempts", "adopted", "archived"] = (
-        "draft"
-    )
-    scene_director_plan: SceneDirectorPlan
-    cast_bindings: list[CastBinding] = Field(default_factory=list)
-    scene_vocabulary: SceneVocabulary = Field(default_factory=SceneVocabulary)
-    prompt_tuning: PromptTuning = Field(default_factory=PromptTuning)
-    object_plan: ObjectPlan = Field(default_factory=ObjectPlan)
-    prompt_package: PromptPackage
-    source_version_id: str | None = None
-    image_attempt_ids: list[str] = Field(default_factory=list)
-
-
-def _scene_vocabulary_from_object_plan_payload(payload: Any) -> dict[str, object]:
-    if not isinstance(payload, dict):
-        return {}
-    core_names = _planned_object_names(payload.get("core_objects"))
-    required_names = _planned_object_names(payload.get("required_objects"))
-    recommended_names = _planned_object_names(payload.get("recommended_objects"))
-    avoid_names = _planned_object_names(payload.get("avoid_or_move_objects"))
-    return {
-        "narrative_anchors": [*core_names, *required_names],
-        "optional_vocabulary_candidates": recommended_names,
-        "ambient_furnishing_policy": "",
-        "avoid_objects": avoid_names,
-    }
-
-
-def _planned_object_names(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    names: list[str] = []
-    for item in value:
-        if isinstance(item, dict) and isinstance(item.get("name"), str):
-            names.append(item["name"])
-    return names
-
-
-class ImageAttemptReview(CoursePlannerModel):
-    summary: str = ""
-    strengths: list[str] = Field(default_factory=list)
-    issues: list[str] = Field(default_factory=list)
-    recommendation: Literal["accept", "revise", "reject"] | None = None
-
-
-class ImageAttempt(CoursePlannerModel):
-    id: str
-    prompt_version_id: str
-    uploaded_image_id: str
-    status: Literal[
-        "uploaded",
-        "ai_reviewed",
-        "accepted",
-        "not_accepted",
-        "imported",
-    ] = "uploaded"
-    ai_review: ImageAttemptReview | None = None
-    human_decision: Literal["accept", "revise_version", "keep_record", "delete"] | None = None
-    pipeline_import_id: str | None = None
 
 
 class SceneCard(CoursePlannerModel):

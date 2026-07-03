@@ -4,15 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from art_pipeline.course_planner.models import (
-    CastBinding,
-    ObjectPlan,
-    PromptPackage,
-    PromptTuning,
-    SceneDirectorPlan,
-    SceneVocabulary,
-)
-
 
 class ScenePackCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -108,50 +99,6 @@ class CurrentEmptySceneImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     empty_scene_image_id: str = Field(alias="emptySceneImageId", min_length=1)
-
-
-class PromptVersionCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    feedback: str = ""
-    source_version_id: str | None = Field(default=None, alias="sourceVersionId")
-
-
-class PromptVersionPatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str | None = Field(default=None, min_length=1)
-    status: Literal["draft", "prompt_ready", "has_attempts", "adopted", "archived"] | None = None
-    scene_director_plan: SceneDirectorPlan | None = None
-    cast_bindings: list[CastBinding] | None = None
-    scene_vocabulary: SceneVocabulary | None = None
-    prompt_tuning: PromptTuning | None = None
-    object_plan: ObjectPlan | None = None
-    prompt_package: PromptPackage | None = None
-
-
-class ImageAttemptCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    uploaded_image_id: str = Field(alias="uploadedImageId", min_length=1)
-
-
-class ImageAttemptPatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    status: Literal[
-        "uploaded",
-        "ai_reviewed",
-        "accepted",
-        "not_accepted",
-        "imported",
-    ] | None = None
-    human_decision: Literal[
-        "accept",
-        "revise_version",
-        "keep_record",
-        "delete",
-    ] | None = Field(default=None, alias="humanDecision")
 
 
 class CompleteSceneImageRunPatchRequest(BaseModel):

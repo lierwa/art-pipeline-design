@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-from io import BytesIO
 from pathlib import Path
-
-from PIL import Image
 
 from route_test_helpers import (
     FakeProvider,
@@ -12,10 +9,7 @@ from route_test_helpers import (
     chapter_seed_payload,
     client_with_provider,
     create_chapter,
-    create_prompt_version,
     create_scene_pack,
-    prompt_version_ai_payload,
-    review_ai_payload,
     scene_pack_payload,
 )
 
@@ -113,11 +107,13 @@ def test_candidate_batch_is_ephemeral_and_accepting_creates_generated_chapter_id
 def test_candidate_batch_failure_returns_public_error_without_schema_leak(
     tmp_path: Path,
 ) -> None:
-    provider = FakeProvider([
-        RuntimeError(
-            "Codex CLI JSON task failed: invalid_json_schema Missing cast_mode text.format.schema"
-        )
-    ])
+    provider = FakeProvider(
+        [
+            RuntimeError(
+                "Codex CLI JSON task failed: invalid_json_schema Missing cast_mode text.format.schema"
+            )
+        ]
+    )
     client = client_with_provider(tmp_path, provider)
     scene_pack_id = create_scene_pack(client)
 
@@ -128,7 +124,10 @@ def test_candidate_batch_failure_returns_public_error_without_schema_leak(
 
     assert response.status_code == 502
     detail = response.json()["detail"]
-    assert detail["message"] == "Course Planner AI task failed. Check the AI task record for diagnostics."
+    assert (
+        detail["message"]
+        == "Course Planner AI task failed. Check the AI task record for diagnostics."
+    )
     assert detail["task"]["status"] == "failed"
     assert "task_" in detail["task"]["id"]
     assert "invalid_json_schema" not in json.dumps(detail)
@@ -162,315 +161,38 @@ def test_chapter_order_and_delete_share_one_list_state(tmp_path: Path) -> None:
     assert chapters_response.json()["chapters"][0]["id"] == second_id
 
 
-def test_prompt_versions_package_attempt_review_and_import_are_version_scoped(
+def test_state_payload_does_not_expose_prompt_versions_or_image_attempts(
     tmp_path: Path,
 ) -> None:
-    provider = FakeProvider([prompt_version_ai_payload(), review_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
+    client = client_with_provider(tmp_path)
     scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
+    create_chapter(client, scene_pack_id)
 
-    create_version_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/prompt-versions",
-        json={"feedback": "强调水槽和红苹果"},
-    )
-    version_id = create_version_response.json()["promptVersion"]["id"]
-    duplicate_response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/duplicate"
-    )
-    package_response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/prompt-package"
-    )
-    attempt_response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/image-attempts",
-        json={"uploadedImageId": "uploads/generated.png"},
-    )
-    attempt_id = attempt_response.json()["imageAttempt"]["id"]
-    source_path = tmp_path / "scene_library" / "uploads" / "generated.png"
-    source_path.parent.mkdir(parents=True)
-    source_path.write_bytes(_png_bytes())
-    review_response = client.post(f"/api/course-planner/image-attempts/{attempt_id}/review")
-    attempts_response = client.get(
-        f"/api/course-planner/prompt-versions/{version_id}/image-attempts"
-    )
-    import_response = client.post(f"/api/course-planner/image-attempts/{attempt_id}/import")
-    delete_response = client.delete(f"/api/course-planner/prompt-versions/{version_id}")
-
-    assert create_version_response.status_code == 200
-    version = create_version_response.json()["promptVersion"]
-    assert version["chapter_id"] == chapter_id
-    assert version["version_label"] == "V001"
-    assert version["cast_bindings"][0]["character_id"] == "tuantuan"
-    assert version["scene_vocabulary"]["optional_vocabulary_candidates"] == [
-        "cup",
-        "plate",
-        "chair",
-        "window",
-    ]
-    assert "tuantuan" in version["prompt_package"]["full_prompt"]
-    assert "Do not force every candidate object into the image" in version["prompt_package"]["full_prompt"]
-    assert "Detection keywords" not in version["prompt_package"]["full_prompt"]
-    assert provider.requests[0][1].__name__ == "GeneratePromptVersionOutput"
-
-    assert duplicate_response.status_code == 200
-    duplicate = duplicate_response.json()["promptVersion"]
-    assert duplicate["source_version_id"] == version_id
-    assert duplicate["version_label"] == "V002"
-
-    assert package_response.status_code == 200
-    assert "红苹果" in package_response.json()["promptPackage"]["full_prompt"]
-    assert "Required objects by priority:" not in package_response.json()["promptPackage"]["full_prompt"]
-    assert attempt_response.status_code == 200
-    assert attempt_response.json()["imageAttempt"]["prompt_version_id"] == version_id
-    assert review_response.status_code == 200
-    assert review_response.json()["imageAttempt"]["status"] == "ai_reviewed"
-    assert attempts_response.json()["imageAttempts"][0]["id"] == attempt_id
-    assert import_response.status_code == 200
-    imported = import_response.json()
-    assert imported["runId"].startswith("run_")
-    assert imported["imageAttempt"]["status"] == "imported"
-    assert imported["imageAttempt"]["pipeline_import_id"] == imported["runId"]
-    run_root = tmp_path / "workspace" / "runs" / imported["runId"]
-    context = json.loads((run_root / "scene_context.json").read_text(encoding="utf-8"))
-    assert context["prompt_version_id"] == version_id
-    assert context["image_attempt_id"] == attempt_id
-    assert delete_response.status_code == 200
-    assert delete_response.json()["promptVersion"]["status"] == "archived"
-
-
-def test_adopt_prompt_version_uses_hierarchy_contract(tmp_path: Path) -> None:
-    provider = FakeProvider([prompt_version_ai_payload(), prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    first_id = create_prompt_version(client, chapter_id)
-    second_id = create_prompt_version(client, chapter_id)
-
-    response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/prompt-versions/{second_id}/adopt"
-    )
-    state_response = client.get("/api/course-planner/state")
+    response = client.get("/api/course-planner/state")
 
     assert response.status_code == 200
-    assert response.json()["chapter"]["adopted_prompt_version_id"] == second_id
-    versions = {
-        version["id"]: version["status"]
-        for version in response.json()["promptVersions"]
-    }
-    assert versions == {first_id: "prompt_ready", second_id: "adopted"}
-    chapter = state_response.json()["chapters"][0]
-    assert chapter["adopted_prompt_version_id"] == second_id
-
-
-def test_prompt_package_preserves_adopted_prompt_version_status(
-    tmp_path: Path,
-) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    version_id = create_prompt_version(client, chapter_id)
-
-    adopt_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/prompt-versions/{version_id}/adopt"
-    )
-    package_response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/prompt-package"
-    )
-    state_response = client.get("/api/course-planner/state")
-
-    assert adopt_response.status_code == 200
-    assert package_response.status_code == 200
-    assert package_response.json()["promptVersion"]["status"] == "adopted"
-    chapter = state_response.json()["chapters"][0]
-    version = state_response.json()["promptVersions"][0]
-    assert chapter["adopted_prompt_version_id"] == version_id
-    assert version["id"] == version_id
-    assert version["status"] == "adopted"
-
-
-def test_patch_adopted_prompt_version_uses_chapter_pointer_contract(
-    tmp_path: Path,
-) -> None:
-    provider = FakeProvider([prompt_version_ai_payload(), prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    first_id = create_prompt_version(client, chapter_id)
-    second_id = create_prompt_version(client, chapter_id)
-
-    first_adopt_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/prompt-versions/{first_id}/adopt"
-    )
-    patch_response = client.patch(
-        f"/api/course-planner/prompt-versions/{second_id}",
-        json={"status": "adopted"},
-    )
-    package_response = client.post(
-        f"/api/course-planner/prompt-versions/{second_id}/prompt-package"
-    )
-    state_response = client.get("/api/course-planner/state")
-
-    assert first_adopt_response.status_code == 200
-    assert patch_response.status_code == 200
-    assert patch_response.json()["promptVersion"]["status"] == "adopted"
-    assert package_response.status_code == 200
-    assert package_response.json()["promptVersion"]["status"] == "adopted"
-    state = state_response.json()
-    chapter = state["chapters"][0]
-    statuses = {version["id"]: version["status"] for version in state["promptVersions"]}
-    assert chapter["adopted_prompt_version_id"] == second_id
-    assert statuses == {first_id: "prompt_ready", second_id: "adopted"}
-
-
-def test_archiving_current_adopted_prompt_version_is_rejected(
-    tmp_path: Path,
-) -> None:
-    provider = FakeProvider([prompt_version_ai_payload(), prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    adopted_id = create_prompt_version(client, chapter_id)
-    draft_id = create_prompt_version(client, chapter_id)
-
-    adopt_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/prompt-versions/{adopted_id}/adopt"
-    )
-    delete_adopted_response = client.delete(
-        f"/api/course-planner/prompt-versions/{adopted_id}"
-    )
-    patch_adopted_response = client.patch(
-        f"/api/course-planner/prompt-versions/{adopted_id}",
-        json={"status": "archived"},
-    )
-    delete_draft_response = client.delete(
-        f"/api/course-planner/prompt-versions/{draft_id}"
-    )
-    state_response = client.get("/api/course-planner/state")
-
-    assert adopt_response.status_code == 200
-    assert delete_adopted_response.status_code == 409
-    assert "adopt" in delete_adopted_response.json()["detail"]
-    assert patch_adopted_response.status_code == 409
-    assert delete_draft_response.status_code == 200
-    assert delete_draft_response.json()["promptVersion"]["status"] == "archived"
-    state = state_response.json()
-    statuses = {version["id"]: version["status"] for version in state["promptVersions"]}
-    assert state["chapters"][0]["adopted_prompt_version_id"] == adopted_id
-    assert statuses == {adopted_id: "adopted", draft_id: "archived"}
-
-
-def test_upload_image_attempt_persists_file_under_scene_library(tmp_path: Path) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    version_id = create_prompt_version(client, chapter_id)
-
-    response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/image-attempts/upload",
-        files={"file": ("kitchen-v001.png", _png_bytes(), "image/png")},
-    )
-
-    assert response.status_code == 200
-    attempt = response.json()["imageAttempt"]
-    assert attempt["prompt_version_id"] == version_id
-    assert attempt["uploaded_image_id"].startswith(
-        f"uploads/course_planner/{version_id}/"
-    )
-    stored_path = tmp_path / "scene_library" / attempt["uploaded_image_id"]
-    assert stored_path.exists()
-    assert stored_path.suffix == ".png"
-    preview_response = client.get(
-        f"/api/course-planner/uploads/{attempt['uploaded_image_id']}"
-    )
-    traversal_response = client.get(
-        "/api/course-planner/uploads/uploads/course_planner/%2E%2E/secret.png"
-    )
-    assert preview_response.status_code == 200
-    assert preview_response.headers["content-type"] == "image/png"
-    assert preview_response.content == stored_path.read_bytes()
-    assert traversal_response.status_code in {400, 404}
-    import_response = client.post(
-        f"/api/course-planner/image-attempts/{attempt['id']}/import"
-    )
-    assert import_response.status_code == 200
-    assert import_response.json()["imageAttempt"]["status"] == "imported"
-
-
-def test_image_attempt_human_decision_persists_to_state(tmp_path: Path) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    version_id = create_prompt_version(client, chapter_id)
-    attempt_response = client.post(
-        f"/api/course-planner/prompt-versions/{version_id}/image-attempts",
-        json={"uploadedImageId": "uploads/generated.png"},
-    )
-    attempt_id = attempt_response.json()["imageAttempt"]["id"]
-
-    response = client.patch(
-        f"/api/course-planner/image-attempts/{attempt_id}",
-        json={"status": "not_accepted", "humanDecision": "delete"},
-    )
-    state_response = client.get("/api/course-planner/state")
-
-    assert response.status_code == 200
-    assert response.json()["imageAttempt"]["status"] == "not_accepted"
-    assert response.json()["imageAttempt"]["human_decision"] == "delete"
-    stored_attempt = state_response.json()["imageAttempts"][0]
-    assert stored_attempt["status"] == "not_accepted"
-    assert stored_attempt["human_decision"] == "delete"
-
-
-def test_prompt_version_source_must_belong_to_target_chapter(tmp_path: Path) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    first_chapter_id = create_chapter(client, scene_pack_id)
-    second_chapter_id = create_chapter(client, scene_pack_id)
-    source_id = create_prompt_version(client, first_chapter_id)
-
-    response = client.post(
-        f"/api/course-planner/chapters/{second_chapter_id}/prompt-versions",
-        json={"sourceVersionId": source_id},
-    )
-
-    assert response.status_code == 400
-    assert "source" in response.json()["detail"].lower()
-    assert len(provider.requests) == 1
-
-
-def test_chapter_delete_rejects_existing_prompt_versions_without_orphaning(
-    tmp_path: Path,
-) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    create_prompt_version(client, chapter_id)
-
-    response = client.delete(
-        f"/api/course-planner/scene-packs/{scene_pack_id}/chapters/{chapter_id}"
-    )
-    chapters_response = client.get(
-        f"/api/course-planner/scene-packs/{scene_pack_id}/chapters"
-    )
-
-    assert response.status_code == 409
-    assert chapters_response.json()["chapters"][0]["id"] == chapter_id
+    payload = response.json()
+    version_list_field = "prompt" + "Versions"
+    attempt_list_field = "image" + "Attempts"
+    selected_version_field = "selected" + "Prompt" + "VersionId"
+    adopted_version_field = "adopted" + "Prompt" + "VersionId"
+    assert version_list_field not in payload
+    assert attempt_list_field not in payload
+    assert selected_version_field not in payload
+    assert adopted_version_field not in json.dumps(payload)
+    assert set(payload) == {"scenePacks", "chapters", "tasks"}
 
 
 def test_cross_pack_chapter_delete_rejects_ownership_before_descendant_check(
     tmp_path: Path,
 ) -> None:
-    provider = FakeProvider([prompt_version_ai_payload()])
-    client = client_with_provider(tmp_path, provider)
+    client = client_with_provider(tmp_path)
     route_scene_pack_id = create_scene_pack(client)
-    owner_scene_pack_id = create_scene_pack(client)
+    owner_scene_pack_id = client.post(
+        "/api/course-planner/scene-packs",
+        json=scene_pack_payload("卧室专项"),
+    ).json()["scenePack"]["id"]
     owned_chapter_id = create_chapter(client, owner_scene_pack_id)
-    create_prompt_version(client, owned_chapter_id)
 
     response = client.delete(
         f"/api/course-planner/scene-packs/{route_scene_pack_id}/chapters/{owned_chapter_id}"
@@ -482,9 +204,3 @@ def test_cross_pack_chapter_delete_rejects_ownership_before_descendant_check(
     assert response.status_code == 404
     assert response.json()["detail"] == "Chapter not found."
     assert owner_chapters_response.json()["chapters"][0]["id"] == owned_chapter_id
-
-
-def _png_bytes() -> bytes:
-    buffer = BytesIO()
-    Image.new("RGB", (3, 2), color=(20, 120, 220)).save(buffer, format="PNG")
-    return buffer.getvalue()

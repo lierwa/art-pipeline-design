@@ -11,19 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from art_pipeline.course_planner.codex_json_provider import CodexJsonProvider
 from art_pipeline.course_planner.models import (
-    CastBinding,
-    Chapter,
     ChapterSeed,
     CharacterConceptHint,
-    ImageAttempt,
-    ImageAttemptReview,
-    PromptTuning,
-    PromptVersion,
-    SceneVocabulary,
-    SceneDirectorPlan,
     ScenePack,
 )
-from art_pipeline.course_planner.prompt_builder import build_prompt_package
 from art_pipeline.course_planner.store import CoursePlannerStore
 from art_pipeline.workspace.store import utc_now
 
@@ -50,16 +41,6 @@ class GenerateChapterCandidatesOutput(BaseModel):
 
     planning_summary: str = Field(min_length=1)
     candidates: list[GenerateChapterCandidateDraft] = Field(min_length=1)
-
-
-class GeneratePromptVersionOutput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str = Field(min_length=1)
-    scene_director_plan: SceneDirectorPlan
-    cast_bindings: list[CastBinding] = Field(min_length=1)
-    scene_vocabulary: SceneVocabulary
-    prompt_tuning: PromptTuning
 
 
 class AiTaskRecord(BaseModel):
@@ -108,72 +89,6 @@ class CoursePlannerAiService:
                 _candidate_payload(scene_pack, candidate, index, batch_id)
                 for index, candidate in enumerate(output.candidates, start=1)
             ]
-        except Exception as exc:
-            _write_error_artifact(artifact_dir, exc)
-            raise
-
-    def generate_prompt_version(
-        self,
-        scene_pack: ScenePack,
-        chapter: Chapter,
-        feedback: str = "",
-        source_version: PromptVersion | None = None,
-    ) -> dict[str, Any]:
-        artifact_dir = self._artifact_dir(
-            "generate_prompt_version",
-            scene_pack.id,
-            chapter.id,
-        )
-        try:
-            output = self.provider.run_json_task(
-                prompt=_generate_prompt_version_prompt(
-                    scene_pack,
-                    chapter,
-                    feedback,
-                    source_version,
-                ),
-                output_model=GeneratePromptVersionOutput,
-                artifact_dir=artifact_dir,
-            )
-            package = build_prompt_package(
-                output.scene_director_plan,
-                output.cast_bindings,
-                output.scene_vocabulary,
-                output.prompt_tuning,
-            )
-            return {
-                "title": output.title,
-                "scene_director_plan": output.scene_director_plan.model_dump(mode="json"),
-                "cast_bindings": [binding.model_dump(mode="json") for binding in output.cast_bindings],
-                "scene_vocabulary": output.scene_vocabulary.model_dump(mode="json"),
-                "prompt_tuning": output.prompt_tuning.model_dump(mode="json"),
-                "prompt_package": package.model_dump(mode="json"),
-                "source_version_id": source_version.id if source_version else None,
-            }
-        except Exception as exc:
-            _write_error_artifact(artifact_dir, exc)
-            raise
-
-    def review_image_attempt(
-        self,
-        scene_pack: ScenePack,
-        chapter: Chapter,
-        version: PromptVersion,
-        attempt: ImageAttempt,
-    ) -> ImageAttemptReview:
-        artifact_dir = self._artifact_dir(
-            "review_image_attempt",
-            scene_pack.id,
-            chapter.id,
-            version.id,
-            attempt.id,
-        )
-        try:
-            return self.provider.run_json_task(
-                prompt=_review_image_attempt_prompt(scene_pack, chapter, version, attempt),
-                output_model=ImageAttemptReview,
-                artifact_dir=artifact_dir,
-            )
         except Exception as exc:
             _write_error_artifact(artifact_dir, exc)
             raise
@@ -231,10 +146,15 @@ def collect_ai_task_records(store: CoursePlannerStore) -> list[dict[str, object]
     records: list[AiTaskRecord] = []
     for path in records_root.glob("task_*.json"):
         try:
-            records.append(AiTaskRecord.model_validate_json(path.read_text(encoding="utf-8")))
+            records.append(
+                AiTaskRecord.model_validate_json(path.read_text(encoding="utf-8"))
+            )
         except ValueError:
             continue
-    return [record.model_dump(mode="json") for record in sorted(records, key=lambda item: item.created_at)]
+    return [
+        record.model_dump(mode="json")
+        for record in sorted(records, key=lambda item: item.created_at)
+    ]
 
 
 def read_ai_task_record(store: CoursePlannerStore, task_id: str) -> AiTaskRecord:
@@ -318,67 +238,14 @@ def _generate_chapter_candidates_prompt(scene_pack: ScenePack, feedback: str) ->
                             "cast_mode": "main_cast_and_supporting_cast",
                             "main_cast_hint": "main character concept",
                             "supporting_cast_hint": "optional supporting cast",
-                            "reference_asset_ids": ["optional ids from future character/style reference library"],
+                            "reference_asset_ids": [
+                                "optional ids from future character/style reference library"
+                            ],
                             "constraints": ["character constraints"],
                         },
                         "style_notes": "optional visual style notes",
                     }
                 ],
-            },
-        },
-    )
-
-
-def _generate_prompt_version_prompt(
-    scene_pack: ScenePack,
-    chapter: Chapter,
-    feedback: str,
-    source_version: PromptVersion | None,
-) -> str:
-    return _json_task_prompt(
-        "Generate one Prompt Version for a ChatGPT Image2 scene workflow from the ChapterSeed. "
-        "The output must give the user an editable SceneDirectorPlan, CastBinding list, SceneVocabulary, "
-        "and PromptTuning that can later build a copy-ready Image2 creative brief. Prioritize story clarity, "
-        "selected cat IP consistency, character consistency, style reference continuity, reference-image usage, spatial readability, "
-        "and scene-first vocabulary candidates. "
-        "Do not write generic human roles such as student, child, parent, kid, 小学生, 孩子, or 家长 as final cast. "
-        "If the formal character library is not available, use clearly named temporary cat-IP bindings from the reference pool "
-        "and preserve reference_asset_ids as future anchors. SceneVocabulary.optional_vocabulary_candidates are selectable words only; "
-        "do not make them required visual objects.",
-        {
-            "scene_pack": scene_pack.model_dump(mode="json"),
-            "chapter": chapter.model_dump(mode="json"),
-            "feedback": feedback,
-            "source_version": source_version.model_dump(mode="json") if source_version else None,
-            "output_schema": {
-                "title": "version title",
-                "scene_director_plan": "SceneDirectorPlan",
-                "cast_bindings": "list[CastBinding]",
-                "scene_vocabulary": "SceneVocabulary",
-                "prompt_tuning": "PromptTuning",
-            },
-        },
-    )
-
-
-def _review_image_attempt_prompt(
-    scene_pack: ScenePack,
-    chapter: Chapter,
-    version: PromptVersion,
-    attempt: ImageAttempt,
-) -> str:
-    return _json_task_prompt(
-        "Review this ImageAttempt against the exact PromptVersion that produced it.",
-        {
-            "scene_pack": scene_pack.model_dump(mode="json"),
-            "chapter": chapter.model_dump(mode="json"),
-            "prompt_version": version.model_dump(mode="json"),
-            "image_attempt": attempt.model_dump(mode="json"),
-            "output_schema": {
-                "summary": "short review",
-                "strengths": ["what matches the prompt version"],
-                "issues": ["what should be revised"],
-                "recommendation": "accept | revise | reject",
             },
         },
     )

@@ -1,21 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from art_pipeline.course_planner.models import (
-    Chapter,
-    ChapterSeed,
-    ImageAttempt,
-    PromptVersion,
-    ScenePack,
-)
+from art_pipeline.course_planner.models import Chapter, ChapterSeed, ScenePack
 from art_pipeline.course_planner.store_common import require_match, validate_slug
-
-
-class PromptVersionArchiveConflict(ValueError):
-    pass
 
 
 class CoursePlannerHierarchyStoreMixin:
@@ -55,8 +45,8 @@ class CoursePlannerHierarchyStoreMixin:
         return self.update_scene_pack(scene_pack_id, status="archived")
 
     def delete_scene_pack(self, scene_pack_id: str) -> None:
-        # WHY: PromptVersion/ImageAttempt records are global lineage records in Task 1.
-        # Physical deletion would orphan them, so delete is a recoverable archive action.
+        # WHY: ScenePack 仍然拥有 Chapter 与 scene-package 子树；delete 继续用 archive
+        # 语义，避免用户误把恢复型操作当成物理清库。
         self.archive_scene_pack(scene_pack_id)
 
     def list_scene_packs(self) -> list[ScenePack]:
@@ -124,165 +114,6 @@ class CoursePlannerHierarchyStoreMixin:
         self._write_model(self._scene_pack_path(pack.id), updated)
         return updated
 
-    def create_prompt_version(
-        self,
-        chapter_id: str,
-        payload: PromptVersion | dict[str, Any],
-    ) -> PromptVersion:
-        chapter, _ = self._find_chapter(chapter_id)
-        version_id = self._new_prompt_version_id(chapter.id)
-        payload_data = (
-            payload.model_dump(mode="json")
-            if isinstance(payload, PromptVersion)
-            else dict(payload)
-        )
-        payload_data.update(
-            {
-                "id": version_id,
-                "chapter_id": chapter.id,
-                "version_label": self._next_prompt_version_label(chapter.id),
-                "image_attempt_ids": [],
-            }
-        )
-        # WHY: create payloads may come from routes/AI without persisted ids; the store is
-        # the boundary that assigns lineage fields and prevents user-maintained identifiers.
-        template = PromptVersion.model_validate(payload_data)
-        version = template.model_copy(
-            update={
-                "status": "prompt_ready",
-                "source_version_id": template.source_version_id,
-            }
-        )
-        self._write_model(self._prompt_version_path(version.id), version)
-        return version
-
-    def duplicate_prompt_version(self, version_id: str) -> PromptVersion:
-        source = self.get_prompt_version(version_id)
-        return self.create_prompt_version(
-            source.chapter_id,
-            source.model_copy(update={"source_version_id": source.id}),
-        )
-
-    def list_prompt_versions(self, chapter_id: str) -> list[PromptVersion]:
-        self._find_chapter(chapter_id)
-        root = self._prompt_versions_root_path()
-        if not root.exists():
-            return []
-        versions = [
-            self._read_model(path, PromptVersion)
-            for path in root.glob("*.json")
-        ]
-        return sorted(
-            [version for version in versions if version.chapter_id == chapter_id],
-            key=lambda version: version.version_label,
-        )
-
-    def get_prompt_version(self, version_id: str) -> PromptVersion:
-        return self._read_model(self._prompt_version_path(version_id), PromptVersion)
-
-    def update_prompt_version(self, version: PromptVersion) -> PromptVersion:
-        current = self.get_prompt_version(version.id)
-        require_match(version.chapter_id, current.chapter_id, "Prompt version chapter_id")
-        chapter, _ = self._find_chapter(current.chapter_id)
-        if version.status == "archived" and chapter.adopted_prompt_version_id == current.id:
-            raise PromptVersionArchiveConflict(
-                "Adopt another Prompt Version before archiving the currently adopted version."
-            )
-        validated = PromptVersion.model_validate(version.model_dump(mode="json"))
-        self._write_model(self._prompt_version_path(validated.id), validated)
-        return validated
-
-    def archive_prompt_version(self, version_id: str) -> PromptVersion:
-        version = self.get_prompt_version(version_id)
-        # WHY: 归档也是状态写入，统一经过 update_prompt_version，避免 DELETE
-        # 和 PATCH 对 adopted 指针保护产生两套规则。
-        return self.update_prompt_version(version.model_copy(update={"status": "archived"}))
-
-    def set_adopted_prompt_version(self, chapter_id: str, version_id: str) -> Chapter:
-        chapter, scene_pack_id = self._find_chapter(chapter_id)
-        target = self.get_prompt_version(version_id)
-        require_match(target.chapter_id, chapter.id, "Prompt version chapter_id")
-        for version in self.list_prompt_versions(chapter.id):
-            next_status = (
-                "adopted"
-                if version.id == version_id
-                else _preserved_unadopted_status(version)
-            )
-            self._write_model(
-                self._prompt_version_path(version.id),
-                version.model_copy(update={"status": next_status}),
-            )
-        updated_chapter = chapter.model_copy(
-            update={
-                "status": "prompt_ready",
-                "adopted_prompt_version_id": version_id,
-            }
-        )
-        self._write_model(self._chapter_path(scene_pack_id, chapter.id), updated_chapter)
-        return updated_chapter
-
-    def create_image_attempt(
-        self,
-        prompt_version_id: str,
-        uploaded_image_id: str,
-    ) -> ImageAttempt:
-        version = self.get_prompt_version(prompt_version_id)
-        attempt = ImageAttempt(
-            id=self._new_image_attempt_id(version.id),
-            prompt_version_id=version.id,
-            uploaded_image_id=uploaded_image_id,
-        )
-        self._write_model(self._image_attempt_path(attempt.id), attempt)
-        updated_version = version.model_copy(
-            update={
-                "status": "has_attempts",
-                "image_attempt_ids": [*version.image_attempt_ids, attempt.id],
-            }
-        )
-        self._write_model(self._prompt_version_path(version.id), updated_version)
-        chapter, scene_pack_id = self._find_chapter(version.chapter_id)
-        self._write_model(
-            self._chapter_path(scene_pack_id, chapter.id),
-            chapter.model_copy(update={"status": "has_attempts"}),
-        )
-        return attempt
-
-    def create_uploaded_image_attempt(
-        self,
-        prompt_version_id: str,
-        image_bytes: bytes,
-    ) -> ImageAttempt:
-        version = self.get_prompt_version(prompt_version_id)
-        upload_name = f"{uuid4().hex}.png"
-        upload_path = self._resolve("uploads", "course_planner", version.id, upload_name)
-        # WHY: ImageAttempt.uploaded_image_id 是后续导入的可解析相对路径；
-        # store 生成路径可避免前端 file.name 变成第二套文件事实源。
-        uploaded_image_id = PurePosixPath(
-            "uploads",
-            "course_planner",
-            version.id,
-            upload_name,
-        ).as_posix()
-        self._write_bytes(upload_path, image_bytes)
-        return self.create_image_attempt(version.id, uploaded_image_id)
-
-    def list_image_attempts(self, prompt_version_id: str) -> list[ImageAttempt]:
-        version = self.get_prompt_version(prompt_version_id)
-        return [
-            self._read_model(self._image_attempt_path(attempt_id), ImageAttempt)
-            for attempt_id in version.image_attempt_ids
-        ]
-
-    def get_image_attempt(self, attempt_id: str) -> ImageAttempt:
-        return self._read_model(self._image_attempt_path(attempt_id), ImageAttempt)
-
-    def update_image_attempt(self, attempt: ImageAttempt) -> ImageAttempt:
-        current = self.get_image_attempt(attempt.id)
-        require_match(attempt.prompt_version_id, current.prompt_version_id, "Image attempt prompt_version_id")
-        validated = ImageAttempt.model_validate(attempt.model_dump(mode="json"))
-        self._write_model(self._image_attempt_path(validated.id), validated)
-        return validated
-
     def _scene_packs_root_path(self) -> Path:
         return self._resolve("scene_packs")
 
@@ -299,21 +130,6 @@ class CoursePlannerHierarchyStoreMixin:
             "chapters",
             validate_slug(chapter_id, "Chapter id"),
             "chapter.json",
-        )
-
-    def _prompt_versions_root_path(self) -> Path:
-        return self._resolve("prompt_versions")
-
-    def _prompt_version_path(self, version_id: str) -> Path:
-        return self._resolve(
-            "prompt_versions",
-            f"{validate_slug(version_id, 'Prompt version id')}.json",
-        )
-
-    def _image_attempt_path(self, attempt_id: str) -> Path:
-        return self._resolve(
-            "image_attempts",
-            f"{validate_slug(attempt_id, 'Image attempt id')}.json",
         )
 
     def _read_chapter(self, scene_pack_id: str, chapter_id: str) -> Chapter:
@@ -337,26 +153,3 @@ class CoursePlannerHierarchyStoreMixin:
             chapter_id = f"chapter_{uuid4().hex[:12]}"
             if not self._chapter_path(scene_pack_id, chapter_id).exists():
                 return chapter_id
-
-    def _new_prompt_version_id(self, chapter_id: str) -> str:
-        while True:
-            version_id = f"prompt_version_{uuid4().hex[:12]}"
-            if not self._prompt_version_path(version_id).exists():
-                return version_id
-
-    def _new_image_attempt_id(self, prompt_version_id: str) -> str:
-        while True:
-            attempt_id = f"image_attempt_{uuid4().hex[:12]}"
-            if not self._image_attempt_path(attempt_id).exists():
-                return attempt_id
-
-    def _next_prompt_version_label(self, chapter_id: str) -> str:
-        return f"V{len(self.list_prompt_versions(chapter_id)) + 1:03d}"
-
-
-def _preserved_unadopted_status(version: PromptVersion) -> str:
-    if version.status != "adopted":
-        return version.status
-    if version.image_attempt_ids:
-        return "has_attempts"
-    return "prompt_ready"

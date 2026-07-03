@@ -10,12 +10,7 @@ from art_pipeline.course_planner.models import (
     CharacterConceptHint,
     ChapterSeed,
     CourseProject,
-    ObjectPlan,
-    PlannedObject,
-    PromptPackage,
-    PromptVersion,
     SceneCard,
-    SceneDirectorPlan,
     SceneKeywords,
     Space,
 )
@@ -54,7 +49,10 @@ def test_store_persists_course_space_scene_and_keywords(
         visual_brief_zh="小猫站在浴缸旁边，窗户透进阳光。",
         image2_style="storybook illustration",
     )
-    keywords = SceneKeywords(chapter_id="chapter_001", keywords=["cat", "bathtub", "window"])
+    keywords = SceneKeywords(
+        chapter_id="chapter_001",
+        keywords=["cat", "bathtub", "window"],
+    )
 
     planner_store.write_course(course)
     planner_store.write_space(course.id, space)
@@ -152,7 +150,7 @@ def test_update_scene_pack_validates_before_persisting(tmp_path: Path) -> None:
     assert planner_store.get_scene_pack(pack.id) == pack
 
 
-def test_scene_pack_updates_archive_and_delete_are_lineage_safe(
+def test_scene_pack_updates_archive_and_delete_keep_chapter_tree_available(
     tmp_path: Path,
 ) -> None:
     planner_store = CoursePlannerStore(tmp_path / "scene_library")
@@ -161,8 +159,6 @@ def test_scene_pack_updates_archive_and_delete_are_lineage_safe(
         pack.id,
         _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
     )
-    version = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    attempt = planner_store.create_image_attempt(version.id, uploaded_image_id="img_001")
 
     updated = planner_store.update_scene_pack(
         pack.id,
@@ -183,8 +179,6 @@ def test_scene_pack_updates_archive_and_delete_are_lineage_safe(
     assert deleted.status == "archived"
     assert deleted.chapter_ids == [chapter.id]
     assert [stored.id for stored in planner_store.list_chapters(pack.id)] == [chapter.id]
-    assert planner_store.get_prompt_version(version.id).chapter_id == chapter.id
-    assert planner_store.get_image_attempt(attempt.id).prompt_version_id == version.id
 
 
 def test_scene_pack_chapter_list_is_single_source_of_truth(tmp_path: Path) -> None:
@@ -266,110 +260,6 @@ def test_reorder_chapters_rejects_missing_or_foreign_ids(tmp_path: Path) -> None
         planner_store.reorder_chapters(pack.id, [chapter.id, "chapter_missing"])
 
 
-def test_prompt_version_and_attempt_lineage_is_preserved(tmp_path: Path) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    version = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    attempt = planner_store.create_image_attempt(version.id, uploaded_image_id="img_001")
-
-    updated_version = planner_store.get_prompt_version(version.id)
-    assert updated_version.chapter_id == chapter.id
-    assert updated_version.image_attempt_ids == [attempt.id]
-    assert planner_store.get_image_attempt(attempt.id).prompt_version_id == version.id
-    assert planner_store.list_prompt_versions(chapter.id) == [updated_version]
-    assert planner_store.list_image_attempts(version.id) == [attempt]
-
-
-def test_create_prompt_version_generates_system_fields_from_payload(
-    tmp_path: Path,
-) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    payload = _prompt_version_payload().model_dump()
-    payload.pop("id")
-    payload.pop("chapter_id")
-    payload.pop("version_label")
-
-    version = planner_store.create_prompt_version(chapter.id, payload)
-
-    assert version.id.startswith("prompt_version_")
-    assert version.chapter_id == chapter.id
-    assert version.version_label == "V001"
-    assert version.image_attempt_ids == []
-
-
-def test_duplicate_prompt_version_preserves_source_version_id(tmp_path: Path) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    version = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-
-    duplicate = planner_store.duplicate_prompt_version(version.id)
-
-    assert duplicate.id != version.id
-    assert duplicate.source_version_id == version.id
-    assert duplicate.chapter_id == version.chapter_id
-    assert duplicate.image_attempt_ids == []
-
-
-def test_set_adopted_prompt_version_updates_chapter_and_version_statuses(
-    tmp_path: Path,
-) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    first = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    second = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-
-    updated_chapter = planner_store.set_adopted_prompt_version(chapter.id, second.id)
-
-    assert updated_chapter.adopted_prompt_version_id == second.id
-    assert planner_store.get_prompt_version(second.id).status == "adopted"
-    assert planner_store.get_prompt_version(first.id).status == "prompt_ready"
-
-
-def test_set_adopted_prompt_version_preserves_non_target_meaningful_statuses(
-    tmp_path: Path,
-) -> None:
-    planner_store = CoursePlannerStore(tmp_path / "scene_library")
-    pack = planner_store.create_scene_pack(title="室内家庭篇", intent="家庭日常空间")
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    attempted = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    attempt = planner_store.create_image_attempt(attempted.id, uploaded_image_id="img_001")
-    target = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    archived = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    planner_store._write_model(
-        planner_store._prompt_version_path(archived.id),
-        archived.model_copy(update={"status": "archived"}),
-    )
-
-    planner_store.set_adopted_prompt_version(chapter.id, target.id)
-
-    attempted_after = planner_store.get_prompt_version(attempted.id)
-    archived_after = planner_store.get_prompt_version(archived.id)
-    assert attempted_after.status == "has_attempts"
-    assert attempted_after.image_attempt_ids == [attempt.id]
-    assert archived_after.status == "archived"
-    assert planner_store.get_prompt_version(target.id).status == "adopted"
-
-
 def test_legacy_write_chapters_api_is_not_available_for_scene_pack_chapters() -> None:
     assert not hasattr(CoursePlannerStore, "write_chapters")
 
@@ -398,35 +288,4 @@ def _chapter_seed(
             constraints=["保持儿童绘本风格"],
         ),
         style_notes="温暖、明亮、低冲突。",
-    )
-
-
-def _prompt_version_payload() -> PromptVersion:
-    return PromptVersion(
-        id="version_from_user_should_be_ignored",
-        chapter_id="chapter_from_user_should_be_ignored",
-        version_label="V999",
-        title="温馨厨房早餐版",
-        scene_director_plan=SceneDirectorPlan(
-            story_event="孩子不小心打翻牛奶。",
-            scene_composition="餐桌居中，角色围绕桌边形成清晰动作线。",
-            spatial_structure="前景餐桌，中景水槽，背景冰箱。",
-            character_arrangement="主角在桌边，家人在旁边递纸巾。",
-            action_design="牛奶流向桌沿，纸巾正被递出。",
-            style_and_constraints="明亮绘本质感，避免混乱构图。",
-        ),
-        object_plan=ObjectPlan(
-            core_objects=[
-                PlannedObject(
-                    name="milk",
-                    role_in_scene="触发故事事件",
-                    placement_hint="餐桌中央倒下的杯子旁",
-                    priority="core",
-                )
-            ],
-        ),
-        prompt_package=PromptPackage(
-            full_prompt="Warm kitchen breakfast scene with spilled milk.",
-            negative_constraints="No clutter, no scary mood.",
-        ),
     )

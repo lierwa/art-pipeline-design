@@ -12,15 +12,8 @@ from art_pipeline.course_planner.import_to_pipeline import (
     import_locked_scene_version_to_pipeline,
 )
 from art_pipeline.course_planner.models import (
-    ChapterSeed,
-    CharacterConceptHint,
     CourseProject,
-    ObjectPlan,
-    PlannedObject,
-    PromptPackage,
-    PromptVersion,
     SceneKeywords,
-    SceneDirectorPlan,
     Space,
 )
 from art_pipeline.course_planner.store import CoursePlannerStore
@@ -321,64 +314,6 @@ def test_import_rejects_unlocked_version(tmp_path: Path) -> None:
     assert not (workspace_root / "runs").exists()
 
 
-def test_import_image_attempt_preserves_hierarchy_lineage_and_prompt_package(
-    tmp_path: Path,
-) -> None:
-    scene_library = tmp_path / "scene_library"
-    workspace_root = tmp_path / "workspace"
-    planner_store = CoursePlannerStore(scene_library)
-    pack, chapter, version, attempt = _write_attempt_hierarchy(planner_store)
-    source_image_path = scene_library / attempt.uploaded_image_id
-    source_image_path.parent.mkdir(parents=True)
-    source_image_path.write_bytes(_png_bytes(size=(17, 11), color=(40, 80, 120)))
-
-    result = import_module.import_image_attempt_to_pipeline(
-        planner_store=planner_store,
-        workspace_root=workspace_root,
-        image_attempt_id=attempt.id,
-    )
-
-    run_root = workspace_root / "runs" / result.run.id
-    state = read_state(run_root)
-    assert state.source is not None
-    assert state.source.width == 17
-    assert state.source.height == 11
-    assert (run_root / "source" / "original.png").read_bytes() == source_image_path.read_bytes()
-
-    scene_context = json.loads((run_root / "scene_context.json").read_text(encoding="utf-8"))
-    assert scene_context["source_type"] == "course_planner_image_attempt"
-    assert scene_context["scene_pack_id"] == pack.id
-    assert scene_context["chapter_id"] == chapter.id
-    assert scene_context["prompt_version_id"] == version.id
-    assert scene_context["image_attempt_id"] == attempt.id
-    assert scene_context["uploaded_image_id"] == attempt.uploaded_image_id
-    assert scene_context["prompt_package"] == version.prompt_package.model_dump(mode="json")
-    assert read_runs(workspace_root)[0] == result.run
-    assert planner_store.get_image_attempt(attempt.id).status == "uploaded"
-
-
-def test_import_image_attempt_rejects_unrecoverable_lineage(
-    tmp_path: Path,
-) -> None:
-    scene_library = tmp_path / "scene_library"
-    workspace_root = tmp_path / "workspace"
-    planner_store = CoursePlannerStore(scene_library)
-    pack, _, _, attempt = _write_attempt_hierarchy(planner_store)
-    planner_store._write_model(
-        planner_store._scene_pack_path(pack.id),
-        pack.model_copy(update={"chapter_ids": []}),
-    )
-
-    with pytest.raises(ValueError, match="recoverable lineage"):
-        import_module.import_image_attempt_to_pipeline(
-            planner_store=planner_store,
-            workspace_root=workspace_root,
-            image_attempt_id=attempt.id,
-        )
-
-    assert not (workspace_root / "runs").exists()
-
-
 def _write_course_context(planner_store: CoursePlannerStore) -> None:
     course = CourseProject(id="course_001", title_zh="猫咪浴室冒险")
     space = Space(
@@ -393,81 +328,6 @@ def _write_course_context(planner_store: CoursePlannerStore) -> None:
     )
     planner_store.write_course(course)
     planner_store.write_space(course.id, space)
-
-
-def _write_attempt_hierarchy(
-    planner_store: CoursePlannerStore,
-) -> tuple[object, object, object, object]:
-    pack = planner_store.create_scene_pack(
-        title="室内家庭篇",
-        intent="家庭日常空间",
-        status="active",
-    )
-    chapter = planner_store.create_chapter_from_seed(
-        pack.id,
-        _chapter_seed(scene_pack_id=pack.id, scene_pack_title=pack.title),
-    )
-    version = planner_store.create_prompt_version(chapter.id, _prompt_version_payload())
-    attempt = planner_store.create_image_attempt(version.id, "uploads/generated.png")
-    return pack, chapter, version, attempt
-
-
-def _chapter_seed(
-    *,
-    scene_pack_id: str,
-    scene_pack_title: str,
-) -> ChapterSeed:
-    return ChapterSeed(
-        scene_pack_id=scene_pack_id,
-        scene_pack_title=scene_pack_title,
-        chapter_id="chapter_candidate_from_ai",
-        chapter_title="厨房早餐打翻",
-        chapter_intent="厨房早餐中的日常家庭场景。",
-        scene_domain="home_kitchen",
-        daily_moment="breakfast",
-        event_seed="孩子不小心打翻牛奶，家长拿纸巾处理。",
-        spatial_seed="厨房台面、餐桌、水槽、冰箱和地面活动区。",
-        object_coverage_hint=["milk", "cup", "plate", "tissue"],
-        character_concept_hint=CharacterConceptHint(
-            main_cast_hint="温和的家庭主角",
-            supporting_cast_hint="帮忙整理的家人",
-            reference_asset_ids=["asset_main_cast"],
-            constraints=["保持儿童绘本风格"],
-        ),
-        style_notes="温暖、明亮、低冲突。",
-    )
-
-
-def _prompt_version_payload() -> PromptVersion:
-    return PromptVersion(
-        id="version_from_user_should_be_ignored",
-        chapter_id="chapter_from_user_should_be_ignored",
-        version_label="V999",
-        title="温馨厨房早餐版",
-        scene_director_plan=SceneDirectorPlan(
-            story_event="孩子不小心打翻牛奶。",
-            scene_composition="餐桌居中，角色围绕桌边形成清晰动作线。",
-            spatial_structure="前景餐桌，中景水槽，背景冰箱。",
-            character_arrangement="主角在桌边，家人在旁边递纸巾。",
-            action_design="牛奶流向桌沿，纸巾正被递出。",
-            style_and_constraints="明亮绘本质感，避免混乱构图。",
-        ),
-        object_plan=ObjectPlan(
-            core_objects=[
-                PlannedObject(
-                    name="milk",
-                    role_in_scene="触发故事事件",
-                    placement_hint="餐桌中央倒下的杯子旁",
-                    priority="core",
-                )
-            ],
-        ),
-        prompt_package=PromptPackage(
-            full_prompt="Warm kitchen breakfast scene with spilled milk.",
-            short_prompt="Kitchen breakfast spill.",
-            negative_constraints="No clutter, no scary mood.",
-        ),
-    )
 
 
 def _png_bytes(

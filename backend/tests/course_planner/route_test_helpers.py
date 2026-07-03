@@ -85,64 +85,6 @@ def chapter_seed_payload() -> dict[str, object]:
     return candidate_ai_payload()["candidates"][0]
 
 
-def prompt_version_ai_payload() -> dict[str, object]:
-    return {
-        "title": "厨房水槽构图",
-        "scene_director_plan": {
-            "story_event": "团团在水槽前清洗红苹果。",
-            "scene_composition": "中景构图，水槽和苹果位于视觉中心。",
-            "spatial_structure": "水槽前景，餐桌后景，冰箱左侧。",
-            "character_arrangement": "团团站在水槽前，阿布在背景记录。",
-            "action_design": "团团双手托着苹果放在水流下。",
-            "style_and_constraints": "温暖绘本风格，避免文字和水印。",
-        },
-        "cast_bindings": [
-            {
-                "character_id": "tuantuan",
-                "display_name": "团团",
-                "role_in_scene": "main",
-                "action_intent": "在水槽前清洗红苹果。",
-                "reference_image_ids": ["docs/image-reference/01_主方向_生活化猫咪主角团.png"],
-                "invariants": ["白色蓬松猫", "黄色小包", "背带裤"],
-            },
-            {
-                "character_id": "abu",
-                "display_name": "阿布",
-                "role_in_scene": "support",
-                "action_intent": "在背景观察并记录。",
-                "reference_image_ids": ["docs/image-reference/04_主角轮廓与动作板.png"],
-                "invariants": ["暹罗猫", "圆眼镜", "绿本子"],
-            },
-        ],
-        "scene_vocabulary": {
-            "narrative_anchors": ["red apple", "sink faucet"],
-            "optional_vocabulary_candidates": ["cup", "plate", "chair", "window"],
-            "ambient_furnishing_policy": "自然补足温暖家庭厨房细节，但不要堆成物品目录。",
-            "avoid_objects": ["knife", "human child", "parent"],
-        },
-        "prompt_tuning": {
-            "style_anchor": "生活化猫咪主角团，暖色温柔绘本质感。",
-            "style_reference_image_ids": [
-                "docs/image-reference/01_主方向_生活化猫咪主角团.png"
-            ],
-            "scene_reference_image_ids": [
-                "docs/image-reference/05_生活场景适配换装板.png"
-            ],
-            "must_keep": ["single-species cat cast", "scene-first story moment"],
-            "avoid": ["human student", "object catalog layout"],
-        },
-    }
-
-
-def review_ai_payload() -> dict[str, object]:
-    return {
-        "summary": "画面符合水槽清洗苹果的版本目标。",
-        "strengths": ["主体清楚", "空间关系明确"],
-        "issues": ["背景餐桌略弱"],
-        "recommendation": "accept",
-    }
-
-
 def create_scene_pack(client: TestClient) -> str:
     response = client.post("/api/course-planner/scene-packs", json=scene_pack_payload())
     assert response.status_code == 200
@@ -156,9 +98,3 @@ def create_chapter(client: TestClient, scene_pack_id: str) -> str:
     )
     assert response.status_code == 200
     return response.json()["chapter"]["id"]
-
-
-def create_prompt_version(client: TestClient, chapter_id: str) -> str:
-    response = client.post(f"/api/course-planner/chapters/{chapter_id}/prompt-versions")
-    assert response.status_code == 200
-    return response.json()["promptVersion"]["id"]
