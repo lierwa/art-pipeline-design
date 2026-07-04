@@ -1,0 +1,150 @@
+import "./assemblyEditorDependencyMocks";
+import {
+  describe,
+  expect,
+  it,
+  screen,
+  userEvent,
+  waitFor,
+} from "../app/appTestHarness";
+
+import {
+  renderChapterWorkspace,
+  studioScenePackageFixture,
+} from "./chapterWorkspaceTestHelpers";
+
+describe("Chapter Scene Studio library and run actions", () => {
+  it("sends a complete scene image to pipeline through the import route", async () => {
+    const user = userEvent.setup();
+    const view = renderChapterWorkspace({
+      scenePackage: studioScenePackageFixture(),
+    });
+
+    try {
+      const sendButton = await screen.findByRole("button", { name: /Send to Pipeline/i });
+      expect(sendButton).toBeEnabled();
+
+      await user.click(sendButton);
+
+      await waitFor(() => expect(sendButton).toBeDisabled());
+      expect(screen.getAllByText("ready").length).toBeGreaterThan(0);
+    } finally {
+      view.restore();
+    }
+  });
+
+  it("keeps chapter assets limited to direct uploads without a verified picker", async () => {
+    const view = renderChapterWorkspace({
+      scenePackage: studioScenePackageFixture({
+        complete_images: [{
+          ...studioScenePackageFixture().complete_images[0],
+          pipeline_run_id: "run_complete_scene_001",
+          pipeline_run_status: "ready",
+        }],
+      }),
+    });
+
+    try {
+      await screen.findByRole("region", { name: "Assembly asset pool" });
+      expect(screen.getByRole("button", { name: "Upload Scene Asset" })).toBeEnabled();
+      expect(screen.queryByRole("button", { name: /Add from Run/i })).not.toBeInTheDocument();
+    } finally {
+      view.restore();
+    }
+  });
+
+  it("binds Character IP identity from existing library selections", async () => {
+    const view = renderChapterWorkspace({
+      scenePackage: studioScenePackageFixture(),
+    });
+
+    try {
+      await screen.findByRole("region", { name: "Library selection" });
+      expect(screen.getByRole("button", { name: "Bind Character IP" })).toBeEnabled();
+    } finally {
+      view.restore();
+    }
+  });
+
+  it("confirms before replacing the selected Empty Scene", async () => {
+    const user = userEvent.setup();
+    let selectedEmptySceneId: string | null = null;
+    const scenePackage = studioScenePackageFixture({
+      empty_scene_images: [
+        studioScenePackageFixture().empty_scene_images[0],
+        {
+          ...studioScenePackageFixture().empty_scene_images[0],
+          id: "empty_scene_002",
+          original_filename: "alternate-empty.png",
+          storage_path: "scene_package/empty_scene_002.png",
+        },
+      ],
+    });
+    const view = renderChapterWorkspace({
+      scenePackage,
+      selectEmptySceneImage: (_input, init) => {
+        selectedEmptySceneId = JSON.parse(String(init?.body ?? "{}")).emptySceneImageId;
+        return scenePackageResponse(scenePackage);
+      },
+    });
+
+    try {
+      const selectButtons = await screen.findAllByRole("button", { name: "Select as Empty Scene" });
+      await user.click(selectButtons[1]);
+      expect(selectedEmptySceneId).toBeNull();
+
+      await user.click(await screen.findByRole("button", { name: "Replace Empty Scene" }));
+
+      await waitFor(() => expect(selectedEmptySceneId).toBe("empty_scene_002"));
+    } finally {
+      view.restore();
+    }
+  });
+
+  it("uploads scene images without frontend-owned prompt snapshots", async () => {
+    const user = userEvent.setup();
+    const seenUploads = { empty: false, complete: false };
+    const scenePackage = studioScenePackageFixture();
+    const view = renderChapterWorkspace({
+      scenePackage,
+      uploadEmptySceneImage: (_input, init) => {
+        const body = init?.body as FormData;
+        expect(body.get("promptSnapshot")).toBeNull();
+        expect(body.getAll("referenceImageIds")).toEqual(["reference_style_001"]);
+        seenUploads.empty = true;
+        return scenePackageResponse(scenePackage);
+      },
+      uploadCompleteSceneImage: (_input, init) => {
+        const body = init?.body as FormData;
+        expect(body.get("promptSnapshot")).toBeNull();
+        expect(body.getAll("referenceImageIds")).toEqual(["reference_style_001"]);
+        expect(body.get("generationNote")).toBe("");
+        seenUploads.complete = true;
+        return scenePackageResponse(scenePackage);
+      },
+    });
+
+    try {
+      const emptyPanel = await screen.findByRole("region", { name: "Empty scene images" });
+      const completePanel = await screen.findByRole("region", { name: "Complete scene images" });
+      const emptyInput = emptyPanel.querySelector<HTMLInputElement>('input[type="file"]');
+      const completeInput = completePanel.querySelector<HTMLInputElement>('input[type="file"]');
+
+      expect(emptyInput).toBeTruthy();
+      expect(completeInput).toBeTruthy();
+      await user.upload(emptyInput as HTMLInputElement, new File(["png"], "empty.png", { type: "image/png" }));
+      await user.upload(completeInput as HTMLInputElement, new File(["png"], "complete.png", { type: "image/png" }));
+
+      await waitFor(() => expect(seenUploads).toEqual({ empty: true, complete: true }));
+    } finally {
+      view.restore();
+    }
+  });
+});
+
+function scenePackageResponse(scenePackage: unknown): Response {
+  return new Response(JSON.stringify({ scenePackage }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}

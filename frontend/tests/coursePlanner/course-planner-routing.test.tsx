@@ -1,3 +1,4 @@
+import "./assemblyEditorDependencyMocks";
 import type { CoursePlannerState } from "../../src/features/coursePlanner/types";
 import {
   App,
@@ -12,7 +13,9 @@ import {
   within,
 } from "../app/appTestHarness";
 import {
+  characterIpFixture,
   coursePlannerState,
+  referenceImageFixture,
   studioChapterFixture,
   studioScenePackageFixture,
 } from "./chapterWorkspaceTestHelpers";
@@ -82,6 +85,12 @@ function installCoursePlannerRoutingFetchMock(state: CoursePlannerState) {
     }
     if (path === "/api/course-planner/state" && (!init || init.method === "GET")) {
       return jsonResponse(state);
+    }
+    if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
+      return jsonResponse({ characterIps: [characterIpFixture()] });
+    }
+    if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
+      return jsonResponse({ referenceImages: [referenceImageFixture()] });
     }
     if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package`) && (!init || init.method === "GET")) {
       return jsonResponse({ scenePackage });

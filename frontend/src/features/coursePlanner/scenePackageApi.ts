@@ -1,8 +1,11 @@
 import type {
   AvoidObjectItem,
+  CharacterIpProfile,
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
+  ReferenceLibraryImage,
   TargetObjectItem,
+  WorkspaceRunImportSummary,
 } from "./types";
 import {
   API_ROOT,
@@ -15,7 +18,23 @@ import {
 } from "./apiClient";
 import type { CoursePlannerFetcher } from "./apiClient";
 
-export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label" | "description" | "priority">;
+export type ReferenceLibraryImageUploadInput = {
+  tags?: string[];
+  notes?: string;
+};
+export type ChapterReferenceSelectionInput = {
+  referenceImageId: string;
+  promptRole: "character" | "style" | "scene" | "other";
+};
+export type ChapterCastAssignmentInput = {
+  characterIpId: string;
+  roleLabel: string;
+  actionIntent: string;
+  referenceImageIds?: string[];
+};
+export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label" | "description" | "priority"> & {
+  id?: string;
+};
 export type ChapterScenePromptAvoidObjectInput = Pick<AvoidObjectItem, "label" | "description">;
 export type PromptReadinessConfirmationInput = {
   avoidObjectsReviewed: boolean;
@@ -30,28 +49,83 @@ export type ChapterScenePromptInput = {
 };
 export type EmptySceneImageUploadInput = {
   referenceImageIds?: string[];
-  promptSnapshot?: string;
 };
 export type CompleteImageUploadInput = {
   referenceImageIds?: string[];
-  promptSnapshot?: string;
   generationNote?: string;
-};
-export type RunAssociationInput = {
-  runId: string;
-  runStatus?: string | null;
-};
-export type ChapterAssetUploadInput = {
-  sourceRunId: string;
-  sourceRunAssetId: string;
-  displayName: string;
-  sourceCompleteImageId?: string;
-  linkedTargetObjectId?: string;
 };
 export type DirectChapterAssetUploadInput = {
   displayName: string;
   linkedTargetObjectId?: string;
 };
+export type CompleteImageImportResult = {
+  run: WorkspaceRunImportSummary;
+  scenePackage: ChapterScenePackage;
+};
+
+export async function listCharacterIps(fetcher: CoursePlannerFetcher = fetch): Promise<CharacterIpProfile[]> {
+  const payload = await requestJson(fetcher, `${API_ROOT}/character-ips`, { method: "GET" }, "Could not load Character IP library.");
+  const value = payloadValue<CharacterIpProfile[]>(payload, "characterIps");
+  return Array.isArray(value) ? value : [];
+}
+
+export async function listReferenceLibraryImages(fetcher: CoursePlannerFetcher = fetch): Promise<ReferenceLibraryImage[]> {
+  const payload = await requestJson(fetcher, `${API_ROOT}/reference-library/images`, { method: "GET" }, "Could not load Reference Library.");
+  const value = payloadValue<ReferenceLibraryImage[]>(payload, "referenceImages");
+  return Array.isArray(value) ? value : [];
+}
+
+export async function uploadReferenceLibraryImage(
+  file: File,
+  input: ReferenceLibraryImageUploadInput = {},
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ReferenceLibraryImage> {
+  const body = new FormData();
+  body.append("file", file);
+  appendStringListField(body, "tags", input.tags);
+  appendOptionalStringField(body, "notes", input.notes);
+  const payload = await requestJson(
+    fetcher,
+    `${API_ROOT}/reference-library/images`,
+    { method: "POST", body },
+    "Could not upload Reference Library image.",
+  );
+  return payloadValue<ReferenceLibraryImage>(payload, "referenceImage");
+}
+
+export async function selectChapterReferenceImage(
+  chapterId: string,
+  input: ChapterReferenceSelectionInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/reference-selections`,
+    jsonRequest("POST", {
+      referenceImageId: input.referenceImageId,
+      promptRole: input.promptRole,
+    }),
+    "Could not select reference image.",
+  );
+}
+
+export async function assignCharacterIpToChapter(
+  chapterId: string,
+  input: ChapterCastAssignmentInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/cast-assignments`,
+    jsonRequest("POST", {
+      characterIpId: input.characterIpId,
+      roleLabel: input.roleLabel,
+      actionIntent: input.actionIntent,
+      referenceImageIds: input.referenceImageIds ?? [],
+    }),
+    "Could not bind Character IP to Chapter.",
+  );
+}
 
 export async function fetchChapterScenePackage(
   chapterId: string,
@@ -82,7 +156,6 @@ export async function uploadEmptySceneImage(
   const body = new FormData();
   body.append("file", file);
   appendStringListField(body, "referenceImageIds", input.referenceImageIds);
-  appendOptionalStringField(body, "promptSnapshot", input.promptSnapshot);
   return requestScenePackage(
     fetcher,
     `${scenePackagePath(chapterId)}/empty-scene-images`,
@@ -113,7 +186,6 @@ export async function uploadCompleteSceneImage(
   const body = new FormData();
   body.append("file", file);
   appendStringListField(body, "referenceImageIds", input.referenceImageIds);
-  appendOptionalStringField(body, "promptSnapshot", input.promptSnapshot);
   appendOptionalStringField(body, "generationNote", input.generationNote);
   return requestScenePackage(
     fetcher,
@@ -123,42 +195,20 @@ export async function uploadCompleteSceneImage(
   );
 }
 
-export async function associateCompleteImageRun(
+export async function importCompleteSceneImageToPipeline(
   chapterId: string,
   completeImageId: string,
-  input: RunAssociationInput,
   fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterScenePackage> {
-  return requestScenePackage(
+): Promise<CompleteImageImportResult> {
+  const payload = await requestJson(
     fetcher,
-    `${scenePackagePath(chapterId)}/complete-images/${encodePathPart(completeImageId)}/run`,
-    jsonRequest("PATCH", {
-      runId: input.runId,
-      runStatus: input.runStatus ?? null,
-    }),
-    "Could not associate complete scene image run.",
+    `${scenePackagePath(chapterId)}/complete-images/${encodePathPart(completeImageId)}/import`,
+    { method: "POST" },
+    "Could not send complete scene image to pipeline.",
   );
-}
-
-export async function uploadChapterAssetFromRunAsset(
-  chapterId: string,
-  file: File,
-  input: ChapterAssetUploadInput,
-  fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterScenePackage> {
-  const body = new FormData();
-  body.append("file", file);
-  body.append("sourceRunId", input.sourceRunId);
-  body.append("sourceRunAssetId", input.sourceRunAssetId);
-  body.append("displayName", input.displayName);
-  appendOptionalStringField(body, "sourceCompleteImageId", input.sourceCompleteImageId);
-  appendOptionalStringField(body, "linkedTargetObjectId", input.linkedTargetObjectId);
-  return requestScenePackage(
-    fetcher,
-    `${scenePackagePath(chapterId)}/chapter-assets`,
-    { method: "POST", body },
-    "Could not add Chapter asset from run asset.",
-  );
+  const run = payloadValue<WorkspaceRunImportSummary>(payload, "run");
+  const scenePackage = payloadValue<ChapterScenePackage>(payload, "scenePackage");
+  return { run, scenePackage };
 }
 
 export async function uploadDirectChapterAsset(
@@ -176,6 +226,45 @@ export async function uploadDirectChapterAsset(
     `${scenePackagePath(chapterId)}/chapter-assets/direct-upload`,
     { method: "POST", body },
     "Could not upload direct Scene Asset.",
+  );
+}
+
+export async function duplicateChapterAsset(
+  chapterId: string,
+  assetId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/chapter-assets/${encodePathPart(assetId)}/duplicate`,
+    { method: "POST" },
+    "Could not duplicate Chapter Asset.",
+  );
+}
+
+export async function deleteCompleteSceneImage(
+  chapterId: string,
+  completeImageId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/complete-images/${encodePathPart(completeImageId)}`,
+    { method: "DELETE" },
+    "Could not delete complete scene image.",
+  );
+}
+
+export async function deleteChapterAsset(
+  chapterId: string,
+  assetId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/chapter-assets/${encodePathPart(assetId)}`,
+    { method: "DELETE" },
+    "Could not delete Chapter Asset.",
   );
 }
 

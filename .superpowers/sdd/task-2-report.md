@@ -1,255 +1,90 @@
-# Task 2 Report: Backend Store And Routes for Chapter Scene Studio
+# Task 2 Report: Build Manifest Draft Helpers Test-First
 
 ## Scope
 
-- Backend scene-package store, media-store, delete-store, routes, errors, request models
-- Backend scene-package tests and shared test helpers
-- No frontend edits
-- No compatibility aliases reintroduced into `scene_package_models.py`
+- `frontend/src/features/coursePlanner/assembly/assemblyManifestDraft.ts`
+- `frontend/tests/coursePlanner/assembly/assemblyManifestDraft.test.ts`
+- No commit created
 
-## Red Reproduction
+## TDD RED Evidence
 
-I reproduced the provided collection failure before implementation:
+I wrote the focused Vitest suite first, before adding any production module, then ran the required command:
+
+```bash
+npm --prefix frontend test -- --run assemblyManifestDraft
+```
+
+Expected RED failure:
 
 ```text
-ImportError: cannot import name 'ChapterSceneReference' from art_pipeline.course_planner.scene_package_models
+FAIL  tests/coursePlanner/assembly/assemblyManifestDraft.test.ts [ tests/coursePlanner/assembly/assemblyManifestDraft.test.ts ]
+Error: Failed to resolve import "../../../src/features/coursePlanner/assembly/assemblyManifestDraft" from "tests/coursePlanner/assembly/assemblyManifestDraft.test.ts". Does the file exist?
 ```
 
-This came from `scene_package_media_store.py` still importing the removed Task 1 model names.
+This confirmed the test was exercising a missing Task 2 implementation instead of passing accidentally.
 
-## What Changed
+## Implementation
 
-### 1. Store/media-store migrated to the Task 1 model surface
+Added a pure manifest-draft helper module that:
 
-- Replaced legacy `base_candidates` flow with `empty_scene_images`
-- Replaced `locked_base_candidate_id` flow with `current_empty_scene_image_id`
-- Replaced `base_candidate_id` snapshots with `empty_scene_image_id`
-- Replaced `variation_prompt` with `generation_note`
-- Added `add_empty_scene_image(...)`
-- Added `select_empty_scene_image(...)`
-- Updated `add_complete_scene_image(...)` so complete uploads do not require a selected Empty Scene Image
-- Added `add_direct_chapter_asset(...)` with `ChapterAssetLineage(source_kind="direct_upload")`
-- Fixed run-asset uploads to emit `ChapterAssetLineage(source_kind="pipeline_run_asset", ...)`
-- Added `lock_final_chapter_scene(...)` with required preconditions:
-  - selected Empty Scene Image required
-  - at least one placed Scene Asset required
+- clones assembly manifest state into an editor draft while syncing `empty_scene_image_id`
+- embeds chapter-asset lookup metadata inside the draft so add/remove/update helpers stay pure and protocol-focused
+- adds single-placement authoring with deterministic placement ids and normalized default transforms
+- updates transforms, runtime roles, dependencies, grouping, ungrouping, removal cleanup, and layer-order moves
+- validates unknown dependency ids and dependency cycles
+- projects a clean `ChapterSceneAssemblyManifest` for save, stripping editor-only fields
 
-### 2. Delete store migrated off legacy empty-base semantics
+Chinese WHY comments were added for:
 
-- Replaced empty-base deletion with empty-scene-image deletion
-- Empty Scene deletion now rejects when the image is still in use by:
-  - current selection
-  - assembly
-  - complete images
-  - final scene
+- manifest protocol isolation from editor implementation details
+- preserving protocol `layer_order` semantics while renderers reverse for paint order
 
-### 3. Routes migrated to the new endpoints/contracts
+## Test Coverage Added
 
-- Added `POST /scene-package/empty-scene-images`
-- Added `DELETE /scene-package/empty-scene-images/{imageId}`
-- Added `POST /scene-package/current-empty-scene`
-- Updated complete image upload to read:
-  - `referenceImageIds`
-  - `generationNote`
-- Added `POST /scene-package/chapter-assets/direct-upload`
-- Added `POST /scene-package/final-scene`
-- Removed runtime/test usage of legacy `/base-candidates`, `/lock`, and `variationPrompt`
+The new suite covers all required Task 2 cases:
 
-### 4. Prompt patch contract aligned to Task 1 fields
+1. draft creation syncs `empty_scene_image_id`
+2. adding an unused asset creates one default placement at front
+3. re-adding a used asset is ignored
+4. invalid normalized transforms clamp on save projection
+5. layer move mutates `layer_order` only
+6. removal cleans placements, groups, layer order, and dependencies
+7. validation rejects unknown dependencies and cycles
+8. grouping is first-level only; nested grouping is rejected
+9. manifest projection strips editor-only shape/tldraw data
 
-`ChapterScenePromptPatchRequest` and store handling now speak the real Task 1 model shape:
+## TDD GREEN Evidence
 
-- `promptText`
-- `sceneSpatialContract`
-- `targetObjects`
-- `avoidObjects`
-- `promptConfirmations`
-- `referenceSelections`
-
-This also removed the stale store logic that still referenced `negative_constraints` and `style_notes`.
-
-### 5. Tests rewritten to the new runtime surface
-
-Rewrote backend scene-package tests/helpers so they validate:
-
-- empty-scene upload/select flows
-- complete uploads with/without selected Empty Scene Image
-- direct asset upload lineage
-- assembly validation against `current_empty_scene_image_id`
-- final-scene lock preconditions and snapshot persistence
-- prompt patch behavior on the new Task 1 fields
-
-## Verification
-
-### Required pytest command
-
-Passed:
+Re-ran the same focused command after implementation:
 
 ```bash
-cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && \
-uv run --python 3.12 --extra dev pytest \
-  tests/course_planner/test_scene_package_models.py \
-  tests/course_planner/test_scene_package_prompt_projection.py \
-  tests/course_planner/test_scene_package_assembly_validation.py \
-  tests/course_planner/test_scene_package_store_media.py \
-  tests/course_planner/test_scene_package_store_lifecycle.py \
-  tests/course_planner/test_scene_package_routes_complete_assets.py \
-  tests/course_planner/test_scene_package_routes_assembly_media_delete.py \
-  tests/course_planner/test_scene_package_routes_prompt.py \
-  tests/course_planner/test_models.py -q
+npm --prefix frontend test -- --run assemblyManifestDraft
 ```
 
-Result: `106 passed`
+Passing result:
 
-### Legacy-name grep
+```text
+✓ tests/coursePlanner/assembly/assemblyManifestDraft.test.ts (9 tests) 13ms
 
-Ran:
-
-```bash
-rg -n "ChapterSceneReference|EmptyBaseSceneCandidate|build_base_prompt|locked_base|base_candidate|base_candidates|base-candidates|variationPrompt|variation_prompt|lock_empty_base_scene|/lock" \
-  backend/art_pipeline/course_planner backend/tests/course_planner
+Test Files  1 passed (1)
+Tests       9 passed (9)
 ```
 
-Result: no output
+## Concerns
 
-### File length guard
+- `AssemblyManifestDraft` currently carries an internal `asset_catalog` for purity and deterministic helper behavior. `projectManifestForSave(...)` strips it, but later editor tasks must keep treating that field as draft-only metadata, never as persisted protocol.
 
-Checked with `wc -l`. All created/substantially grown files are `<= 500` lines.
+## Reviewer Fix Notes (2026-07-03)
 
-Largest touched files:
+- Critical fix: `projectManifestForSave(...)` now clamps `transform.w/h` with a strict positive normalized floor (`0.001`) instead of allowing `0`, while still preserving the existing `[0,1]` clamp for `cx/cy`.
+- Important fix: `validateAssemblyDraft(...)` now rejects malformed group/reference integrity, including dangling placement `group_id`, groups that reference unknown placements, group membership mismatches between `group.id` and child `placement.group_id`, and degenerate groups with fewer than two members.
+- Focused regression coverage was added in `frontend/tests/coursePlanner/assembly/assemblyManifestDraft.test.ts` for both the positive size floor and the new group-integrity validation errors.
+- Verification rerun: `npm --prefix frontend test -- --run assemblyManifestDraft` -> `1 passed`, `10 passed`.
 
-- `backend/tests/course_planner/test_scene_package_store_media.py` -> 406
-- `backend/art_pipeline/course_planner/scene_package_media_store.py` -> 400
-- `backend/art_pipeline/course_planner/scene_package_routes.py` -> 367
+## Second Review Fix Notes (2026-07-03)
 
-### Patch hygiene
-
-Passed:
-
-```bash
-git diff --check
-```
-
-## Notes / Concerns
-
-- I intentionally did **not** edit frontend contracts in this task because the task boundary explicitly said not to edit frontend, even though the larger migration will eventually need frontend to stop sending `variationPrompt`.
-- I removed backend runtime/test dependence on chapter-local scene-package reference uploads; prompt/reference snapshots now validate against `reference_selections` on the chapter package instead of recreating a separate image authority here.
-
-## Task Reviewer Findings Requiring Fix
-
-Critical:
-- `referenceSelections` currently allow raw ids into the scene-package prompt patch contract before Task 6 Reference Library routes exist, but default prompt snapshots call projection without library payloads. This breaks empty-scene upload, complete upload, and Lock Final after selections exist.
-
-Important:
-- Remove durable chapter-local `ChapterReferenceSelection.notes`; chapter package should store selected library image id and role only, not a second reference fact lane.
-- Add tests proving default upload/Lock Final do not break after prompt patch, and do not accept unverified referenceSelections before library validation exists.
-
-## Reviewer Rejection Fix (2026-07-03)
-
-### Fix Summary
-
-- Removed `referenceSelections` from the Task 2 prompt PATCH request contract and route-to-store update path.
-- Removed durable `ChapterReferenceSelection.notes`; chapter-local selection now stores only `reference_image_id` and `prompt_role`.
-- Kept `reference_selections` in the scene-package model/prompt projection for future Task 6 validated library data, but stopped accepting raw prompt-patch writes before that library authority exists.
-- Added tests proving:
-  - prompt PATCH rejects `referenceSelections`
-  - prompt PATCH without `referenceSelections` still supports default prompt snapshots for empty-scene upload, complete-image upload, and Lock Final
-  - no prompt-route/store test asserts arbitrary raw `referenceSelections` acceptance
-
-### Files Changed
-
-- `backend/art_pipeline/course_planner/api_models.py`
-- `backend/art_pipeline/course_planner/scene_package_models.py`
-- `backend/art_pipeline/course_planner/scene_package_routes.py`
-- `backend/art_pipeline/course_planner/scene_package_store.py`
-- `backend/tests/course_planner/scene_package_store_helpers.py`
-- `backend/tests/course_planner/test_scene_package_models.py`
-- `backend/tests/course_planner/test_scene_package_routes_prompt.py`
-- `backend/tests/course_planner/test_scene_package_store_lifecycle.py`
-- `backend/tests/course_planner/test_scene_package_store_media.py`
-
-### Tests / Results
-
-- Required pytest suite:
-
-```bash
-cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && \
-uv run --python 3.12 --extra dev pytest \
-  tests/course_planner/test_scene_package_models.py \
-  tests/course_planner/test_scene_package_prompt_projection.py \
-  tests/course_planner/test_scene_package_assembly_validation.py \
-  tests/course_planner/test_scene_package_store_media.py \
-  tests/course_planner/test_scene_package_store_lifecycle.py \
-  tests/course_planner/test_scene_package_routes_complete_assets.py \
-  tests/course_planner/test_scene_package_routes_assembly_media_delete.py \
-  tests/course_planner/test_scene_package_routes_prompt.py \
-  tests/course_planner/test_models.py -q
-```
-
-Result: `109 passed`
-
-- Red-first targeted check before implementation:
-  - `referenceSelections` prompt PATCH rejection test failed with `200`
-  - `ChapterReferenceSelection` notes-lane rejection test failed because model still accepted `notes`
-
-### Grep Gate
-
-Ran:
-
-```bash
-rg -n "notes|referenceSelections|reference_selections" \
-  backend/art_pipeline/course_planner/api_models.py \
-  backend/art_pipeline/course_planner/scene_package_store.py \
-  backend/art_pipeline/course_planner/scene_package_routes.py \
-  backend/tests/course_planner/test_scene_package_routes_prompt.py \
-  backend/art_pipeline/course_planner/scene_package_models.py \
-  backend/art_pipeline/course_planner/scene_package_prompt_projection.py
-```
-
-Remaining output is expected and limited to:
-
-- route test rejection coverage for `referenceSelections`
-- durable `reference_selections` model/projection reads reserved for Task 6 validated library data
-- unrelated `notes` fields on `ScenePack`, `ChapterSeed.style_notes`, `ImageReferenceSnapshot.notes`, and `ReferenceLibraryImage.notes`
-- legacy explanatory comments mentioning `notes` as a removed compatibility lane
-
-No remaining hit shows prompt PATCH/API/store accepting chapter-local `referenceSelections.notes`, and no request model exposes `referenceSelections`.
-
-### Legacy-Name Gate
-
-Ran:
-
-```bash
-rg -n "ChapterSceneReference|EmptyBaseSceneCandidate|build_base_prompt|locked_base|base_candidate|base_candidates|base-candidates|variationPrompt|variation_prompt|lock_empty_base_scene|/lock" \
-  backend/art_pipeline/course_planner backend/tests/course_planner
-```
-
-Result: no output
-
-### File Length Guard
-
-Ran `wc -l` on touched files. All remained `<= 500` lines.
-
-- `backend/art_pipeline/course_planner/api_models.py` -> 161
-- `backend/art_pipeline/course_planner/scene_package_models.py` -> 218
-- `backend/art_pipeline/course_planner/scene_package_routes.py` -> 350
-- `backend/art_pipeline/course_planner/scene_package_store.py` -> 278
-- `backend/tests/course_planner/scene_package_store_helpers.py` -> 244
-- `backend/tests/course_planner/test_scene_package_models.py` -> 255
-- `backend/tests/course_planner/test_scene_package_routes_prompt.py` -> 310
-- `backend/tests/course_planner/test_scene_package_store_lifecycle.py` -> 253
-- `backend/tests/course_planner/test_scene_package_store_media.py` -> 404
-
-### Patch Hygiene
-
-Ran:
-
-```bash
-git diff --check
-```
-
-Result: no output
-
-### Concerns
-
-- `reference_selections` still exists as durable model state and prompt-projection input by design, because Task 6 will own validated library writes later. This fix intentionally avoids adding any temporary fallback or raw-id prompt projection before that route exists.
+- `validateAssemblyDraft(...)` now treats `layer_order` as a real save-time protocol contract and emits explicit errors for duplicate placement ids, unknown placement ids, and placements missing from the order.
+- `normalizeLayerOrder(...)` now dedupes surviving raw order entries before appending missing placements, so draft creation and move/helper flows still self-heal malformed in-memory order without preserving duplicate ids.
+- `projectManifestForSave(...)` still normalizes `layer_order`, but the code now documents that callers must run `validateAssemblyDraft(...)` before save instead of treating projection as validation.
+- Focused Vitest coverage now locks the three `layer_order` validation errors plus the dedupe-on-create/project behavior.
+- Verification rerun: `npm --prefix frontend test -- --run assemblyManifestDraft` -> `1 passed`, `13 passed`.

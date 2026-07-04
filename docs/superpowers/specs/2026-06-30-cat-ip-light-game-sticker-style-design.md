@@ -12,7 +12,7 @@
 猫咪社区日常任务协作小队
 ```
 
-四主角不是普通萌宠集合，而是四种解决日常场景问题的方式：发起行动、观察记录、稳定判断、动手执行。这个定位服务于生活场景章节、物体记忆、Prompt Version、Image Attempt 审核和贴纸资产拆分。
+四主角不是普通萌宠集合，而是四种解决日常场景问题的方式：发起行动、观察记录、稳定判断、动手执行。这个定位服务于生活场景章节、物体记忆、Chapter Scene Package、生成图审核和贴纸资产拆分。
 
 ## 设计依据
 
@@ -132,7 +132,7 @@ Prompt 和审核都必须检查以下规则：
 
 ## Prompt Binding Contract
 
-每个 Prompt Version 必须把角色写成 `CastBinding`，不能只写“孩子/家长/学生”。
+每个 Chapter Scene Package 必须把角色写成明确的 cast assignment，不能只写“孩子/家长/学生”。
 
 ```json
 {
@@ -226,4 +226,4 @@ no inconsistent white outline, no random sticker halo, no object-to-object conta
 1. 用本 spec 生成三张小样验证图。
 2. 对每张图做 shadow audit、outline audit、cast identity audit。
 3. 如果三张小样都通过，再把角色参考图拆成四个正式 reference asset id。
-4. 再把 `Prompt Binding Contract` 接入 Course Planner 的 Tune Prompt / Prompt Package 生成链路。
+4. 再把 `Prompt Binding Contract` 接入当前 Chapter Scene Package / Chapter Scene Studio 生成链路。

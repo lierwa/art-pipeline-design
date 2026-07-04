@@ -1,0 +1,374 @@
+.assembly-workspace-header-actions,
+.assembly-asset-actions,
+.assembly-layer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.assembly-asset-status-badges,
+.assembly-alignment-review {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.assembly-workspace-shell {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(0, 1.4fr) minmax(220px, 0.72fr);
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.assembly-workspace-main {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.assembly-editor-stage,
+.assembly-editor-empty-state,
+.assembly-asset-row,
+.assembly-layer-row,
+.assembly-property-list > div {
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+}
+
+.assembly-editor-stage,
+.assembly-editor-empty-state {
+  padding: 0.75rem;
+}
+
+.assembly-editor-empty-state {
+  display: grid;
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.assembly-editor-empty-state-compact {
+  padding: 0.68rem;
+}
+
+.assembly-editor-empty-state strong,
+.assembly-asset-details dd,
+.assembly-property-list dd,
+.assembly-layer-row span {
+  color: var(--course-text-strong);
+}
+
+.assembly-editor-empty-state p,
+.assembly-asset-details dt,
+.assembly-property-list dt,
+.assembly-layer-row small,
+.assembly-asset-pool-help {
+  margin: 0;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.assembly-alignment-review small,
+.assembly-alignment-note p {
+  margin: 0;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.assembly-editor-artboard {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid #254059;
+  border-radius: 8px;
+  background: #02060a;
+}
+
+.assembly-editor-tldraw {
+  min-height: 320px;
+}
+
+.assembly-editor-tldraw .tl-container,
+.assembly-editor-tldraw .tl-theme__dark,
+.assembly-editor-tldraw .tl-theme__light {
+  background: #02060a;
+}
+
+.assembly-editor-toolbar {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.assembly-editor-placement-selected,
+.assembly-layer-row-selected {
+  box-shadow: 0 0 0 1px rgb(128 215 255 / 0.78);
+}
+
+.assembly-asset-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 0.65rem;
+  padding: 0.65rem;
+}
+
+.assembly-asset-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #040b12;
+}
+
+.assembly-asset-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.assembly-alignment-review {
+  justify-content: space-between;
+  border: 1px solid #6e5320;
+  border-radius: 8px;
+  background: rgb(60 39 8 / 0.55);
+}
+
+.assembly-alignment-review-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.assembly-alignment-review-copy p {
+  margin: 0;
+  color: var(--course-text-strong);
+}
+
+.assembly-asset-details,
+.assembly-property-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.assembly-asset-details > div,
+.assembly-property-list > div {
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.45rem 0.5rem;
+}
+
+.assembly-layer-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.assembly-layer-tree-shell {
+  min-height: 0;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+  overflow: hidden;
+}
+
+.assembly-layer-tree-row {
+  min-width: 0;
+}
+
+.assembly-layer-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.assembly-layer-row:hover {
+  background: rgb(12 30 42 / 0.82);
+}
+
+.assembly-layer-row-label {
+  min-width: 0;
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.assembly-layer-expander {
+  width: 12px;
+  color: var(--course-text-muted);
+  text-align: center;
+}
+
+.assembly-layer-expander-placeholder {
+  opacity: 0.5;
+}
+
+.assembly-segmented-control {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.25rem;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #08121b;
+}
+
+.assembly-segmented-option {
+  min-width: 88px;
+  padding: 0.45rem 0.7rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--course-text-muted);
+}
+
+.assembly-segmented-option-active {
+  background: #10304a;
+  color: var(--course-text-strong);
+}
+
+.assembly-transform-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.assembly-field {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.assembly-field span,
+.assembly-dependency-option small {
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.assembly-field input,
+.assembly-field select {
+  width: 100%;
+}
+
+.assembly-upload-target-field {
+  min-width: 150px;
+}
+
+.assembly-dependency-list,
+.assembly-property-actions {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.assembly-dependency-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "input id"
+    ". name";
+  column-gap: 0.45rem;
+  row-gap: 0.1rem;
+  align-items: start;
+  padding: 0.5rem;
+  border: 1px solid #183044;
+  border-radius: 8px;
+  background: #08121b;
+}
+
+.assembly-dependency-option input {
+  grid-area: input;
+  margin-top: 0.15rem;
+}
+
+.assembly-dependency-option span {
+  grid-area: id;
+  color: var(--course-text-strong);
+}
+
+.assembly-dependency-option small {
+  grid-area: name;
+}
+
+.assembly-dependency-option-disabled {
+  opacity: 0.6;
+}
+
+.chapter-studio-subpanel {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.68rem;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+}
+
+.chapter-studio-subpanel h3,
+.chapter-studio-mini-card h4 {
+  margin: 0;
+  color: var(--course-text-strong);
+  font-size: 0.82rem;
+  font-weight: 790;
+}
+
+.chapter-studio-mini-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem;
+  border: 1px solid #183044;
+  border-radius: 8px;
+  background: #08121b;
+}
+
+.chapter-studio-mini-card p {
+  margin: 0.16rem 0 0;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.chapter-studio-icon-action {
+  display: inline-flex;
+  gap: 0.38rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.chapter-studio-preview-frame {
+  min-height: 280px;
+  border: 1px solid #1d4058;
+  border-radius: 12px;
+  background: #071522;
+  overflow: hidden;
+}
+
+.chapter-studio-preview-frame svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.chapter-studio-preview-bg {
+  fill: #0b1d29;
+}
+
+.chapter-studio-preview-asset {
+  stroke: rgb(7 16 24 / 0.58);
+  stroke-width: 1.2;
+}
+
+.chapter-studio-preview-asset-0 { fill: #89ddff; }
+.chapter-studio-preview-asset-1 { fill: #91f7dc; }
+.chapter-studio-preview-asset-2 { fill: #ffe082; }

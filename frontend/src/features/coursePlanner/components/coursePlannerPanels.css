@@ -222,33 +222,6 @@
   gap: 0.6rem;
 }
 
-.chapter-studio-preview-frame {
-  min-height: 280px;
-  border: 1px solid #1d4058;
-  border-radius: 12px;
-  background: #071522;
-  overflow: hidden;
-}
-
-.chapter-studio-preview-frame svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.chapter-studio-preview-bg {
-  fill: #0b1d29;
-}
-
-.chapter-studio-preview-asset {
-  stroke: rgb(7 16 24 / 0.58);
-  stroke-width: 1.2;
-}
-
-.chapter-studio-preview-asset-0 { fill: #89ddff; }
-.chapter-studio-preview-asset-1 { fill: #91f7dc; }
-.chapter-studio-preview-asset-2 { fill: #ffe082; }
-
 @media (max-width: 1180px) {
   .scene-category-board-layout,
   .chapter-scene-studio,

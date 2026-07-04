@@ -247,11 +247,7 @@ def make_chapter_asset(asset_id: str) -> ChapterAsset:
         original_filename="book.png",
         storage_path=f"assets/{asset_id}.png",
         media_type="image/png",
-        lineage=ChapterAssetLineage(
-            source_kind="pipeline_run_asset",
-            source_run_id="run_123",
-            source_run_asset_id=f"source_{asset_id}",
-        ),
+        lineage=ChapterAssetLineage(source_kind="direct_upload"),
         linked_target_object_id="target_001",
         created_at="2026-07-02T10:06:00Z",
     )

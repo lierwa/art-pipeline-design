@@ -72,6 +72,35 @@ export type AvoidObjectItem = {
   description: string;
 };
 
+export type TargetObjectExemption = {
+  target_object_id: string;
+  reason: string;
+};
+
+export type ReferenceLibraryImage = {
+  id: string;
+  original_filename: string;
+  storage_path: string;
+  media_type: "image/png";
+  width: number;
+  height: number;
+  tags: string[];
+  notes: string;
+  created_at: string;
+  status: "available" | "deleted";
+};
+
+export type CharacterIpProfile = {
+  id: string;
+  display_name: string;
+  visual_invariants: string;
+  personality_cues: string;
+  reference_image_ids: string[];
+  status: "available" | "archived";
+  created_at: string;
+  updated_at: string | null;
+};
+
 export type PromptReadinessConfirmation = {
   avoid_objects_reviewed: boolean;
   style_reference_mode: "unreviewed" | "selected" | "confirmed_empty";
@@ -128,10 +157,7 @@ export type CompleteSceneImage = {
 };
 
 export type ChapterAssetLineage = {
-  source_kind: "pipeline_run_asset" | "direct_upload";
-  source_run_id: string | null;
-  source_run_asset_id: string | null;
-  source_complete_image_id: string | null;
+  source_kind: "direct_upload";
 };
 
 export type ChapterAsset = {
@@ -194,6 +220,16 @@ export type FinalChapterScene = {
   created_at: string;
 };
 
+export type WorkspaceRunImportSummary = {
+  id: string;
+  title: string;
+  sourceFilename: string;
+  createdAt: string;
+  updatedAt: string;
+  status: string;
+  elementCount: number;
+};
+
 export type ChapterScenePackage = {
   chapter_id: string;
   current_empty_scene_image_id: string | null;
@@ -202,6 +238,7 @@ export type ChapterScenePackage = {
   cast_assignments: ChapterCastAssignment[];
   reference_selections: ChapterReferenceSelection[];
   target_objects: TargetObjectItem[];
+  target_object_exemptions: TargetObjectExemption[];
   avoid_objects: AvoidObjectItem[];
   empty_scene_images: EmptySceneImage[];
   complete_images: CompleteSceneImage[];

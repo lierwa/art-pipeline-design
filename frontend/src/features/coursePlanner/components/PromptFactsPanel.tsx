@@ -1,15 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { ChapterScenePromptInput } from "../api";
-import type { ChapterScenePackage } from "../types";
+import type {
+  CharacterIpProfile,
+  ChapterScenePackage,
+  ReferenceLibraryImage,
+} from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
 
 type PromptFactsPanelProps = {
+  characterIps: CharacterIpProfile[];
+  referenceImages: ReferenceLibraryImage[];
   scenePackage: ChapterScenePackage;
   onUpdatePrompt: (input: ChapterScenePromptInput) => Promise<ChapterScenePackage | null>;
 };
 
-export function PromptFactsPanel({ scenePackage, onUpdatePrompt }: PromptFactsPanelProps) {
+export function PromptFactsPanel({
+  characterIps,
+  referenceImages,
+  scenePackage,
+  onUpdatePrompt,
+}: PromptFactsPanelProps) {
   const [promptText, setPromptText] = useState(scenePackage.prompt.prompt_text);
   const [spatialContract, setSpatialContract] = useState(scenePackage.prompt.scene_spatial_contract);
   const [avoidReviewed, setAvoidReviewed] = useState(scenePackage.prompt_confirmations.avoid_objects_reviewed);
@@ -26,6 +37,20 @@ export function PromptFactsPanel({ scenePackage, onUpdatePrompt }: PromptFactsPa
   const styleSelections = useMemo(
     () => scenePackage.reference_selections.filter((selection) => selection.prompt_role === "style"),
     [scenePackage.reference_selections],
+  );
+  const characterNames = useMemo(
+    () => scenePackage.cast_assignments.map((assignment) => characterLabel(characterIps, assignment.character_ip_id)),
+    [characterIps, scenePackage.cast_assignments],
+  );
+  const characterReferenceNames = useMemo(
+    () => scenePackage.cast_assignments.flatMap((assignment) =>
+      assignment.reference_image_ids.map((referenceId) => referenceLabel(referenceImages, referenceId)),
+    ),
+    [referenceImages, scenePackage.cast_assignments],
+  );
+  const styleReferenceNames = useMemo(
+    () => styleSelections.map((selection) => referenceLabel(referenceImages, selection.reference_image_id)),
+    [referenceImages, styleSelections],
   );
 
   async function handleSave() {
@@ -68,16 +93,12 @@ export function PromptFactsPanel({ scenePackage, onUpdatePrompt }: PromptFactsPa
       </div>
 
       <div className="chapter-studio-facts-grid">
-        <FactBlock title="Character IP" items={scenePackage.cast_assignments.map((assignment) => assignment.character_ip_id)} emptyText="Pending" />
+        <FactBlock title="Character IP" items={characterNames} emptyText="Pending" />
         <FactBlock title="Cast action" items={scenePackage.cast_assignments.map((assignment) => assignment.action_intent)} emptyText="Pending" />
-        <FactBlock
-          title="Character references"
-          items={scenePackage.cast_assignments.flatMap((assignment) => assignment.reference_image_ids)}
-          emptyText="Pending"
-        />
+        <FactBlock title="Character references" items={characterReferenceNames} emptyText="Pending" />
         <FactBlock title="Target objects" items={scenePackage.target_objects.map((item) => item.label)} emptyText="None" />
         <FactBlock title="Avoid objects" items={scenePackage.avoid_objects.map((item) => item.label)} emptyText="None" />
-        <FactBlock title="Style references" items={styleSelections.map((item) => item.reference_image_id)} emptyText="Confirmed empty" />
+        <FactBlock title="Style references" items={styleReferenceNames} emptyText="Confirmed empty" />
       </div>
 
       <div className="chapter-studio-form-grid chapter-studio-form-grid-compact">
@@ -102,6 +123,20 @@ export function PromptFactsPanel({ scenePackage, onUpdatePrompt }: PromptFactsPa
       </div>
     </section>
   );
+}
+
+function characterLabel(characterIps: CharacterIpProfile[], characterIpId: string): string {
+  return characterIps.find((item) => item.id === characterIpId)?.display_name ?? characterIpId;
+}
+
+function referenceLabel(referenceImages: ReferenceLibraryImage[], referenceImageId: string): string {
+  const image = referenceImages.find((item) => item.id === referenceImageId);
+  if (!image) {
+    return referenceImageId;
+  }
+  return image.tags.length > 0
+    ? `${image.original_filename} (${image.tags.join(", ")})`
+    : image.original_filename;
 }
 
 function FactBlock({ emptyText, items, title }: { title: string; items: string[]; emptyText: string }) {

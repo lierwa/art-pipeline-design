@@ -1,105 +1,231 @@
 import { App, installFetchMock, jsonResponse, render } from "../app/appTestHarness";
-
 import type {
   AsyncStatusMap,
   Chapter,
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
+  CharacterIpProfile,
   CoursePlannerState,
+  ReferenceLibraryImage,
   ScenePack,
 } from "../../src/features/coursePlanner/types";
+import {
+  characterIpFixture,
+  referenceImageFixture,
+  sceneAsset,
+  snapshot,
+  STUDIO_CHAPTER_ID,
+  STUDIO_SCENE_PACK_ID,
+  studioChapterFixture,
+  studioScenePackageFixture,
+  studioScenePackFixture,
+} from "./chapterWorkspaceFixtures";
+
+export { characterIpFixture, referenceImageFixture, STUDIO_CHAPTER_ID, STUDIO_SCENE_PACK_ID, studioChapterFixture, studioScenePackageFixture, studioScenePackFixture } from "./chapterWorkspaceFixtures";
 
 export type ChapterWorkspaceFetchMockOptions = {
   state?: CoursePlannerState;
   scenePackage?: ChapterScenePackage;
+  characterIps?: CharacterIpProfile[];
+  referenceImages?: ReferenceLibraryImage[];
   fetchScenePackage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  uploadReferenceLibraryImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  selectReferenceImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  assignCharacterIp?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   updateScenePrompt?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   selectEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadCompleteSceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  associateCompleteImageRun?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  uploadChapterAssetFromRunAsset?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  deleteCompleteSceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  importCompleteImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadDirectChapterAsset?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  deleteChapterAsset?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   saveAssembly?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   lockFinalScene?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
 };
 
 export type RenderChapterWorkspaceOptions = ChapterWorkspaceFetchMockOptions & { route?: string };
+type ChapterWorkspaceMockContext = {
+  options: ChapterWorkspaceFetchMockOptions;
+  state: CoursePlannerState;
+  scenePackage: ChapterScenePackage;
+  characterIps: CharacterIpProfile[];
+  referenceImages: ReferenceLibraryImage[];
+};
 
 export function installChapterWorkspaceFetchMock(options: ChapterWorkspaceFetchMockOptions = {}) {
-  const state = options.state ?? coursePlannerState();
-  let scenePackage = options.scenePackage ?? studioScenePackageFixture();
+  const context = createChapterWorkspaceMockContext(options);
 
   return installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
-    if (path === "/api/workspace/runs" && (!init || init.method === "GET")) {
-      return jsonResponse({ runs: [] });
-    }
-    if (path === "/api/workspace/state" && (!init || init.method === "GET")) {
-      return jsonResponse({ source: null, elements: [], detectionVocabulary: [] });
-    }
-    if (path === "/api/course-planner/state" && (!init || init.method === "GET")) {
-      return jsonResponse(state);
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package`) && (!init || init.method === "GET")) {
-      return options.fetchScenePackage?.(input, init) ?? jsonResponse({ scenePackage });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/prompt`) && init?.method === "PATCH") {
-      return options.updateScenePrompt?.(input, init) ?? jsonResponse({ scenePackage: await patchScenePrompt(scenePackage, init) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/empty-scene-images`) && init?.method === "POST") {
-      return options.uploadEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendEmptySceneImage(scenePackage, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/current-empty-scene`) && init?.method === "POST") {
-      return options.selectEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(await selectCurrentEmptyScene(scenePackage, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/complete-images`) && init?.method === "POST") {
-      return options.uploadCompleteSceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendCompleteSceneImage(scenePackage, init)) });
-    }
-    if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/complete-images/`) && path.endsWith("/run") && init?.method === "PATCH") {
-      return options.associateCompleteImageRun?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(await patchCompleteImageRun(scenePackage, path, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/chapter-assets`) && init?.method === "POST") {
-      return options.uploadChapterAssetFromRunAsset?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendRunAsset(scenePackage, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/chapter-assets/direct-upload`) && init?.method === "POST") {
-      return options.uploadDirectChapterAsset?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(appendDirectAsset(scenePackage, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/assembly`) && init?.method === "PUT") {
-      return options.saveAssembly?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(await replaceAssembly(scenePackage, init)) });
-    }
-    if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/final-scene`) && init?.method === "POST") {
-      return options.lockFinalScene?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(lockFinalScene(scenePackage)) });
+    const response = handleWorkspaceMockRoutes(context, path, init)
+      ?? await handleLibraryMockRoutes(context, input, path, init)
+      ?? await handleScenePackageMockRoutes(context, input, path, init);
+    if (response) {
+      return response;
     }
     throw new Error(`Unexpected fetch call: ${path}`);
   });
+}
 
-  async function patchScenePrompt(current: ChapterScenePackage, init: RequestInit | undefined) {
-    const body = await parseJsonBody<{
-      promptText: string;
-      sceneSpatialContract?: string;
-      targetObjects?: ChapterScenePackage["target_objects"];
-      avoidObjects?: ChapterScenePackage["avoid_objects"];
-      promptConfirmations?: ChapterScenePackage["prompt_confirmations"];
-    }>(init);
-    scenePackage = {
-      ...current,
-      prompt: {
-        prompt_text: body.promptText,
-        scene_spatial_contract: body.sceneSpatialContract ?? current.prompt.scene_spatial_contract,
-        updated_at: "2026-07-03T11:05:00Z",
-      },
-      target_objects: body.targetObjects ?? current.target_objects,
-      avoid_objects: body.avoidObjects ?? current.avoid_objects,
-      prompt_confirmations: body.promptConfirmations ?? current.prompt_confirmations,
-    };
-    return scenePackage;
-  }
+function createChapterWorkspaceMockContext(options: ChapterWorkspaceFetchMockOptions): ChapterWorkspaceMockContext {
+  return {
+    options,
+    state: options.state ?? coursePlannerState(),
+    scenePackage: options.scenePackage ?? studioScenePackageFixture(),
+    characterIps: options.characterIps ?? [characterIpFixture()],
+    referenceImages: options.referenceImages ?? [referenceImageFixture()],
+  };
+}
 
-  function recordNextPackage(next: ChapterScenePackage): ChapterScenePackage {
-    scenePackage = next;
-    return next;
+function handleWorkspaceMockRoutes(
+  context: ChapterWorkspaceMockContext,
+  path: string,
+  init: RequestInit | undefined,
+): Response | null {
+  if (path === "/api/workspace/runs" && (!init || init.method === "GET")) {
+    return jsonResponse({ runs: [] });
   }
+  if (path === "/api/workspace/state" && (!init || init.method === "GET")) {
+    return jsonResponse({ source: null, elements: [], detectionVocabulary: [] });
+  }
+  if (path === "/api/course-planner/state" && (!init || init.method === "GET")) {
+    return jsonResponse(context.state);
+  }
+  return null;
+}
+
+async function handleLibraryMockRoutes(
+  context: ChapterWorkspaceMockContext,
+  input: RequestInfo | URL,
+  path: string,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const { options } = context;
+  if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
+    return jsonResponse({ characterIps: context.characterIps });
+  }
+  if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
+    return jsonResponse({ referenceImages: context.referenceImages });
+  }
+  if (path === "/api/course-planner/reference-library/images" && init?.method === "POST") {
+    return options.uploadReferenceLibraryImage?.(input, init) ?? jsonResponse({ referenceImage: appendReferenceImage(context, init) });
+  }
+  return null;
+}
+
+async function handleScenePackageMockRoutes(
+  context: ChapterWorkspaceMockContext,
+  input: RequestInfo | URL,
+  path: string,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const { options, scenePackage } = context;
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package`) && (!init || init.method === "GET")) {
+    return options.fetchScenePackage?.(input, init) ?? jsonResponse({ scenePackage });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/reference-selections`) && init?.method === "POST") {
+    return options.selectReferenceImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await appendReferenceSelection(scenePackage, init)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/cast-assignments`) && init?.method === "POST") {
+    return options.assignCharacterIp?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await appendCastAssignment(scenePackage, init)) });
+  }
+  return handleScenePackageMediaMockRoutes(context, input, path, init);
+}
+
+async function handleScenePackageMediaMockRoutes(
+  context: ChapterWorkspaceMockContext,
+  input: RequestInfo | URL,
+  path: string,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const { options, scenePackage } = context;
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/prompt`) && init?.method === "PATCH") {
+    return options.updateScenePrompt?.(input, init) ?? jsonResponse({ scenePackage: await patchScenePrompt(context, scenePackage, init) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/empty-scene-images`) && init?.method === "POST") {
+    return options.uploadEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, appendEmptySceneImage(scenePackage, init)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/current-empty-scene`) && init?.method === "POST") {
+    return options.selectEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await selectCurrentEmptyScene(scenePackage, init)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/complete-images`) && init?.method === "POST") {
+    return options.uploadCompleteSceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, appendCompleteSceneImage(scenePackage, init)) });
+  }
+  if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/complete-images/`) && init?.method === "DELETE") {
+    return options.deleteCompleteSceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, deleteCompleteSceneImage(scenePackage, path)) });
+  }
+  return handleScenePackageAssetMockRoutes(context, input, path, init);
+}
+
+async function handleScenePackageAssetMockRoutes(
+  context: ChapterWorkspaceMockContext,
+  input: RequestInfo | URL,
+  path: string,
+  init: RequestInit | undefined,
+): Promise<Response | null> {
+  const { options, scenePackage } = context;
+  if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/complete-images/`) && path.endsWith("/import") && init?.method === "POST") {
+    return options.importCompleteImage?.(input, init) ?? jsonResponse({ run: workspaceRunFixture(), scenePackage: recordNextPackage(context, importCompleteImage(scenePackage, path)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/chapter-assets/direct-upload`) && init?.method === "POST") {
+    return options.uploadDirectChapterAsset?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, appendDirectAsset(scenePackage, init)) });
+  }
+  if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/chapter-assets/`) && init?.method === "DELETE") {
+    return options.deleteChapterAsset?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, deleteChapterAsset(scenePackage, path)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/assembly`) && init?.method === "PUT") {
+    return options.saveAssembly?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await replaceAssembly(scenePackage, init)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/final-scene`) && init?.method === "POST") {
+    return options.lockFinalScene?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, lockFinalScene(scenePackage)) });
+  }
+  return null;
+}
+
+async function patchScenePrompt(context: ChapterWorkspaceMockContext, current: ChapterScenePackage, init: RequestInit | undefined) {
+  const body = await parseJsonBody<{
+    promptText: string;
+    sceneSpatialContract?: string;
+    targetObjects?: ChapterScenePackage["target_objects"];
+    avoidObjects?: ChapterScenePackage["avoid_objects"];
+    promptConfirmations?: ChapterScenePackage["prompt_confirmations"];
+  }>(init);
+  context.scenePackage = {
+    ...current,
+    prompt: {
+      prompt_text: body.promptText,
+      scene_spatial_contract: body.sceneSpatialContract ?? current.prompt.scene_spatial_contract,
+      updated_at: "2026-07-03T11:05:00Z",
+    },
+    target_objects: body.targetObjects ?? current.target_objects,
+    avoid_objects: body.avoidObjects ?? current.avoid_objects,
+    prompt_confirmations: body.promptConfirmations ?? current.prompt_confirmations,
+  };
+  return context.scenePackage;
+}
+
+function recordNextPackage(context: ChapterWorkspaceMockContext, next: ChapterScenePackage): ChapterScenePackage {
+  context.scenePackage = next;
+  return next;
+}
+
+function appendReferenceImage(context: ChapterWorkspaceMockContext, init: RequestInit | undefined) {
+  const body = init?.body as FormData;
+  const referenceImage: ReferenceLibraryImage = {
+    id: `reference_image_${String(context.referenceImages.length + 1).padStart(3, "0")}`,
+    original_filename: fileNameFromFormData(body, "file", "reference.png"),
+    storage_path: `reference_library/reference_image_${String(context.referenceImages.length + 1).padStart(3, "0")}.png`,
+    media_type: "image/png",
+    width: 512,
+    height: 512,
+    tags: body.getAll("tags").map(String),
+    notes: String(body.get("notes") ?? ""),
+    created_at: "2026-07-03T11:11:00Z",
+    status: "available",
+  };
+  context.referenceImages = [...context.referenceImages, referenceImage];
+  return referenceImage;
 }
 
 export function renderChapterWorkspace(options: RenderChapterWorkspaceOptions = {}) {
@@ -110,6 +236,7 @@ export function renderChapterWorkspace(options: RenderChapterWorkspaceOptions = 
   return {
     ...rendered,
     restore: () => {
+      rendered.unmount();
       restoreFetch();
       window.history.pushState({}, "", "/");
     },
@@ -140,127 +267,63 @@ export function coursePlannerState({
   };
 }
 
-export function studioScenePackFixture(overrides: Partial<ScenePack> = {}): ScenePack {
+async function appendReferenceSelection(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
+  const body = await parseJsonBody<{ referenceImageId: string; promptRole: ChapterScenePackage["reference_selections"][number]["prompt_role"] }>(init);
   return {
-    id: STUDIO_SCENE_PACK_ID,
-    title: "室内家庭篇",
-    intent: "围绕家庭室内高频行动组织 Chapter。",
-    notes: "优先保留角色行动与物件关系。",
-    status: "active",
-    chapterIds: [STUDIO_CHAPTER_ID],
-    chapterListLocked: false,
-    ...overrides,
+    ...current,
+    reference_selections: [
+      ...current.reference_selections,
+      {
+        id: `reference_selection_${String(current.reference_selections.length + 1).padStart(3, "0")}`,
+        reference_image_id: body.referenceImageId,
+        prompt_role: body.promptRole,
+      },
+    ],
   };
 }
 
-export function studioChapterFixture(overrides: Partial<Chapter> = {}): Chapter {
+async function appendCastAssignment(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
+  const body = await parseJsonBody<{ characterIpId: string; roleLabel: string; actionIntent: string; referenceImageIds?: string[] }>(init);
   return {
-    id: STUDIO_CHAPTER_ID,
-    scenePackId: STUDIO_SCENE_PACK_ID,
-    title: "早餐厨房",
-    summary: "厨房餐台和冰箱前的早晨动线。",
-    seed: {
-      scenePackId: STUDIO_SCENE_PACK_ID, scenePackTitle: "室内家庭篇", chapterId: STUDIO_CHAPTER_ID, chapterTitle: "早餐厨房",
-      chapterIntent: "组织早餐准备与收拾的家庭互动。",
-      sceneDomain: "indoor-home",
-      dailyMoment: "morning",
-      eventSeed: "孩子找牛奶、拿杯子、准备早餐。",
-      spatialSeed: "餐台、冰箱和水槽形成清晰动线。",
-      objectCoverageHint: ["milk cup", "breakfast bowl", "cloth"],
-      characterConceptHint: {
-        castMode: "main_cast_and_supporting_cast",
-        mainCastHint: "主角孩子负责准备早餐。",
-        supportingCastHint: "家长在旁边协助收拾。",
-        referenceAssetIds: [],
-        constraints: ["保持家庭主角一致", "不要出现画面文字"],
+    ...current,
+    cast_assignments: [
+      ...current.cast_assignments,
+      {
+        id: `cast_assignment_${String(current.cast_assignments.length + 1).padStart(3, "0")}`,
+        character_ip_id: body.characterIpId,
+        role_label: body.roleLabel,
+        action_intent: body.actionIntent,
+        reference_image_ids: body.referenceImageIds ?? [],
       },
-      styleNotes: "温暖晨光、生活化绘本感。",
-    },
-    sortOrder: 1,
-    status: "designing",
-    ...overrides,
+    ],
   };
 }
 
-export function studioScenePackageFixture(overrides: Partial<ChapterScenePackage> = {}): ChapterScenePackage {
+function importCompleteImage(current: ChapterScenePackage, path: string): ChapterScenePackage {
+  const completeImageId = path.split("/complete-images/")[1]?.split("/import")[0] ?? "";
   return {
-    chapter_id: STUDIO_CHAPTER_ID,
-    current_empty_scene_image_id: "empty_scene_001",
-    prompt: {
-      prompt_text: "Warm breakfast kitchen with a child reaching for cereal near the table.",
-      scene_spatial_contract: "Table centered, fridge left, sink right, floor kept clear.",
-      updated_at: "2026-07-03T11:00:00Z",
-    },
-    prompt_confirmations: {
-      avoid_objects_reviewed: true,
-      style_reference_mode: "selected",
-    },
-    cast_assignments: [{ id: "cast_main_child", character_ip_id: "child_ip_001", role_label: "main", action_intent: "Reach for the breakfast bowl while looking toward spilled milk.", reference_image_ids: ["reference_style_001"] }],
-    reference_selections: [{ id: "reference_selection_001", reference_image_id: "reference_style_001", prompt_role: "style" }],
-    target_objects: [
-      {
-        id: "target_object_bowl",
-        label: "breakfast bowl",
-        description: "Ceramic bowl placed near the child.",
-        priority: "core",
-      },
-      {
-        id: "target_object_cloth",
-        label: "cloth",
-        description: "Cleanup cloth ready beside the cup.",
-        priority: "required",
-      },
-    ],
-    avoid_objects: [{ id: "avoid_object_knife", label: "knife", description: "Avoid sharp props on the table." }],
-    empty_scene_images: [
-      {
-        id: "empty_scene_001",
-        original_filename: "empty-scene.png",
-        storage_path: "scene_package/empty_scene_001.png",
-        media_type: "image/png",
-        width: 1024,
-        height: 1024,
-        status: "available",
-        prompt_snapshot: "Warm breakfast kitchen without character cutouts.",
-        reference_snapshot: snapshot(["reference_style_001"], null),
-        created_at: "2026-07-03T11:01:00Z",
-      },
-    ],
-    complete_images: [
-      {
-        id: "complete_scene_001",
-        original_filename: "complete-scene.png",
-        storage_path: "scene_package/complete_scene_001.png",
-        media_type: "image/png",
-        width: 1024,
-        height: 1024,
-        empty_scene_image_id: "empty_scene_001",
-        status: "active",
-        prompt_snapshot: "Warm breakfast kitchen with family action beats.",
-        reference_snapshot: snapshot(["reference_style_001"], "empty_scene_001"),
-        generation_note: "brighter morning light",
-        pipeline_run_id: null,
-        pipeline_run_status: null,
-        created_at: "2026-07-03T11:02:00Z",
-      },
-    ],
-    chapter_assets: [sceneAsset("chapter_asset_bowl", "Breakfast bowl", "bowl.png", "direct_upload", { linkedTargetObjectId: "target_object_bowl" })],
-    assembly: studioAssemblyFixture(),
-    final_scene: null,
-    ...overrides,
+    ...current,
+    complete_images: current.complete_images.map((image) =>
+      image.id === completeImageId
+        ? {
+            ...image,
+            pipeline_run_id: "run_complete_scene_001",
+            pipeline_run_status: "ready",
+          }
+        : image,
+    ),
   };
 }
 
-function studioAssemblyFixture(overrides: Partial<ChapterSceneAssemblyManifest> = {}): ChapterSceneAssemblyManifest {
+function workspaceRunFixture() {
   return {
-    schema_version: 1,
-    empty_scene_image_id: "empty_scene_001",
-    empty_scene_size: { width: 1024, height: 1024 },
-    placements: [{ id: "placement_bowl", asset_id: "chapter_asset_bowl", display_name: "Breakfast bowl", runtime_role: "target", transform: { cx: 0.42, cy: 0.58, w: 0.18, h: 0.18, rotation_deg: 0 }, group_id: null, requires_placed: [] }],
-    groups: [],
-    layer_order: ["placement_bowl"],
-    updated_at: "2026-07-03T11:04:00Z",
-    ...overrides,
+    id: "run_complete_scene_001",
+    title: "Complete scene import",
+    sourceFilename: "complete-scene.png",
+    createdAt: "2026-07-03T11:12:00Z",
+    updatedAt: "2026-07-03T11:12:00Z",
+    status: "ready",
+    elementCount: 0,
   };
 }
 
@@ -283,7 +346,7 @@ function appendEmptySceneImage(current: ChapterScenePackage, init: RequestInit |
         width: 1024,
         height: 1024,
         status: "available",
-        prompt_snapshot: String(body.get("promptSnapshot") ?? current.prompt.prompt_text),
+        prompt_snapshot: "Backend projected empty scene prompt.",
         reference_snapshot: snapshot(body.getAll("referenceImageIds").map(String), current.current_empty_scene_image_id, ""),
         created_at: "2026-07-03T11:06:00Z",
       },
@@ -296,10 +359,6 @@ async function selectCurrentEmptyScene(current: ChapterScenePackage, init: Reque
   return {
     ...current,
     current_empty_scene_image_id: body.emptySceneImageId,
-    assembly: {
-      ...current.assembly,
-      empty_scene_image_id: body.emptySceneImageId,
-    },
   };
 }
 
@@ -319,7 +378,7 @@ function appendCompleteSceneImage(current: ChapterScenePackage, init: RequestIni
         height: 1024,
         empty_scene_image_id: current.current_empty_scene_image_id,
         status: "active",
-        prompt_snapshot: String(body.get("promptSnapshot") ?? current.prompt.prompt_text),
+        prompt_snapshot: "Backend projected complete scene prompt.",
         reference_snapshot: snapshot(body.getAll("referenceImageIds").map(String), current.current_empty_scene_image_id, ""),
         generation_note: String(body.get("generationNote") ?? ""),
         pipeline_run_id: null,
@@ -330,47 +389,19 @@ function appendCompleteSceneImage(current: ChapterScenePackage, init: RequestIni
   };
 }
 
-async function patchCompleteImageRun(
-  current: ChapterScenePackage,
-  path: string,
-  init: RequestInit | undefined,
-): Promise<ChapterScenePackage> {
-  const body = await parseJsonBody<{ runId: string; runStatus?: string | null }>(init);
-  const completeImageId = path.split("/complete-images/")[1]?.split("/run")[0] ?? "";
-  return {
-    ...current,
-    complete_images: current.complete_images.map((image) =>
-      image.id === completeImageId
-        ? {
-            ...image,
-            pipeline_run_id: body.runId,
-            pipeline_run_status: body.runStatus ?? null,
-          }
-        : image,
-    ),
-  };
-}
-
-function appendRunAsset(current: ChapterScenePackage, init: RequestInit | undefined): ChapterScenePackage {
-  return appendAsset(current, init, "pipeline_run_asset");
-}
-
 function appendDirectAsset(current: ChapterScenePackage, init: RequestInit | undefined): ChapterScenePackage {
-  return appendAsset(current, init, "direct_upload");
+  return appendAsset(current, init);
 }
 
-function appendAsset(current: ChapterScenePackage, init: RequestInit | undefined, sourceKind: "pipeline_run_asset" | "direct_upload"): ChapterScenePackage {
+function appendAsset(current: ChapterScenePackage, init: RequestInit | undefined): ChapterScenePackage {
   const body = init?.body as FormData;
   const assetId = `chapter_asset_${String(current.chapter_assets.length + 1).padStart(3, "0")}`;
   return {
     ...current,
     chapter_assets: [
       ...current.chapter_assets,
-      sceneAsset(assetId, String(body.get("displayName") ?? "Scene asset"), fileNameFromFormData(body, "file", "scene-asset.png"), sourceKind, {
+      sceneAsset(assetId, String(body.get("displayName") ?? "Scene asset"), fileNameFromFormData(body, "file", "scene-asset.png"), {
         linkedTargetObjectId: nullableFormValue(body.get("linkedTargetObjectId")),
-        sourceRunId: sourceKind === "pipeline_run_asset" ? String(body.get("sourceRunId") ?? "") : null,
-        sourceRunAssetId: sourceKind === "pipeline_run_asset" ? String(body.get("sourceRunAssetId") ?? "") : null,
-        sourceCompleteImageId: sourceKind === "pipeline_run_asset" ? nullableFormValue(body.get("sourceCompleteImageId")) : null,
       }),
     ],
   };
@@ -381,6 +412,56 @@ async function replaceAssembly(current: ChapterScenePackage, init: RequestInit |
   return {
     ...current,
     assembly: body,
+  };
+}
+
+function deleteCompleteSceneImage(current: ChapterScenePackage, path: string): ChapterScenePackage {
+  const completeImageId = path.split("/complete-images/")[1] ?? "";
+  return {
+    ...current,
+    complete_images: current.complete_images.map((image) => (
+      image.id === completeImageId
+        ? { ...image, status: "deleted" as const }
+        : image
+    )),
+  };
+}
+
+function deleteChapterAsset(current: ChapterScenePackage, path: string): ChapterScenePackage {
+  const assetId = path.split("/chapter-assets/")[1] ?? "";
+  const removedPlacementIds = new Set(
+    current.assembly.placements
+      .filter((placement) => placement.asset_id === assetId)
+      .map((placement) => placement.id),
+  );
+  const remainingPlacements = current.assembly.placements
+    .filter((placement) => placement.asset_id !== assetId)
+    .map((placement) => ({
+      ...placement,
+      requires_placed: placement.requires_placed.filter((requiredId) => !removedPlacementIds.has(requiredId)),
+    }));
+  const remainingGroups = current.assembly.groups
+    .map((group) => ({
+      ...group,
+      placement_ids: group.placement_ids.filter((placementId) => !removedPlacementIds.has(placementId)),
+    }))
+    .filter((group) => group.placement_ids.length >= 2);
+  const validGroupIds = new Set(remainingGroups.map((group) => group.id));
+
+  return {
+    ...current,
+    chapter_assets: current.chapter_assets.map((asset) => (
+      asset.id === assetId ? { ...asset, status: "removed" as const } : asset
+    )),
+    assembly: {
+      ...current.assembly,
+      placements: remainingPlacements.map((placement) => ({
+        ...placement,
+        group_id: placement.group_id && validGroupIds.has(placement.group_id) ? placement.group_id : null,
+      })),
+      groups: remainingGroups,
+      layer_order: current.assembly.layer_order.filter((placementId) => !removedPlacementIds.has(placementId)),
+    },
   };
 }
 
@@ -405,40 +486,6 @@ function lockFinalScene(current: ChapterScenePackage): ChapterScenePackage {
   };
 }
 
-function snapshot(referenceImageIds: string[], currentEmptySceneImageId: string | null, notes = "style board") {
-  return { reference_image_ids: referenceImageIds, current_empty_scene_image_id: currentEmptySceneImageId, notes };
-}
-
-function sceneAsset(
-  id: string,
-  displayName: string,
-  originalFilename: string,
-  sourceKind: "pipeline_run_asset" | "direct_upload",
-  options: {
-    linkedTargetObjectId?: string | null;
-    sourceRunId?: string | null;
-    sourceRunAssetId?: string | null;
-    sourceCompleteImageId?: string | null;
-  } = {},
-) {
-  return {
-    id,
-    display_name: displayName,
-    original_filename: originalFilename,
-    storage_path: `scene_package/${id}.png`,
-    media_type: "image/png" as const,
-    lineage: {
-      source_kind: sourceKind,
-      source_run_id: options.sourceRunId ?? null,
-      source_run_asset_id: options.sourceRunAssetId ?? null,
-      source_complete_image_id: options.sourceCompleteImageId ?? null,
-    },
-    linked_target_object_id: options.linkedTargetObjectId ?? null,
-    status: "available" as const,
-    created_at: "2026-07-03T11:08:00Z",
-  };
-}
-
 function fileNameFromFormData(body: FormData, field: string, fallback: string): string {
   const file = body.get(field);
   return file instanceof File ? file.name : fallback;
@@ -451,6 +498,3 @@ function nullableFormValue(value: FormDataEntryValue | null): string | null {
   const text = String(value);
   return text.length > 0 ? text : null;
 }
-
-const STUDIO_SCENE_PACK_ID = "scene_pack_home";
-const STUDIO_CHAPTER_ID = "chapter_breakfast_kitchen";

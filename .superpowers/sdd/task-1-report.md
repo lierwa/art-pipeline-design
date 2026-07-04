@@ -1,246 +1,258 @@
-# Task 1 Report: Backend Domain Models For Chapter Scene Studio
+# Task 1 Report: Add Canvas Dependency Deliberately
 
-## Scope completed
+## Status
 
-- Updated `backend/art_pipeline/course_planner/scene_package_models.py`
-- Updated `backend/art_pipeline/course_planner/models.py`
-- Updated `backend/tests/course_planner/test_scene_package_models.py`
-- Updated `backend/tests/course_planner/test_models.py`
+- `DONE_WITH_CONCERNS`
 
-This task stayed inside the Task 1 file boundary. I did not edit frontend, routes, media store, or store lifecycle files.
+## Scope
 
-## TDD log
+- Updated `frontend/package.json`
+- Updated `frontend/package-lock.json`
+- Updated `frontend/src/features/coursePlanner/components/AssemblyWorkspacePanel.tsx`
 
-### RED
+Reason for the extra file touch:
 
-I rewrote the focused model tests first, then ran:
+- Task brief explicitly required importing tldraw CSS from the editor boundary, not from unrelated global code.
+- I kept that import at the assembly editor boundary and added a Chinese WHY comment that tldraw is only an authoring implementation detail while the scene-package manifest remains the protocol.
+
+## Changes made
+
+1. Added `tldraw@5.2.2` to `frontend/package.json` dependencies.
+2. Kept `react-arborist@^3.10.5` unchanged as the layer-tree library.
+3. Ran `npm --prefix frontend install` to update the existing npm lockfile.
+4. Imported `tldraw/tldraw.css` in `frontend/src/features/coursePlanner/components/AssemblyWorkspacePanel.tsx`.
+
+## Verification log
+
+### Install
+
+Command:
 
 ```bash
-cd backend
-uv run --python 3.12 --extra dev pytest tests/course_planner/test_scene_package_models.py -q
+npm --prefix frontend install
 ```
 
-The run failed during collection with:
+Output:
 
-- `ImportError: cannot import name 'CharacterIpProfile' from 'art_pipeline.course_planner.models'`
+```text
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@yaireo/tagify@4.37.1',
+npm WARN EBADENGINE   required: { node: '>=22', pnpm: '>=10' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: 'tldraw@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/driver@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/editor@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/store@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/utils@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/state@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/state-react@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/tlschema@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@tldraw/validate@5.2.2',
+npm WARN EBADENGINE   required: { node: '>=22.12.0' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
+npm WARN deprecated lodash.isequal@4.5.0: This package is deprecated. Use require('node:util').isDeepStrictEqual instead.
 
-After adding the shared library models, the next red failure surfaced the old scene-package imports that still happen during package initialization:
+added 101 packages, changed 13 packages, and audited 346 packages in 1m
 
-- `ImportError: cannot import name 'ChapterSceneReference' from 'art_pipeline.course_planner.scene_package_models'`
+59 packages are looking for funding
+  run `npm fund` for details
 
-That confirmed the new contract was not yet implemented and that package import still traverses old store modules.
+5 vulnerabilities (3 moderate, 1 high, 1 critical)
 
-### GREEN
+To address all issues (including breaking changes), run:
+  npm audit fix --force
 
-After replacing the domain model surface and tightening the tests around the new contract, I reran the focused verification:
-
-```bash
-cd backend
-uv run --python 3.12 --extra dev pytest tests/course_planner/test_scene_package_models.py tests/course_planner/test_models.py -q
+Run `npm audit` for details.
 ```
 
 Result:
 
-- `34 passed in 0.32s`
+- Install completed with exit code `0`.
+- Current macOS install is not clean because `tldraw@5.2.2` and its `@tldraw/*` packages declare Node `>=22.12.0`, while this machine is `node v21.7.3`.
 
-## What changed
+### Build
 
-### 1. Shared library models in `models.py`
+Command:
 
-Added:
+```bash
+npm --prefix frontend run build
+```
 
-- `ReferenceLibraryImage`
-- `CharacterIpProfile`
+Output:
 
-These provide the reusable character/reference-library authority required by the new chapter scene workflow.
+```text
+> art-pipeline-workbench-frontend@0.1.0 build
+> tsc -b && vite build
 
-### 2. Replaced the scene package domain model surface
+vite v5.4.21 building for production...
+transforming...
+✓ 2136 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.41 kB │ gzip:   0.27 kB
+dist/assets/index-C7sn1Yyv.css  170.07 kB │ gzip:  32.74 kB
+dist/assets/index-DrweSSTK.js   833.41 kB │ gzip: 243.33 kB
 
-Reworked `scene_package_models.py` from the old:
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.14s
+```
 
-- `locked_base_candidate_id`
-- `base_candidate_id`
-- `references`
-- `base_candidates`
+Result:
 
-to the new chapter-scene-studio contract centered on:
+- Build completed with exit code `0`.
 
-- `current_empty_scene_image_id`
-- `empty_scene_image_id`
-- `empty_scene_images`
-- `cast_assignments`
-- `reference_selections`
-- `avoid_objects`
-- `final_scene`
+## Concerns
 
-Added/updated models:
+1. The required version `tldraw@5.2.2` installs and builds here, but npm reports an engine mismatch because local Node is `v21.7.3` and tldraw declares `>=22.12.0`.
+2. Windows lock/install verification has not been run in this session. Per the task brief, cross-platform readiness cannot be claimed until CI or a Windows runner validates install/lockfile behavior.
+3. `npm install` updated some transitive versions already present in the lockfile (for example `@radix-ui/react-alert-dialog` `1.1.17 -> 1.1.18`) as part of normal npm resolution while adding tldraw.
 
-- `ChapterScenePrompt`
-- `PromptReadinessConfirmation`
-- `ChapterCastAssignment`
-- `ChapterReferenceSelection`
-- `ImageReferenceSnapshot`
-- `EmptySceneImage`
-- `CompleteSceneImage`
-- `ChapterAssetLineage`
-- `FinalChapterScene`
-- `ChapterScenePackage`
+## Commits
 
-### 3. Prompt readiness logic now checks confirmed facts
+- None
 
-`is_prompt_ready(package)` now requires:
+---
 
-- non-empty `prompt_text`
-- at least one cast assignment with character id, action intent, and reference ids
-- at least one target object
-- avoid-object review confirmation
-- non-empty spatial contract
-- either a selected style reference or `style_reference_mode == "confirmed_empty"`
+## 2026-07-03 Review finding fix notes
 
-### 4. Prompt projection renamed to the new domain vocabulary
+This section supersedes the earlier `tldraw@5.2.2`-specific concerns above and is the authoritative status for the review-fix pass.
 
-Added:
+### What changed in this fix pass
 
-- `build_empty_scene_prompt(package, libraries=None)`
-- `build_complete_prompt(package, libraries=None)`
+1. Updated `frontend/package.json` from `tldraw@5.2.2` to exact `tldraw@5.1.0`.
+2. Re-ran `npm --prefix frontend install` so `frontend/package-lock.json` matches the revised Task 1 brief and the actual npm resolution result.
+3. Kept the existing tldraw CSS import at the editor boundary in `frontend/src/features/coursePlanner/components/AssemblyWorkspacePanel.tsx` with the Chinese WHY comment unchanged.
 
-The projection now uses the new prompt facts and can optionally project character/reference-library facts into the prompt text.
+### Task 1 ownership clarification for `AssemblyWorkspacePanel.tsx`
 
-### 5. Assembly validation now uses empty-scene authority
+- This file already contains pre-existing dirty behavior changes compared with the original base diff.
+- In this review-fix pass, Task 1 only owns the top-of-file `import "tldraw/tldraw.css";` and the adjacent Chinese WHY comment.
+- I did **not** revert the other pre-existing behavior diff in this file, per controller instruction.
 
-Replaced the old locked-base validator with `_empty_scene_reference_errors(package)`, so placement manifests must match `current_empty_scene_image_id` when placements exist.
+### Install verification
 
-### 6. Lineage validation distinguishes direct upload vs pipeline asset
+Command:
 
-`ChapterAssetLineage` now validates:
+```bash
+npm --prefix frontend install
+```
 
-- `direct_upload` cannot include run-asset fields
-- `pipeline_run_asset` must include `source_run_id` and `source_run_asset_id`
+Output:
 
-## Focused test coverage now locks down
+```text
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@yaireo/tagify@4.37.1',
+npm WARN EBADENGINE   required: { node: '>=22', pnpm: '>=10' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
 
-- clean default chapter-scene-studio package state
-- prompt readiness positive path
-- prompt readiness negative path
-- optional `empty_scene_image_id` on complete images
-- direct-upload lineage vs run-asset lineage
-- prompt projection with confirmed facts
-- assembly validation for:
-  - empty-scene mismatch
-  - missing layer-order coverage
-  - missing dependency ids
-  - dependency cycles
-  - unavailable assets
-- shared library model defaults
+added 2 packages, changed 9 packages, and audited 348 packages in 21s
+```
 
-## Notable implementation choice
+Result:
 
-I kept a very narrow compatibility shim inside `scene_package_models.py`:
+- Exit code `0`.
+- The previous `tldraw@5.2.2` / `@tldraw/*` Node `>=22.12.0` engine warnings are gone after pinning `5.1.0`.
+- The remaining engine warning is from pre-existing dependency `@yaireo/tagify@4.37.1`, not from Task 1's tldraw pin.
 
-- `ChapterSceneReference = ChapterReferenceSelection`
-- `EmptyBaseSceneCandidate = EmptySceneImage`
-- `build_base_prompt = build_empty_scene_prompt`
+### Build verification
 
-Reason:
+Command:
 
-- `art_pipeline.course_planner.__init__` still imports store modules, and those modules still import the old names during Task 1 test collection.
-- This shim is intentionally import-only compatibility so focused model tests can validate the new domain model without editing Task 2 files early.
-- Later Task 2/3 work should delete these aliases once store/route imports move to the new contract.
+```bash
+npm --prefix frontend run build
+```
 
-## Concerns / follow-up for later tasks
+Output:
 
-- Broader route/store flows were not updated in Task 1 and may still fail until later tasks replace the old scene-package contract end to end.
-- The import compatibility aliases should be removed after Task 2 migrates the store/route layer to the new empty-scene naming.
+```text
+> art-pipeline-workbench-frontend@0.1.0 build
+> tsc -b && vite build
 
-## Task Reviewer Findings Requiring Fix
+vite v5.4.21 building for production...
+✓ built in 3.20s
+```
 
-Critical:
-- Remove compatibility aliases that re-expose `ChapterSceneReference`, `EmptyBaseSceneCandidate`, and `build_base_prompt` from `scene_package_models.py`.
+Result:
 
-Important:
-- Prompt projection cannot fall back to raw character/reference ids. Character/reference prompt text must require library records and fail loudly when a selected id is missing.
-- Media-bearing models must reuse existing media/storage-path validation helpers where that applies to model data, especially storage paths.
+- Exit code `0`.
 
-Minor:
-- Restore manifest validator tests for duplicate `layer_order` entries and unknown group placement references.
+### Lockfile churn assessment
 
-## Reviewer rejection fix
+- I did not scan `node_modules`; this assessment is based on `frontend/package-lock.json` plus `npm view tldraw@5.1.0 dependencies --json`.
+- The lockfile still changes substantially because `tldraw@5.1.0` brings a new transitive subtree, including:
+  - `@tldraw/driver`, `@tldraw/editor`, `@tldraw/store`, `@tldraw/state`, `@tldraw/state-react`, `@tldraw/tlschema`, `@tldraw/utils`, `@tldraw/validate`
+  - `@tiptap/core`, `@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, `@tiptap/extension-code`, `@tiptap/extension-highlight`, `@tiptap/extension-list`
+  - `radix-ui`, `@radix-ui/react-alert-dialog`, `@radix-ui/react-toast`, `@radix-ui/react-tooltip`
+  - `prosemirror-*`, `classnames`, `idb`, `lz-string`
+- The visible `@radix-ui/react-alert-dialog` / `@radix-ui/react-toast` / `@radix-ui/react-tooltip` patch bumps in the lockfile come from that new `radix-ui` subtree required by `tldraw`, so they are not independent Task-1-unrelated upgrades.
 
-### Fix summary
+### Non-destructive Windows lockfile resolution check
 
-- Removed the Task 1 compatibility aliases from `scene_package_models.py` and switched `backend/art_pipeline/course_planner/__init__.py` to lazy-load `CoursePlannerStore`, so model imports no longer depend on legacy store names during package import.
-- Tightened prompt projection to require library payloads whenever cast assignments or reference selections participate in projection, and now raise `ScenePackageValidationError` when a selected character or reference id is missing from the library authority.
-- Extracted the shared relative-POSIX storage-path validation rules into `backend/art_pipeline/course_planner/media_storage_paths.py`, reused them in `scene_package_media.py`, and applied the same authority to media-bearing models in `models.py` and `scene_package_models.py`.
-- Restored focused model coverage for duplicate `layer_order`, unknown group placement references, missing-library prompt projection, missing selected-library ids, and invalid media storage paths.
+Command:
 
-### Tests run and results
+```bash
+tmpdir=$(mktemp -d)
+cp frontend/package.json "$tmpdir/package.json"
+cp frontend/package-lock.json "$tmpdir/package-lock.json"
+npm --prefix "$tmpdir" install --package-lock-only --ignore-scripts --os=win32 --cpu=x64
+rc=$?
+rm -rf "$tmpdir"
+exit $rc
+```
 
-- `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_scene_package_models.py tests/course_planner/test_models.py -q`
-  - Result: `43 passed in 0.15s`
-- `git diff --check`
-  - Result: no output
+Output:
 
-### Regex gate result
+```text
+npm WARN EBADENGINE Unsupported engine {
+npm WARN EBADENGINE   package: '@yaireo/tagify@4.37.1',
+npm WARN EBADENGINE   required: { node: '>=22', pnpm: '>=10' },
+npm WARN EBADENGINE   current: { node: 'v21.7.3', npm: '10.5.0' }
+npm WARN EBADENGINE }
 
-- `rg -n "EmptyBaseSceneCandidate|ChapterSceneReference|build_base_prompt|locked_base|base_candidate|base_candidates" backend/art_pipeline/course_planner/scene_package_models.py backend/tests/course_planner/test_scene_package_models.py`
-  - Result: no output
+up to date, audited 395 packages in 2s
+```
 
-### Files changed
+Result:
 
-- `backend/art_pipeline/course_planner/__init__.py`
-- `backend/art_pipeline/course_planner/media_storage_paths.py`
-- `backend/art_pipeline/course_planner/models.py`
-- `backend/art_pipeline/course_planner/scene_package_media.py`
-- `backend/art_pipeline/course_planner/scene_package_models.py`
-- `backend/tests/course_planner/test_models.py`
-- `backend/tests/course_planner/test_scene_package_models.py`
-
-## Task 1 Re-review Findings Requiring Fix
-
-Critical:
-- `scene_package_media.py` still maps `references` / `base_candidates` even though the new `ChapterScenePackage` exposes `reference_selections` / `empty_scene_images`. Remove old media kind names from the touched runtime helper and make it match the new model surface.
-
-Important:
-- `scene_package_models.py` and `test_scene_package_models.py` exceed the repo `文件 ≤ 500 行` hard constraint. Split cohesive logic/tests without changing the public model interface.
-
-## Task 1 Second Re-review Fix
-
-### Fix summary
-
-- Removed legacy scene-package media kind aliases from `backend/art_pipeline/course_planner/scene_package_media.py`; the helper now addresses `empty_scene_images`, `complete_images`, `chapter_assets`, `assets`, and `final_scene` only.
-- Split prompt readiness and prompt projection into `backend/art_pipeline/course_planner/scene_package_prompt_projection.py`, then re-exported `is_prompt_ready`, `build_empty_scene_prompt`, and `build_complete_prompt` from `scene_package_models.py` to preserve the public import surface.
-- Split assembly helpers into `backend/art_pipeline/course_planner/scene_package_assembly_validation.py`, then re-exported `frontmost_layer_id` and `validate_assembly_manifest` from `scene_package_models.py`.
-- Split the oversized backend tests into focused contract, prompt-projection, and assembly-validation files, with shared factories in `backend/tests/course_planner/scene_package_model_helpers.py`.
-
-### Tests run and results
-
-- `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_scene_package_models.py tests/course_planner/test_scene_package_prompt_projection.py tests/course_planner/test_scene_package_assembly_validation.py tests/course_planner/test_models.py -q`
-  - Result: `48 passed in 0.22s`
-- `git diff --check`
-  - Result: no output
-
-### File line counts
-
-- `217 backend/art_pipeline/course_planner/scene_package_models.py`
-- `176 backend/art_pipeline/course_planner/scene_package_prompt_projection.py`
-- `194 backend/art_pipeline/course_planner/scene_package_assembly_validation.py`
-- `242 backend/tests/course_planner/test_scene_package_models.py`
-- `110 backend/tests/course_planner/test_scene_package_prompt_projection.py`
-- `110 backend/tests/course_planner/test_scene_package_assembly_validation.py`
-- `257 backend/tests/course_planner/scene_package_model_helpers.py`
-
-### Regex gate result
-
-- `rg -n "references|base_candidates|base-candidates|locked_base|base_candidate|EmptyBaseSceneCandidate|ChapterSceneReference|build_base_prompt" backend/art_pipeline/course_planner/scene_package_models.py backend/art_pipeline/course_planner/scene_package_media.py backend/tests/course_planner/test_scene_package_models.py backend/tests/course_planner/test_scene_package_prompt_projection.py backend/tests/course_planner/test_scene_package_assembly_validation.py`
-  - Result: no output
-
-### Files changed
-
-- `backend/art_pipeline/course_planner/scene_package_media.py`
-- `backend/art_pipeline/course_planner/scene_package_models.py`
-- `backend/art_pipeline/course_planner/scene_package_prompt_projection.py`
-- `backend/art_pipeline/course_planner/scene_package_assembly_validation.py`
-- `backend/tests/course_planner/test_scene_package_models.py`
-- `backend/tests/course_planner/test_scene_package_prompt_projection.py`
-- `backend/tests/course_planner/test_scene_package_assembly_validation.py`
-- `backend/tests/course_planner/scene_package_model_helpers.py`
+- Exit code `0`.
+- This proves the current `package.json` + `package-lock.json` can be re-resolved for `win32/x64` without mutating the real workspace lockfile.
+- This is **not** the same as a native Windows install/build run, so Windows readiness is still **not claimed**.

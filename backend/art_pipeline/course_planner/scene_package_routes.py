@@ -4,9 +4,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
 
 from art_pipeline.course_planner.api_models import (
+    ChapterCastAssignmentRequest,
+    ChapterReferenceSelectionRequest,
     ChapterScenePromptPatchRequest,
-    CompleteSceneImageRunPatchRequest,
+    CharacterIpCreateRequest,
     CurrentEmptySceneImageRequest,
+)
+from art_pipeline.course_planner.import_to_pipeline import (
+    import_complete_scene_image_to_pipeline,
 )
 from art_pipeline.course_planner.scene_package_models import ChapterSceneAssembly
 from art_pipeline.course_planner.scene_package_route_helpers import (
@@ -27,6 +32,57 @@ scene_package_router = APIRouter(prefix="/api/course-planner")
 
 def register_scene_package_routes(app) -> None:
     app.include_router(scene_package_router)
+
+
+@scene_package_router.get("/character-ips")
+def get_character_ips(request: Request) -> dict[str, list[dict[str, object]]]:
+    return {
+        "characterIps": [
+            character.model_dump(mode="json")
+            for character in store_for_request(request).list_character_ips()
+        ]
+    }
+
+
+@scene_package_router.post("/character-ips")
+async def post_character_ip(request: Request) -> dict[str, object]:
+    payload = await parse_json_model(request, CharacterIpCreateRequest)
+    try:
+        character = store_for_request(request).create_character_ip(
+            display_name=payload.display_name,
+            visual_invariants=payload.visual_invariants,
+            personality_cues=payload.personality_cues,
+            reference_image_ids=payload.reference_image_ids,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return {"characterIp": character.model_dump(mode="json")}
+
+
+@scene_package_router.get("/reference-library/images")
+def get_reference_library_images(request: Request) -> dict[str, list[dict[str, object]]]:
+    return {
+        "referenceImages": [
+            image.model_dump(mode="json")
+            for image in store_for_request(request).list_reference_library_images()
+        ]
+    }
+
+
+@scene_package_router.post("/reference-library/images")
+async def post_reference_library_image(request: Request) -> dict[str, object]:
+    form = await request.form()
+    file = require_upload_file(form.get("file"))
+    try:
+        image = store_for_request(request).add_reference_library_image(
+            image_bytes=await file.read(),
+            original_filename=file.filename or "upload.png",
+            tags=string_list_form_value(form, "tags"),
+            notes=string_form_value(form.get("notes"), default=""),
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return {"referenceImage": image.model_dump(mode="json")}
 
 
 @scene_package_router.get("/chapters/{chapterId}/scene-package")
@@ -74,6 +130,46 @@ async def patch_scene_package_prompt(
     return scene_package_payload(package)
 
 
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/reference-selections"
+)
+async def post_scene_package_reference_selection(
+    request: Request,
+    chapterId: str,
+) -> dict[str, object]:
+    payload = await parse_json_model(request, ChapterReferenceSelectionRequest)
+    try:
+        package = store_for_request(request).write_chapter_reference_selection(
+            chapterId,
+            reference_image_id=payload.reference_image_id,
+            prompt_role=payload.prompt_role,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return scene_package_payload(package)
+
+
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/cast-assignments"
+)
+async def post_scene_package_cast_assignment(
+    request: Request,
+    chapterId: str,
+) -> dict[str, object]:
+    payload = await parse_json_model(request, ChapterCastAssignmentRequest)
+    try:
+        package = store_for_request(request).write_chapter_cast_assignment(
+            chapterId,
+            character_ip_id=payload.character_ip_id,
+            role_label=payload.role_label,
+            action_intent=payload.action_intent,
+            reference_image_ids=payload.reference_image_ids,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return scene_package_payload(package)
+
+
 @scene_package_router.post("/chapters/{chapterId}/scene-package/empty-scene-images")
 async def post_empty_scene_image(
     request: Request,
@@ -86,7 +182,7 @@ async def post_empty_scene_image(
             chapterId,
             image_bytes=await file.read(),
             original_filename=file.filename or "upload.png",
-            prompt_snapshot=_optional_prompt_snapshot(form.get("promptSnapshot")),
+            prompt_snapshot=None,
             reference_image_ids=string_list_form_value(form, "referenceImageIds"),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
@@ -143,13 +239,46 @@ async def post_complete_scene_image(
             chapterId,
             image_bytes=await file.read(),
             original_filename=file.filename or "upload.png",
-            prompt_snapshot=_optional_prompt_snapshot(form.get("promptSnapshot")),
+            prompt_snapshot=None,
             reference_image_ids=string_list_form_value(form, "referenceImageIds"),
             generation_note=string_form_value(form.get("generationNote"), default=""),
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
     return scene_package_payload(package)
+
+
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/complete-images/{completeImageId}/import"
+)
+def post_import_complete_scene_image(
+    request: Request,
+    chapterId: str,
+    completeImageId: str,
+) -> dict[str, object]:
+    store = store_for_request(request)
+    try:
+        result = import_complete_scene_image_to_pipeline(
+            planner_store=store,
+            workspace_root=request.app.state.workspace_root,
+            chapter_id=chapterId,
+            complete_image_id=completeImageId,
+        )
+        package = store.record_complete_image_import_run(
+            chapterId,
+            completeImageId,
+            run_id=result.run.id,
+            run_status=result.run.status,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(
+            exc,
+            child_not_found_detail="Complete scene image not found.",
+        ) from exc
+    return {
+        "run": result.run.model_dump(mode="json"),
+        **scene_package_payload(package),
+    }
 
 
 @scene_package_router.delete(
@@ -170,62 +299,6 @@ def delete_complete_scene_image(
             exc,
             child_not_found_detail="Complete scene image not found.",
         ) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.patch(
-    "/chapters/{chapterId}/scene-package/complete-images/{completeImageId}/run"
-)
-async def patch_complete_scene_image_run(
-    request: Request,
-    chapterId: str,
-    completeImageId: str,
-) -> dict[str, object]:
-    payload = await parse_json_model(request, CompleteSceneImageRunPatchRequest)
-    try:
-        package = store_for_request(request).associate_complete_image_run(
-            chapterId,
-            completeImageId,
-            run_id=payload.run_id,
-            run_status=payload.run_status,
-        )
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(
-            exc,
-            child_not_found_detail="Complete scene image not found.",
-        ) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.post("/chapters/{chapterId}/scene-package/chapter-assets")
-async def post_chapter_asset(
-    request: Request,
-    chapterId: str,
-) -> dict[str, object]:
-    form = await request.form()
-    file = require_upload_file(form.get("file"))
-    try:
-        package = store_for_request(request).add_chapter_asset_from_run_asset(
-            chapterId,
-            source_run_id=required_string_form_value(form.get("sourceRunId"), "sourceRunId"),
-            source_run_asset_id=required_string_form_value(
-                form.get("sourceRunAssetId"),
-                "sourceRunAssetId",
-            ),
-            source_complete_image_id=optional_string_form_value(
-                form.get("sourceCompleteImageId"),
-                "sourceCompleteImageId",
-            ),
-            image_bytes=await file.read(),
-            original_filename=file.filename or "upload.png",
-            display_name=required_string_form_value(form.get("displayName"), "displayName"),
-            linked_target_object_id=optional_string_form_value(
-                form.get("linkedTargetObjectId"),
-                "linkedTargetObjectId",
-            ),
-        )
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(exc) from exc
     return scene_package_payload(package)
 
 
@@ -251,6 +324,42 @@ async def post_direct_chapter_asset(
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
+    return scene_package_payload(package)
+
+
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/chapter-assets/{assetId}/duplicate"
+)
+def post_duplicate_chapter_asset(
+    request: Request,
+    chapterId: str,
+    assetId: str,
+) -> dict[str, object]:
+    try:
+        package = store_for_request(request).duplicate_chapter_asset(chapterId, assetId)
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(
+            exc,
+            child_not_found_detail="Chapter Asset not found.",
+        ) from exc
+    return scene_package_payload(package)
+
+
+@scene_package_router.delete(
+    "/chapters/{chapterId}/scene-package/chapter-assets/{assetId}"
+)
+def delete_chapter_asset(
+    request: Request,
+    chapterId: str,
+    assetId: str,
+) -> dict[str, object]:
+    try:
+        package = store_for_request(request).delete_chapter_asset(chapterId, assetId)
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(
+            exc,
+            child_not_found_detail="Chapter Asset not found.",
+        ) from exc
     return scene_package_payload(package)
 
 
@@ -315,6 +424,7 @@ def _target_object_updates(
     # 这里直接透传 description/priority，避免路由层再制造 notes 兼容分叉。
     return [
         {
+            "id": target.id,
             "label": target.label,
             "description": target.description,
             "priority": target.priority,
@@ -343,8 +453,3 @@ def _prompt_confirmation_updates(
     if payload.prompt_confirmations is None:
         return {}
     return payload.prompt_confirmations.model_dump(mode="python", by_alias=False)
-
-def _optional_prompt_snapshot(value: object) -> str | None:
-    if value is None:
-        return None
-    return string_form_value(value, default="")

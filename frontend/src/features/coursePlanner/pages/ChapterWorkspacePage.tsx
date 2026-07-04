@@ -2,170 +2,58 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 
 import {
+  assignCharacterIpToChapter,
+  deleteChapterAsset,
+  deleteCompleteSceneImage,
   fetchChapterScenePackage,
+  importCompleteSceneImageToPipeline,
+  listCharacterIps,
+  listReferenceLibraryImages,
   lockFinalChapterScene,
   saveChapterSceneAssembly,
+  selectChapterReferenceImage,
   selectEmptySceneImage,
   updateChapterScenePrompt,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
+  uploadReferenceLibraryImage,
 } from "../api";
+import { isAssemblyReady } from "../assembly/assemblyReadiness";
 import type {
+  ChapterCastAssignmentInput,
+  ChapterReferenceSelectionInput,
   ChapterScenePromptInput,
   CompleteImageUploadInput,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
+  ReferenceLibraryImageUploadInput,
 } from "../api";
 import { ChapterSceneStudio } from "../components/ChapterSceneStudio";
 import { CoursePlannerPageHeader } from "../components/CoursePlannerChrome";
 import "../components/coursePlanner.css";
 import "../components/coursePlannerPanels.css";
+import "../components/assemblyWorkspace.css";
 import { useCoursePlannerState } from "../hooks/useCoursePlannerState";
 import type {
   Chapter,
-  ChapterSceneAssemblyManifest,
   ChapterScenePackage,
+  CharacterIpProfile,
   CoursePlannerState,
+  ReferenceLibraryImage,
 } from "../types";
 
 type ScenePackageLoadState = "idle" | "loading" | "ready" | "error";
+type CoursePlannerController = ReturnType<typeof useCoursePlannerState>;
+type AsyncOperationRunner = CoursePlannerController["runAsyncOperation"];
 
 export function ChapterWorkspacePage() {
   const { chapterId } = useParams();
   const planner = useCoursePlannerState();
-  const [scenePackage, setScenePackage] = useState<ChapterScenePackage | null>(null);
-  const [loadState, setLoadState] = useState<ScenePackageLoadState>("idle");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const chapter = useMemo(() => findChapter(planner.state, chapterId ?? null), [chapterId, planner.state]);
-  const scenePack = useMemo(
-    () => (chapter ? planner.state.scenePacks.find((pack) => pack.id === chapter.scenePackId) ?? null : null),
-    [chapter, planner.state.scenePacks],
-  );
-
-  const runAsyncOperation = planner.runAsyncOperation;
-
-  useEffect(() => {
-    if (!chapter) {
-      return;
-    }
-    // WHY: Chapter workspace 的路由是唯一上下文入口；进入页面时同步 planner 选中状态，
-    // 避免后续 Task 5 继续复用旧的 board 选中结果，导致数据面板指向别的 chapter。
-    if (planner.state.activeScenePackId !== chapter.scenePackId) {
-      planner.setActiveScenePackId(chapter.scenePackId);
-    }
-    if (planner.state.selectedChapterId !== chapter.id) {
-      planner.setSelectedChapterId(chapter.id);
-    }
-  }, [chapter, planner]);
-
-  const loadScenePackage = useCallback(async () => {
-    if (!chapter) {
-      setScenePackage(null);
-      setLoadState("idle");
-      setErrorMessage(null);
-      return null;
-    }
-    setLoadState("loading");
-    setErrorMessage(null);
-    const nextScenePackage = await runAsyncOperation(
-      `scenePackage:load:${chapter.id}`,
-      () => fetchChapterScenePackage(chapter.id),
-    );
-    if (!nextScenePackage) {
-      setScenePackage(null);
-      setLoadState("error");
-      setErrorMessage("Could not load Chapter Scene Package.");
-      return null;
-    }
-    setScenePackage(nextScenePackage);
-    setLoadState("ready");
-    return nextScenePackage;
-  }, [chapter, runAsyncOperation]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadScenePackage().catch((error: unknown) => {
-      if (cancelled) {
-        return;
-      }
-      setScenePackage(null);
-      setLoadState("error");
-      setErrorMessage(error instanceof Error ? error.message : "Could not load Chapter Scene Package.");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadScenePackage]);
-
-  const applyScenePackage = useCallback(
-    async (operationKey: string, operation: () => Promise<ChapterScenePackage>) => {
-      const nextScenePackage = await runAsyncOperation(operationKey, operation);
-      if (nextScenePackage) {
-        setScenePackage(nextScenePackage);
-        setLoadState("ready");
-      }
-      return nextScenePackage;
-    },
-    [runAsyncOperation],
-  );
-
-  const handleUpdatePrompt = useCallback(
-    async (input: ChapterScenePromptInput) =>
-      chapter
-        ? applyScenePackage(`scenePackage:prompt:${chapter.id}`, () => updateChapterScenePrompt(chapter.id, input))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleUploadEmptySceneImage = useCallback(
-    async (file: File, input: EmptySceneImageUploadInput) =>
-      chapter
-        ? applyScenePackage(`scenePackage:emptyUpload:${chapter.id}`, () => uploadEmptySceneImage(chapter.id, file, input))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleSelectEmptySceneImage = useCallback(
-    async (imageId: string) =>
-      chapter
-        ? applyScenePackage(`scenePackage:emptySelect:${chapter.id}`, () => selectEmptySceneImage(chapter.id, imageId))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleUploadCompleteSceneImage = useCallback(
-    async (file: File, input: CompleteImageUploadInput) =>
-      chapter
-        ? applyScenePackage(`scenePackage:completeUpload:${chapter.id}`, () => uploadCompleteSceneImage(chapter.id, file, input))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleUploadDirectAsset = useCallback(
-    async (file: File, input: DirectChapterAssetUploadInput) =>
-      chapter
-        ? applyScenePackage(`scenePackage:assetUpload:${chapter.id}`, () => uploadDirectChapterAsset(chapter.id, file, input))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleSaveAssembly = useCallback(
-    async (manifest: ChapterSceneAssemblyManifest) =>
-      chapter
-        ? applyScenePackage(`scenePackage:assembly:${chapter.id}`, () => saveChapterSceneAssembly(chapter.id, manifest))
-        : null,
-    [applyScenePackage, chapter],
-  );
-
-  const handleLockFinal = useCallback(
-    async (file: File) =>
-      chapter
-        ? applyScenePackage(`scenePackage:final:${chapter.id}`, () => lockFinalChapterScene(chapter.id, file))
-        : null,
-    [applyScenePackage, chapter],
-  );
+  const { chapter, scenePack } = useChapterContext(planner, chapterId ?? null);
+  const studioData = useChapterStudioData(chapter, planner.runAsyncOperation);
+  const handlers = useChapterStudioMutations(chapter, planner.runAsyncOperation, studioData);
+  const { characterIps, errorMessage, loadState, referenceImages, scenePackage } = studioData;
 
   if (!chapter || !scenePack) {
     return (
@@ -204,18 +92,220 @@ export function ChapterWorkspacePage() {
           chapter={chapter}
           scenePack={scenePack}
           scenePackage={scenePackage}
+          characterIps={characterIps}
+          referenceImages={referenceImages}
           asyncStatus={planner.state.asyncStatus}
-          onUpdatePrompt={handleUpdatePrompt}
-          onUploadEmptySceneImage={handleUploadEmptySceneImage}
-          onSelectEmptySceneImage={handleSelectEmptySceneImage}
-          onUploadCompleteSceneImage={handleUploadCompleteSceneImage}
-          onUploadDirectAsset={handleUploadDirectAsset}
-          onSaveAssembly={handleSaveAssembly}
-          onLockFinal={handleLockFinal}
+          onAssignCharacterIp={handlers.handleAssignCharacterIp}
+          onSelectReferenceImage={handlers.handleSelectReferenceImage}
+          onUpdatePrompt={handlers.handleUpdatePrompt}
+          onUploadReferenceImage={handlers.handleUploadReferenceImage}
+          onUploadEmptySceneImage={handlers.handleUploadEmptySceneImage}
+          onSelectEmptySceneImage={handlers.handleSelectEmptySceneImage}
+          onUploadCompleteSceneImage={handlers.handleUploadCompleteSceneImage}
+          onDeleteCompleteSceneImage={handlers.handleDeleteCompleteSceneImage}
+          onImportCompleteImage={handlers.handleImportCompleteImage}
+          onUploadDirectAsset={handlers.handleUploadDirectAsset}
+          onDeleteChapterAsset={handlers.handleDeleteChapterAsset}
+          onSaveAssembly={handlers.handleSaveAssembly}
+          onLockFinal={handlers.handleLockFinal}
         />
       ) : null}
     </main>
   );
+}
+
+function useChapterContext(planner: CoursePlannerController, chapterId: string | null) {
+  const chapter = useMemo(() => findChapter(planner.state, chapterId), [chapterId, planner.state]);
+  const scenePack = useMemo(
+    () => (chapter ? planner.state.scenePacks.find((pack) => pack.id === chapter.scenePackId) ?? null : null),
+    [chapter, planner.state.scenePacks],
+  );
+
+  useEffect(() => {
+    if (!chapter) {
+      return;
+    }
+    // WHY: Chapter workspace 的路由是唯一上下文入口；进入页面时同步 planner 选中状态，
+    // 避免 board 选中结果滞后，导致数据面板指向别的 chapter。
+    if (planner.state.activeScenePackId !== chapter.scenePackId) {
+      planner.setActiveScenePackId(chapter.scenePackId);
+    }
+    if (planner.state.selectedChapterId !== chapter.id) {
+      planner.setSelectedChapterId(chapter.id);
+    }
+  }, [chapter, planner]);
+
+  return { chapter, scenePack };
+}
+
+function useChapterStudioData(chapter: Chapter | null, runAsyncOperation: AsyncOperationRunner) {
+  const [scenePackage, setScenePackage] = useState<ChapterScenePackage | null>(null);
+  const [characterIps, setCharacterIps] = useState<CharacterIpProfile[]>([]);
+  const [referenceImages, setReferenceImages] = useState<ReferenceLibraryImage[]>([]);
+  const [loadState, setLoadState] = useState<ScenePackageLoadState>("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const loadScenePackage = useCallback(async () => {
+    if (!chapter) {
+      setScenePackage(null);
+      setCharacterIps([]);
+      setReferenceImages([]);
+      setLoadState("idle");
+      setErrorMessage(null);
+      return null;
+    }
+    setLoadState("loading");
+    setErrorMessage(null);
+    const nextStudioData = await runAsyncOperation(`scenePackage:load:${chapter.id}`, () =>
+      Promise.all([
+        fetchChapterScenePackage(chapter.id),
+        listCharacterIps(),
+        listReferenceLibraryImages(),
+      ]));
+    if (!nextStudioData) {
+      setScenePackage(null);
+      setLoadState("error");
+      setErrorMessage("Could not load Chapter Scene Package.");
+      return null;
+    }
+    const [nextScenePackage, nextCharacterIps, nextReferenceImages] = nextStudioData;
+    setScenePackage(nextScenePackage);
+    setCharacterIps(nextCharacterIps);
+    setReferenceImages(nextReferenceImages);
+    setLoadState("ready");
+    return nextScenePackage;
+  }, [chapter, runAsyncOperation]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadScenePackage().catch((error: unknown) => {
+      if (cancelled) {
+        return;
+      }
+      setScenePackage(null);
+      setLoadState("error");
+      setErrorMessage(error instanceof Error ? error.message : "Could not load Chapter Scene Package.");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadScenePackage]);
+
+  const applyScenePackage = useCallback(async (operationKey: string, operation: () => Promise<ChapterScenePackage>) => {
+    const nextScenePackage = await runAsyncOperation(operationKey, operation);
+    if (nextScenePackage) {
+      setScenePackage(nextScenePackage);
+      setLoadState("ready");
+    }
+    return nextScenePackage;
+  }, [runAsyncOperation]);
+
+  return {
+    applyScenePackage,
+    characterIps,
+    errorMessage,
+    loadState,
+    referenceImages,
+    scenePackage,
+    setLoadState,
+    setReferenceImages,
+    setScenePackage,
+  };
+}
+
+function useChapterStudioMutations(
+  chapter: Chapter | null,
+  runAsyncOperation: AsyncOperationRunner,
+  studioData: ReturnType<typeof useChapterStudioData>,
+) {
+  const { applyScenePackage, setLoadState, setReferenceImages, setScenePackage } = studioData;
+  const withChapter = useCallback(
+    (key: string, operation: (chapter: Chapter) => Promise<ChapterScenePackage>) =>
+      chapter ? applyScenePackage(`scenePackage:${key}:${chapter.id}`, () => operation(chapter)) : Promise.resolve(null),
+    [applyScenePackage, chapter],
+  );
+  const handleUpdatePrompt = useCallback(
+    (input: ChapterScenePromptInput) => withChapter("prompt", (item) => updateChapterScenePrompt(item.id, input)),
+    [withChapter],
+  );
+  const handleSelectReferenceImage = useCallback(
+    (input: ChapterReferenceSelectionInput) => withChapter("referenceSelect", (item) => selectChapterReferenceImage(item.id, input)),
+    [withChapter],
+  );
+  const handleAssignCharacterIp = useCallback(
+    (input: ChapterCastAssignmentInput) => withChapter("castAssign", (item) => assignCharacterIpToChapter(item.id, input)),
+    [withChapter],
+  );
+  const handleUploadEmptySceneImage = useCallback(
+    (file: File, input: EmptySceneImageUploadInput) => withChapter("emptyUpload", (item) => uploadEmptySceneImage(item.id, file, input)),
+    [withChapter],
+  );
+  const handleSelectEmptySceneImage = useCallback(
+    (imageId: string) => withChapter("emptySelect", (item) => selectEmptySceneImage(item.id, imageId)),
+    [withChapter],
+  );
+  const handleUploadCompleteSceneImage = useCallback(
+    (file: File, input: CompleteImageUploadInput) => withChapter("completeUpload", (item) => uploadCompleteSceneImage(item.id, file, input)),
+    [withChapter],
+  );
+  const handleDeleteCompleteSceneImage = useCallback(
+    (completeImageId: string) => withChapter("completeDelete", (item) => deleteCompleteSceneImage(item.id, completeImageId)),
+    [withChapter],
+  );
+  const handleUploadDirectAsset = useCallback(
+    (file: File, input: DirectChapterAssetUploadInput) => withChapter("assetUpload", (item) => uploadDirectChapterAsset(item.id, file, input)),
+    [withChapter],
+  );
+  const handleDeleteChapterAsset = useCallback(
+    (assetId: string) => withChapter("assetDelete", (item) => deleteChapterAsset(item.id, assetId)),
+    [withChapter],
+  );
+  const handleSaveAssembly = useCallback(
+    (manifest: ChapterScenePackage["assembly"]) => withChapter("assemblySave", (item) => saveChapterSceneAssembly(item.id, manifest)),
+    [withChapter],
+  );
+  const handleLockFinal = useCallback(
+    (file: File) => withChapter("final", (item) => lockFinalChapterScene(item.id, file)),
+    [withChapter],
+  );
+  const handleUploadReferenceImage = useCallback(async (file: File, input: ReferenceLibraryImageUploadInput) => {
+    const referenceImage = await runAsyncOperation("scenePackage:referenceUpload", () => uploadReferenceLibraryImage(file, input));
+    if (referenceImage) {
+      setReferenceImages((current) => [...current.filter((item) => item.id !== referenceImage.id), referenceImage]);
+    }
+    return referenceImage;
+  }, [runAsyncOperation, setReferenceImages]);
+  const handleImportCompleteImage = useCallback(async (completeImageId: string) => {
+    if (!chapter) {
+      return null;
+    }
+    const result = await runAsyncOperation(
+      `scenePackage:completeImport:${chapter.id}:${completeImageId}`,
+      () => importCompleteSceneImageToPipeline(chapter.id, completeImageId),
+    );
+    if (!result) {
+      return null;
+    }
+    setScenePackage(result.scenePackage);
+    setLoadState("ready");
+    return result.scenePackage;
+  }, [chapter, runAsyncOperation, setLoadState, setScenePackage]);
+
+  return {
+    handleAssignCharacterIp,
+    handleImportCompleteImage,
+    handleLockFinal,
+    handleDeleteChapterAsset,
+    handleDeleteCompleteSceneImage,
+    handleSelectEmptySceneImage,
+    handleSelectReferenceImage,
+    handleSaveAssembly,
+    handleUpdatePrompt,
+    handleUploadCompleteSceneImage,
+    handleUploadDirectAsset,
+    handleUploadEmptySceneImage,
+    handleUploadReferenceImage,
+  };
 }
 
 function findChapter(state: CoursePlannerState, chapterId: string | null): Chapter | null {
@@ -227,7 +317,7 @@ function findChapter(state: CoursePlannerState, chapterId: string | null): Chapt
     .find((chapter) => chapter.id === chapterId) ?? null;
 }
 
-function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage: ChapterScenePackage | null): string {
+export function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage: ChapterScenePackage | null): string {
   if (loadState === "loading" && !scenePackage) {
     return "Loading";
   }
@@ -240,7 +330,7 @@ function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage: Chapt
   if (scenePackage.final_scene) {
     return "Final locked";
   }
-  if (scenePackage.assembly.updated_at) {
+  if (isAssemblyReady(scenePackage)) {
     return "Assembly ready";
   }
   if (scenePackage.complete_images.length > 0) {
@@ -252,7 +342,7 @@ function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage: Chapt
   return "Prompt drafted";
 }
 
-function studioStatusTone(
+export function studioStatusTone(
   loadState: ScenePackageLoadState,
   scenePackage: ChapterScenePackage | null,
 ): "neutral" | "warning" | "success" | "danger" {
@@ -262,7 +352,7 @@ function studioStatusTone(
   if (scenePackage?.final_scene) {
     return "success";
   }
-  if (scenePackage?.assembly.updated_at || scenePackage?.empty_scene_images.length) {
+  if ((scenePackage && isAssemblyReady(scenePackage)) || scenePackage?.empty_scene_images.length) {
     return "warning";
   }
   return "neutral";

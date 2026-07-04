@@ -120,7 +120,7 @@ export async function confirmMergeDialog(user: ReturnType<typeof userEvent.setup
   await user.click(within(dialog).getByRole("button", { name: /create merged asset/i }));
 }
 
-export { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+export { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 export { default as userEvent } from "@testing-library/user-event";
 export { describe, expect, it, vi } from "vitest";
 

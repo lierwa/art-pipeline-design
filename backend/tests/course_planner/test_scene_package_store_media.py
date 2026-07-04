@@ -5,14 +5,14 @@ from pathlib import Path
 import pytest
 
 from art_pipeline.course_planner.scene_package_errors import (
-    ScenePackagePreconditionError,
     ScenePackageValidationError,
     UnknownEmptySceneImageError,
 )
+from art_pipeline.course_planner.scene_package_models import (
+    ChapterSceneAssembly,
+)
 from scene_package_store_helpers import (
-    make_manifest,
     make_png_bytes,
-    make_store_with_chapter_asset,
     make_store_with_chapter,
     make_store_with_complete_image,
     make_store_with_empty_scene_image,
@@ -56,8 +56,9 @@ def test_select_empty_scene_image_sets_current_without_locking_complete_images(
     selected = store.select_empty_scene_image(chapter.id, image.id)
 
     assert selected.current_empty_scene_image_id == image.id
-    assert selected.assembly.empty_scene_image_id == image.id
-    assert selected.assembly.empty_scene_size == {"width": 72, "height": 48}
+    assert selected.assembly.empty_scene_image_id is None
+    assert selected.assembly.empty_scene_size is None
+    assert selected.assembly.updated_at is None
     assert selected.empty_scene_images[0].status == "available"
 
 
@@ -68,7 +69,7 @@ def test_select_empty_scene_image_rejects_unknown_id(tmp_path: Path) -> None:
         store.select_empty_scene_image(chapter.id, "empty_scene_999")
 
 
-def test_replacing_selected_empty_scene_historicizes_complete_images_and_clears_placements(
+def test_replacing_selected_empty_scene_preserves_source_history_and_assembly(
     tmp_path: Path,
 ) -> None:
     store, chapter, old_image, new_image = make_store_with_two_empty_scene_images_and_assembly(
@@ -78,19 +79,56 @@ def test_replacing_selected_empty_scene_historicizes_complete_images_and_clears_
     package = store.select_empty_scene_image(chapter.id, new_image.id)
 
     assert package.current_empty_scene_image_id == new_image.id
-    assert package.assembly.empty_scene_image_id == new_image.id
+    assert package.assembly.empty_scene_image_id == old_image.id
     assert package.assembly.empty_scene_size == {
-        "width": new_image.width,
-        "height": new_image.height,
+        "width": old_image.width,
+        "height": old_image.height,
     }
-    assert package.assembly.placements == []
-    assert package.assembly.groups == []
-    assert package.assembly.layer_order == []
+    assert package.assembly.placements
+    assert package.assembly.groups
+    assert package.assembly.layer_order
     assert [
         image.status
         for image in package.complete_images
         if image.empty_scene_image_id == old_image.id
-    ] == ["historical"]
+    ] == ["active"]
+
+
+def test_saving_after_empty_scene_replacement_updates_manifest_and_preserves_assets_plus_runs(
+    tmp_path: Path,
+) -> None:
+    store, chapter, old_image, new_image = make_store_with_two_empty_scene_images_and_assembly(
+        tmp_path
+    )
+    selected = store.select_empty_scene_image(chapter.id, new_image.id)
+    complete_image = selected.complete_images[0]
+    store.record_complete_image_import_run(
+        chapter.id,
+        complete_image.id,
+        run_id="run_alignment_review",
+        run_status="ready",
+    )
+
+    saved = store.save_chapter_scene_assembly(
+        chapter.id,
+        ChapterSceneAssembly.model_validate({
+            **selected.assembly.model_dump(mode="json"),
+            "empty_scene_image_id": new_image.id,
+            "empty_scene_size": {"width": new_image.width, "height": new_image.height},
+        }),
+    )
+
+    assert saved.current_empty_scene_image_id == new_image.id
+    assert saved.assembly.empty_scene_image_id == new_image.id
+    assert saved.assembly.empty_scene_size == {
+        "width": new_image.width,
+        "height": new_image.height,
+    }
+    assert saved.assembly.updated_at is not None
+    assert saved.chapter_assets == selected.chapter_assets
+    assert saved.complete_images[0].id == complete_image.id
+    assert saved.complete_images[0].pipeline_run_id == "run_alignment_review"
+    assert saved.complete_images[0].pipeline_run_status == "ready"
 
 
 def test_add_complete_scene_image_without_selected_empty_scene_is_allowed(
@@ -185,10 +223,10 @@ def test_add_complete_scene_image_rejects_unknown_reference_ids_as_validation_er
         )
 
 
-def test_associate_complete_image_with_pipeline_run(tmp_path: Path) -> None:
+def test_record_complete_image_import_run(tmp_path: Path) -> None:
     store, chapter, image = make_store_with_complete_image(tmp_path)
 
-    package = store.associate_complete_image_run(
+    package = store.record_complete_image_import_run(
         chapter.id,
         image.id,
         run_id="run_123",
@@ -221,118 +259,24 @@ def test_add_direct_chapter_asset_materializes_copy(tmp_path: Path) -> None:
     assert asset.storage_path == f"assets/{asset.id}.png"
     assert asset.media_type == "image/png"
     assert asset.lineage.source_kind == "direct_upload"
-    assert asset.lineage.source_run_id is None
     assert asset.linked_target_object_id == "target_object_001"
     assert asset.status == "available"
     assert asset_path.read_bytes() == image_bytes
 
 
-def test_add_chapter_asset_from_run_asset_materializes_copy(tmp_path: Path) -> None:
-    store, chapter, image = make_store_with_complete_image(tmp_path)
-    image_bytes = make_png_bytes(width=32, height=32)
-
-    package = store.add_chapter_asset_from_run_asset(
-        chapter.id,
-        source_run_id="run_123",
-        source_run_asset_id="asset_456",
-        source_complete_image_id=image.id,
-        image_bytes=image_bytes,
-        original_filename="nested/run/book.png",
-        display_name="book",
-        linked_target_object_id="target_object_001",
-    )
-
-    asset = package.chapter_assets[0]
-    asset_path = scene_package_json_path(tmp_path, chapter).parent / asset.storage_path
-
-    assert asset.lineage.source_kind == "pipeline_run_asset"
-    assert asset.lineage.source_run_id == "run_123"
-    assert asset.lineage.source_run_asset_id == "asset_456"
-    assert asset.lineage.source_complete_image_id == image.id
-    assert asset_path.read_bytes() == image_bytes
-
-
-def test_add_chapter_asset_from_run_asset_rejects_duplicate_available_source_asset(
+def test_add_direct_chapter_asset_rejects_unknown_target_object(
     tmp_path: Path,
 ) -> None:
-    store, chapter, image = make_store_with_complete_image(tmp_path)
-    store.add_chapter_asset_from_run_asset(
-        chapter.id,
-        source_run_id="run_123",
-        source_run_asset_id="asset_456",
-        source_complete_image_id=image.id,
-        image_bytes=make_png_bytes(width=32, height=32),
-        original_filename="book.png",
-        display_name="book",
-    )
-
-    with pytest.raises(ValueError, match="source_run_asset_id"):
-        store.add_chapter_asset_from_run_asset(
-            chapter.id,
-            source_run_id="run_123",
-            source_run_asset_id="asset_456",
-            source_complete_image_id=image.id,
-            image_bytes=make_png_bytes(width=24, height=24),
-            original_filename="book-duplicate.png",
-            display_name="book copy",
-        )
-
-
-def test_lock_final_scene_requires_selected_empty_scene(tmp_path: Path) -> None:
-    store, chapter = make_store_with_prompt(tmp_path)
-
-    with pytest.raises(
-        ScenePackagePreconditionError,
-        match="selected Empty Scene Image",
-    ):
-        store.lock_final_chapter_scene(
-            chapter.id,
-            image_bytes=make_png_bytes(width=96, height=64),
-            original_filename="final.png",
-        )
-
-
-def test_lock_final_scene_requires_placed_asset(tmp_path: Path) -> None:
     store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
 
-    with pytest.raises(
-        ScenePackagePreconditionError,
-        match="placed Scene Asset",
-    ):
-        store.lock_final_chapter_scene(
+    with pytest.raises(ScenePackageValidationError, match="Unknown target object id"):
+        store.add_direct_chapter_asset(
             chapter.id,
-            image_bytes=make_png_bytes(width=96, height=64),
-            original_filename="final.png",
+            image_bytes=make_png_bytes(width=32, height=32),
+            original_filename="lamp.png",
+            display_name="lamp",
+            linked_target_object_id="target_object_missing",
         )
-
-
-def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:
-    store, chapter, asset = make_store_with_chapter_asset(tmp_path)
-    package = store.read_chapter_scene_package(chapter.id)
-    store.save_chapter_scene_assembly(
-        chapter.id,
-        make_manifest(
-            asset_id=asset.id,
-            empty_scene_image_id=package.current_empty_scene_image_id or "empty_scene_001",
-            empty_scene_size=package.assembly.empty_scene_size,
-        ),
-    )
-
-    locked = store.lock_final_chapter_scene(
-        chapter.id,
-        image_bytes=make_png_bytes(width=120, height=80),
-        original_filename="final.png",
-    )
-
-    assert locked.final_scene is not None
-    assert locked.final_scene.empty_scene_image_id == locked.current_empty_scene_image_id
-    assert locked.final_scene.assembly_snapshot.empty_scene_image_id == (
-        locked.current_empty_scene_image_id
-    )
-    assert locked.final_scene.reference_snapshot.current_empty_scene_image_id == (
-        locked.current_empty_scene_image_id
-    )
-    assert locked.final_scene.storage_path.startswith("final_scene/")
 
 
 @pytest.mark.parametrize(

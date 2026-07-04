@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackageValidationError,
@@ -15,15 +14,17 @@ from art_pipeline.course_planner.scene_package_media_store import (
 )
 from art_pipeline.course_planner.scene_package_models import (
     AvoidObjectItem,
+    ChapterCastAssignment,
+    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterSceneAssemblyManifest,
     ChapterScenePackage,
     ChapterScenePrompt,
-    CompleteSceneImage,
     EmptySceneImage,
     PromptReadinessConfirmation,
     TargetObjectItem,
     validate_assembly_manifest,
+    validate_assembly_manifest_structure,
 )
 from art_pipeline.course_planner.store_common import require_match, validate_slug
 from art_pipeline.workspace.store import utc_now
@@ -65,7 +66,7 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         normalized_targets = (
             current.target_objects
             if target_objects is None
-            else self._normalize_target_objects(target_objects)
+            else self._normalize_target_objects(target_objects, current.target_objects)
         )
         normalized_avoid_objects = (
             current.avoid_objects
@@ -77,8 +78,8 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             if prompt_confirmations is None
             else PromptReadinessConfirmation.model_validate(prompt_confirmations)
         )
-        # WHY: Task 6 的库路由/校验未落地前，prompt PATCH 只能更新文字与 readiness；
-        # reference_selections 必须继续由已验证的数据源写入，避免默认快照阶段拿到裸 id 后失真。
+        # WHY: prompt PATCH 只更新文字与 readiness；角色和参考图选择必须走库路由，
+        # 这样 Chapter 的 cast/reference 事实不会和 prompt 文本编辑分叉成两套权威来源。
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
@@ -87,17 +88,122 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
                     "avoid_objects": normalized_avoid_objects,
                     "prompt_confirmations": normalized_confirmations,
                 }
-            )
+            ),
+            validate_assembly=False,
+        )
+
+    def write_chapter_reference_selection(
+        self,
+        chapter_id: str,
+        *,
+        reference_image_id: str,
+        prompt_role: str,
+    ) -> ChapterScenePackage:
+        current, _ = self._load_scene_package_for_write(chapter_id)
+        self._require_reference_image_ids(
+            [reference_image_id],
+            singular_message=True,
+        )
+        existing = next(
+            (
+                selection
+                for selection in current.reference_selections
+                if selection.reference_image_id == reference_image_id
+            ),
+            None,
+        )
+        selection = ChapterReferenceSelection(
+            id=(
+                existing.id
+                if existing is not None
+                else _next_reference_selection_id(current)
+            ),
+            reference_image_id=reference_image_id,
+            prompt_role=prompt_role,
+        )
+        updated_selections = (
+            [
+                selection
+                if item.reference_image_id == reference_image_id
+                else item
+                for item in current.reference_selections
+            ]
+            if existing is not None
+            else [*current.reference_selections, selection]
+        )
+        # WHY: reference_selections 是 Chapter 对库图片用途的唯一事实源；
+        # prompt PATCH 不接收裸引用 id，避免文字编辑和库选择分叉出两套权威状态。
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"reference_selections": updated_selections}),
+            validate_assembly=False,
+        )
+
+    def write_chapter_cast_assignment(
+        self,
+        chapter_id: str,
+        *,
+        character_ip_id: str,
+        role_label: str,
+        action_intent: str,
+        reference_image_ids: list[str] | None,
+    ) -> ChapterScenePackage:
+        current, _ = self._load_scene_package_for_write(chapter_id)
+        character = self._require_character_ip(character_ip_id)
+        resolved_reference_ids = (
+            list(character.reference_image_ids)
+            if reference_image_ids is None
+            else list(reference_image_ids)
+        )
+        self._require_reference_image_ids(resolved_reference_ids)
+        existing = next(
+            (
+                assignment
+                for assignment in current.cast_assignments
+                if assignment.character_ip_id == character_ip_id
+                and assignment.role_label == role_label
+            ),
+            None,
+        )
+        assignment = ChapterCastAssignment(
+            id=(
+                existing.id
+                if existing is not None
+                else _next_cast_assignment_id(current)
+            ),
+            character_ip_id=character_ip_id,
+            role_label=role_label,
+            action_intent=action_intent,
+            reference_image_ids=resolved_reference_ids,
+        )
+        updated_assignments = (
+            [
+                assignment
+                if item.character_ip_id == character_ip_id
+                and item.role_label == role_label
+                else item
+                for item in current.cast_assignments
+            ]
+            if existing is not None
+            else [*current.cast_assignments, assignment]
+        )
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"cast_assignments": updated_assignments}),
+            validate_assembly=False,
         )
 
     def write_chapter_scene_package(
         self,
         package: ChapterScenePackage,
+        *,
+        validate_assembly: bool = True,
     ) -> ChapterScenePackage:
         chapter, scene_pack_id = self._find_chapter(package.chapter_id)
         require_match(package.chapter_id, chapter.id, "Scene package chapter_id")
         validated = ChapterScenePackage.model_validate(package.model_dump(mode="json"))
-        _validate_scene_package_assembly(validated)
+        if validate_assembly:
+            # WHY: 直接写入整包是维护/迁移边界，默认仍走 readiness gate；
+            # autosave/WIP 的正常作者路径必须调用 save_chapter_scene_assembly 的 structure gate。
+            _validate_scene_package_assembly(validated)
         self._write_model(
             self._scene_package_json_path(scene_pack_id, chapter.id),
             validated,
@@ -117,8 +223,12 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         normalized_manifest = ChapterSceneAssembly.model_validate(
             manifest.model_dump(mode="json")
         ).model_copy(update={"updated_at": utc_now()})
-        return self.write_chapter_scene_package(
+        _validate_scene_package_assembly_structure(
             current.model_copy(update={"assembly": normalized_manifest})
+        )
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"assembly": normalized_manifest}),
+            validate_assembly=False,
         )
 
     def select_empty_scene_image(
@@ -139,37 +249,15 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             raise UnknownEmptySceneImageError(
                 f"Unknown empty scene image id: {image_id}"
             )
-        replacing_canvas = (
-            current.current_empty_scene_image_id is not None
-            and current.current_empty_scene_image_id != image_id
-            and bool(current.assembly.placements)
-        )
-        next_assembly = current.assembly.model_copy(
-            update={
-                "empty_scene_image_id": image.id,
-                "empty_scene_size": {"width": image.width, "height": image.height},
-                "placements": [] if replacing_canvas else current.assembly.placements,
-                "groups": [] if replacing_canvas else current.assembly.groups,
-                "layer_order": [] if replacing_canvas else current.assembly.layer_order,
-                "updated_at": utc_now(),
-            }
-        )
-        updated_complete_images = (
-            self._historicalize_complete_images_for_replaced_empty_scene(
-                current.complete_images,
-                replaced_empty_scene_image_id=current.current_empty_scene_image_id,
-            )
-            if replacing_canvas
-            else current.complete_images
-        )
+        # WHY: 选择 current empty scene 只更新作者当前背景选择；
+        # 已保存的 assembly manifest 必须保留上次显式保存的快照，直到作者重新审阅并 save。
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
                     "current_empty_scene_image_id": image.id,
-                    "assembly": next_assembly,
-                    "complete_images": updated_complete_images,
                 }
-            )
+            ),
+            validate_assembly=False,
         )
 
     def _scene_package_root_path(self, scene_pack_id: str, chapter_id: str) -> Path:
@@ -221,21 +309,34 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
     def _normalize_target_objects(
         self,
         target_objects: list[dict[str, str]],
+        current_target_objects: list[TargetObjectItem],
     ) -> list[TargetObjectItem]:
-        return [
-            TargetObjectItem.model_validate(
-                {
-                    "id": target.get("id") or f"target_object_{index:03d}",
-                    "label": target["label"],
-                    # WHY: scene package 的 target object 协议以 description/priority
-                    # 为单一事实源；这里直接落盘最终合同字段，避免 API 层和存储层
-                    # 各自再维护一套 notes 兼容语义。
-                    "description": target.get("description", ""),
-                    "priority": target.get("priority", "required"),
-                }
+        existing_by_label = _unique_target_objects_by_label(current_target_objects)
+        used_ids: set[str] = set()
+        normalized: list[TargetObjectItem] = []
+        for target in target_objects:
+            label = target["label"]
+            target_id = target.get("id") or existing_by_label.get(label)
+            if not target_id:
+                target_id = _next_target_object_id(current_target_objects, used_ids)
+            if target_id in used_ids:
+                raise ScenePackageValidationError(
+                    f"Duplicate target object id in prompt update: {target_id}"
+                )
+            used_ids.add(target_id)
+            normalized.append(
+                TargetObjectItem.model_validate(
+                    {
+                        "id": target_id,
+                        "label": label,
+                        # WHY: target object id 必须稳定，asset.linked_target_object_id 才不会在
+                        # 目标列表重排/插入后错绑；label 语义匹配是无显式 id 的兼容路径。
+                        "description": target.get("description", ""),
+                        "priority": target.get("priority", "required"),
+                    }
+                )
             )
-            for index, target in enumerate(target_objects, start=1)
-        ]
+        return normalized
 
     def _normalize_avoid_objects(
         self,
@@ -252,23 +353,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             for index, target in enumerate(avoid_objects, start=1)
         ]
 
-    def _historicalize_complete_images_for_replaced_empty_scene(
-        self,
-        complete_images: Sequence[CompleteSceneImage],
-        *,
-        replaced_empty_scene_image_id: str | None,
-    ) -> list[CompleteSceneImage]:
-        if replaced_empty_scene_image_id is None:
-            return list(complete_images)
-        return [
-            complete.model_copy(update={"status": "historical"})
-            if complete.empty_scene_image_id == replaced_empty_scene_image_id
-            and complete.status == "active"
-            else complete
-            for complete in complete_images
-        ]
-
-
 def _validate_scene_package_assembly(package: ChapterScenePackage) -> None:
     errors = validate_assembly_manifest(package)
     if not errors:
@@ -276,3 +360,46 @@ def _validate_scene_package_assembly(package: ChapterScenePackage) -> None:
     raise ScenePackageValidationError(
         "Invalid assembly manifest: " + "; ".join(errors)
     )
+
+
+def _validate_scene_package_assembly_structure(package: ChapterScenePackage) -> None:
+    errors = validate_assembly_manifest_structure(package)
+    if not errors:
+        return
+    raise ScenePackageValidationError(
+        "Invalid assembly manifest: " + "; ".join(errors)
+    )
+
+
+def _next_reference_selection_id(package: ChapterScenePackage) -> str:
+    return f"reference_selection_{len(package.reference_selections) + 1:03d}"
+
+
+def _next_cast_assignment_id(package: ChapterScenePackage) -> str:
+    return f"cast_assignment_{len(package.cast_assignments) + 1:03d}"
+
+
+def _unique_target_objects_by_label(
+    target_objects: list[TargetObjectItem],
+) -> dict[str, str]:
+    counts: dict[str, int] = {}
+    for target in target_objects:
+        counts[target.label] = counts.get(target.label, 0) + 1
+    return {
+        target.label: target.id
+        for target in target_objects
+        if counts[target.label] == 1
+    }
+
+
+def _next_target_object_id(
+    current_target_objects: list[TargetObjectItem],
+    used_ids: set[str],
+) -> str:
+    existing_ids = {target.id for target in current_target_objects}
+    counter = 1
+    while True:
+        candidate = f"target_object_{counter:03d}"
+        if candidate not in existing_ids and candidate not in used_ids:
+            return candidate
+        counter += 1

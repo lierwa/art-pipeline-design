@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackagePreconditionError,
+    UnknownCompleteSceneImageError,
 )
 from art_pipeline.course_planner.scene_package_media import read_scene_package_png_size
 from art_pipeline.course_planner.scene_package_models import ChapterScenePackage
@@ -67,6 +68,53 @@ def import_final_chapter_scene_to_pipeline(
             "target_object_labels": detection_vocabulary,
         },
         png_label="Final chapter scene image",
+    )
+
+
+def import_complete_scene_image_to_pipeline(
+    *,
+    planner_store: CoursePlannerStore,
+    workspace_root: Path,
+    chapter_id: str,
+    complete_image_id: str,
+) -> CoursePlannerImportResult:
+    package = planner_store.read_chapter_scene_package(chapter_id)
+    complete_image = next(
+        (image for image in package.complete_images if image.id == complete_image_id),
+        None,
+    )
+    if complete_image is None:
+        raise UnknownCompleteSceneImageError(
+            f"Unknown complete scene image id: {complete_image_id}"
+        )
+    if complete_image.status == "deleted":
+        raise ScenePackagePreconditionError(
+            f"Complete scene image {complete_image_id} has been deleted."
+        )
+
+    source_image_path, _ = planner_store.read_chapter_scene_package_media(
+        chapter_id,
+        "complete_images",
+        complete_image.id,
+    )
+    detection_vocabulary = _target_object_labels(package)
+    return _create_workspace_run_from_png(
+        workspace_root=workspace_root,
+        source_image_path=source_image_path,
+        source_filename=f"{chapter_id}_{complete_image.id}.png",
+        title=f"{chapter_id} {complete_image.id}",
+        detection_vocabulary=detection_vocabulary,
+        scene_context={
+            "source": "course_planner",
+            "chapter_id": chapter_id,
+            "complete_scene_image_id": complete_image.id,
+            "complete_scene_storage_path": complete_image.storage_path,
+            # WHY: complete image 导入必须绑定它生成时的 empty scene 快照；
+            # 不能读取 chapter 当前选择，否则替换画布后旧图会被误关联到新画布。
+            "selected_empty_scene_image_id": complete_image.empty_scene_image_id,
+            "target_object_labels": detection_vocabulary,
+        },
+        png_label="Complete scene image",
     )
 
 

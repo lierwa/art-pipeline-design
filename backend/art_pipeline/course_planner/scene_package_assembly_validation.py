@@ -18,7 +18,7 @@ def frontmost_layer_id(package: ChapterScenePackage) -> str | None:
     return package.assembly.layer_order[0]
 
 
-def validate_assembly_manifest(package: ChapterScenePackage) -> list[str]:
+def validate_assembly_manifest_structure(package: ChapterScenePackage) -> list[str]:
     errors: list[str] = []
     errors.extend(_empty_scene_reference_errors(package))
     errors.extend(_placement_asset_reference_errors(package))
@@ -37,6 +37,18 @@ def validate_assembly_manifest(package: ChapterScenePackage) -> list[str]:
         )
     )
     return errors
+
+
+def validate_assembly_manifest_readiness(package: ChapterScenePackage) -> list[str]:
+    errors = validate_assembly_manifest_structure(package)
+    errors.extend(_target_object_coverage_errors(package))
+    return errors
+
+
+def validate_assembly_manifest(package: ChapterScenePackage) -> list[str]:
+    # WHY: 历史调用方把 validate_assembly_manifest 当作 ready gate 使用；
+    # 保留这个导出语义，新的 autosave/WIP 保存路径显式调用 structure 校验，避免把半成品误拦在存储边界。
+    return validate_assembly_manifest_readiness(package)
 
 
 def _empty_scene_reference_errors(package: ChapterScenePackage) -> list[str]:
@@ -65,6 +77,40 @@ def _placement_asset_reference_errors(package: ChapterScenePackage) -> list[str]
                 f"{placement.id} references unknown or unavailable asset_id: {placement.asset_id}"
             )
     return errors
+
+
+def _target_object_coverage_errors(package: ChapterScenePackage) -> list[str]:
+    if not package.target_objects:
+        return []
+    available_assets = {
+        asset.id: asset
+        for asset in package.chapter_assets
+        if asset.status == "available"
+    }
+    covered_target_ids = {
+        linked_target_object_id
+        for placement in package.assembly.placements
+        if (
+            (asset := available_assets.get(placement.asset_id)) is not None
+            and (linked_target_object_id := asset.linked_target_object_id) is not None
+        )
+    }
+    missing_targets = [
+        target
+        for target in package.target_objects
+        if target.id not in covered_target_ids
+    ]
+    if not missing_targets:
+        return []
+    # WHY: Assembly Ready 只能由“已摆放的 Chapter Asset 真实覆盖 target object”决定；
+    # 备注/历史 exemption 不再作为第二事实源，否则 Lock Final 会绕过拼图本身。
+    missing_target_summary = ", ".join(
+        f"{target.id} ({target.label})" for target in missing_targets
+    )
+    return [
+        "Assembly manifest is missing required target object coverage: "
+        + missing_target_summary
+    ]
 
 
 def _layer_order_errors(

@@ -20,6 +20,7 @@ from art_pipeline.course_planner.scene_package_models import (
     EmptySceneImage,
     FinalChapterScene,
     ImageReferenceSnapshot,
+    TargetObjectExemption,
 )
 from scene_package_model_helpers import (
     make_chapter_asset,
@@ -39,6 +40,7 @@ def test_scene_package_defaults_to_clean_studio_state() -> None:
     assert package.cast_assignments == []
     assert package.reference_selections == []
     assert package.avoid_objects == []
+    assert package.target_object_exemptions == []
 
 
 def test_complete_image_does_not_require_empty_scene_image_id() -> None:
@@ -58,17 +60,50 @@ def test_complete_image_does_not_require_empty_scene_image_id() -> None:
     assert image.status == "active"
 
 
-def test_direct_asset_lineage_is_distinct_from_run_asset_lineage() -> None:
+def test_asset_lineage_only_accepts_direct_upload() -> None:
     direct = ChapterAssetLineage(source_kind="direct_upload")
-    run_asset = ChapterAssetLineage(
-        source_kind="pipeline_run_asset",
-        source_run_id="run_123",
-        source_run_asset_id="asset_456",
-        source_complete_image_id="complete_scene_001",
+
+    assert direct.source_kind == "direct_upload"
+    with pytest.raises(ValidationError):
+        ChapterAssetLineage(source_kind="_".join(("pipeline", "run", "asset")))
+
+
+def test_target_object_references_prune_stale_exemptions_and_asset_links() -> None:
+    with pytest.raises(ValidationError, match="reason"):
+        TargetObjectExemption(target_object_id="target_001", reason="   ")
+
+    package = ChapterScenePackage.model_validate(
+        {
+            "chapter_id": "chapter_001",
+            "target_objects": [
+                {"id": "target_001", "label": "book", "priority": "required"}
+            ],
+            "target_object_exemptions": [
+                {"target_object_id": "target_001", "reason": "already baked into backdrop"},
+                {"target_object_id": "target_999", "reason": "stale"},
+            ],
+            "chapter_assets": [
+                {
+                    "id": "chapter_asset_001",
+                    "display_name": "book",
+                    "original_filename": "book.png",
+                    "storage_path": "assets/chapter_asset_001.png",
+                    "media_type": "image/png",
+                    "lineage": {"source_kind": "direct_upload"},
+                    "linked_target_object_id": "target_999",
+                    "created_at": "2026-07-03T10:00:00Z",
+                }
+            ],
+        }
     )
 
-    assert direct.source_run_id is None
-    assert run_asset.source_run_asset_id == "asset_456"
+    assert package.target_object_exemptions == [
+        TargetObjectExemption(
+            target_object_id="target_001",
+            reason="already baked into backdrop",
+        )
+    ]
+    assert package.chapter_assets[0].linked_target_object_id is None
 
 
 def test_chapter_reference_selection_rejects_notes_lane() -> None:
@@ -224,11 +259,7 @@ def test_find_scene_package_media_raises_child_not_found_for_missing_final_scene
             original_filename="book.png",
             storage_path="../escape.png",
             media_type="image/png",
-            lineage=ChapterAssetLineage(
-                source_kind="pipeline_run_asset",
-                source_run_id="run_123",
-                source_run_asset_id="asset_456",
-            ),
+            lineage=ChapterAssetLineage(source_kind="direct_upload"),
             created_at="2026-07-03T10:00:00Z",
         ),
         lambda: FinalChapterScene(

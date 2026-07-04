@@ -195,7 +195,7 @@ def test_prompt_patch_default_snapshots_support_empty_complete_and_final_scene(
     complete_id = complete_response.json()["scenePackage"]["complete_images"][0]["id"]
     asset_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
-        data={"displayName": "book"},
+        data={"displayName": "book", "linkedTargetObjectId": "target_object_001"},
         files={"file": ("book.png", _png_bytes(width=32, height=32), "image/png")},
     )
     asset_id = asset_response.json()["scenePackage"]["chapter_assets"][0]["id"]
@@ -259,7 +259,6 @@ def test_upload_empty_scene_and_select_current_image(client: TestClient) -> None
 
     upload_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
-        data={"promptSnapshot": "Custom empty scene prompt snapshot."},
         files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
     )
 
@@ -272,7 +271,7 @@ def test_upload_empty_scene_and_select_current_image(client: TestClient) -> None
     assert upload_response.status_code == 200
     image = upload_response.json()["scenePackage"]["empty_scene_images"][0]
     assert image["width"] == 120
-    assert image["prompt_snapshot"] == "Custom empty scene prompt snapshot."
+    assert image["prompt_snapshot"] == ""
     assert image["reference_snapshot"]["reference_image_ids"] == []
     assert select_response.status_code == 200
     assert select_response.json()["scenePackage"]["current_empty_scene_image_id"] == (

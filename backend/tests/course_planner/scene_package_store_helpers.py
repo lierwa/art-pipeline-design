@@ -91,12 +91,9 @@ def make_store_with_complete_image(
 def make_store_with_chapter_asset(
     tmp_path: Path,
 ) -> tuple[CoursePlannerStore, Chapter, ChapterAsset]:
-    store, chapter, image = make_store_with_complete_image(tmp_path)
-    package = store.add_chapter_asset_from_run_asset(
+    store, chapter, _ = make_store_with_complete_image(tmp_path)
+    package = store.add_direct_chapter_asset(
         chapter.id,
-        source_run_id="run_123",
-        source_run_asset_id="asset_456",
-        source_complete_image_id=image.id,
         image_bytes=make_png_bytes(width=32, height=32),
         original_filename="book.png",
         display_name="book",

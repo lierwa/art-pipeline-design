@@ -32,6 +32,7 @@ class CandidateBatchRequest(BaseModel):
 class TargetObjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    id: str | None = Field(default=None, min_length=1)
     label: str = Field(min_length=1)
     description: str = ""
     priority: Literal["core", "required", "recommended"] = "required"
@@ -75,6 +76,39 @@ class ChapterScenePromptPatchRequest(BaseModel):
     )
 
 
+class CharacterIpCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    display_name: str = Field(alias="displayName", min_length=1)
+    visual_invariants: str = Field(default="", alias="visualInvariants")
+    personality_cues: str = Field(default="", alias="personalityCues")
+    reference_image_ids: list[str] = Field(
+        default_factory=list,
+        alias="referenceImageIds",
+    )
+
+
+class ChapterReferenceSelectionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    reference_image_id: str = Field(alias="referenceImageId", min_length=1)
+    prompt_role: Literal["character", "style", "scene", "other"] = Field(
+        alias="promptRole"
+    )
+
+
+class ChapterCastAssignmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    character_ip_id: str = Field(alias="characterIpId", min_length=1)
+    role_label: str = Field(alias="roleLabel", min_length=1)
+    action_intent: str = Field(alias="actionIntent", min_length=1)
+    reference_image_ids: list[str] | None = Field(
+        default=None,
+        alias="referenceImageIds",
+    )
+
+
 class ChapterSeedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -99,10 +133,3 @@ class CurrentEmptySceneImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     empty_scene_image_id: str = Field(alias="emptySceneImageId", min_length=1)
-
-
-class CompleteSceneImageRunPatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    run_id: str = Field(alias="runId", min_length=1)
-    run_status: str | None = Field(default=None, alias="runStatus")

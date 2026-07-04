@@ -44,6 +44,7 @@ describe("Course Planner hierarchy state", () => {
       if (url === "/api/course-planner/state" && (!init || init.method === "GET")) {
         return jsonResponse({
           ...statePayload(),
+          scenePacks: [{ ...scenePackPayload(), chapterIds: [] }],
           chapters: [],
           selectedChapterId: null,
           candidatesByScenePackId: {

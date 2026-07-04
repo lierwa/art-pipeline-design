@@ -15,6 +15,7 @@ from scene_package_store_helpers import (
     make_store_with_empty_scene_image,
     make_store_with_prompt,
     make_store_with_selected_empty_scene,
+    make_store_with_two_empty_scene_images_and_assembly,
     make_stub_chapter_asset,
     scene_package_assembly_json_path,
 )
@@ -80,6 +81,43 @@ def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
     assert reloaded.prompt_confirmations.avoid_objects_reviewed is True
     assert reloaded.prompt_confirmations.style_reference_mode == "confirmed_empty"
     assert reloaded.reference_selections == []
+
+
+def test_update_scene_package_prompt_preserves_target_ids_across_reorder(
+    tmp_path: Path,
+) -> None:
+    store, chapter = make_store_with_chapter(tmp_path)
+    seeded = store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text="A low-shadow bedroom empty scene.",
+        target_objects=[
+            {"label": "book"},
+            {"label": "lamp"},
+        ],
+    )
+
+    reordered = store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text="A low-shadow bedroom empty scene.",
+        target_objects=[
+            {"label": "lamp", "priority": "core"},
+            {"label": "book"},
+            {"label": "cloth"},
+        ],
+    )
+
+    # WHY: linked_target_object_id 是 Chapter Asset 的外键；prompt 重新排序不能让
+    # target_object_001 从 book 悄悄变成 lamp。
+    assert {target.label: target.id for target in seeded.target_objects} == {
+        "book": "target_object_001",
+        "lamp": "target_object_002",
+    }
+    assert {target.label: target.id for target in reordered.target_objects} == {
+        "book": "target_object_001",
+        "lamp": "target_object_002",
+        "cloth": "target_object_003",
+    }
+    assert reordered.target_objects[0].priority == "core"
 
 
 def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explicit_empty(
@@ -161,6 +199,38 @@ def test_save_chapter_scene_assembly_persists_valid_manifest(tmp_path: Path) -> 
     assert mirrored_manifest == package.assembly
 
 
+def test_save_chapter_scene_assembly_allows_wip_missing_target_coverage(
+    tmp_path: Path,
+) -> None:
+    store, chapter, asset = make_store_with_chapter_asset(tmp_path)
+    package = store.read_chapter_scene_package(chapter.id)
+    store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text=package.prompt.prompt_text,
+        scene_spatial_contract=package.prompt.scene_spatial_contract,
+        target_objects=[
+            {"label": "book"},
+            {"label": "lamp"},
+        ],
+        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
+    )
+    current = store.read_chapter_scene_package(chapter.id)
+
+    saved = store.save_chapter_scene_assembly(
+        chapter.id,
+        make_manifest(
+            asset_id=asset.id,
+            empty_scene_image_id=current.current_empty_scene_image_id or "empty_scene_001",
+            empty_scene_size=current.assembly.empty_scene_size,
+        ),
+    )
+
+    # WHY: 保存按钮和 autosave 只负责保住作者的 WIP；目标物覆盖属于 Assembly Ready / Lock Final，
+    # 否则半成品摆放会因为还没补齐素材而无法落盘。
+    assert saved.assembly.placements[0].asset_id == asset.id
+    assert [target.label for target in saved.target_objects] == ["book", "lamp"]
+
+
 def test_save_chapter_scene_assembly_rejects_missing_asset(tmp_path: Path) -> None:
     store, chapter, empty_scene = make_store_with_selected_empty_scene(tmp_path)
 
@@ -200,7 +270,8 @@ def test_rejects_assembly_placements_before_any_selected_empty_scene_exists(
     store, chapter = make_store_with_prompt(tmp_path)
     current = store.read_chapter_scene_package(chapter.id)
     package_with_asset = store.write_chapter_scene_package(
-        current.model_copy(update={"chapter_assets": [make_stub_chapter_asset()]})
+        current.model_copy(update={"chapter_assets": [make_stub_chapter_asset()]}),
+        validate_assembly=False,
     )
     manifest = make_manifest(asset_id=package_with_asset.chapter_assets[0].id)
 
@@ -249,5 +320,23 @@ def test_select_empty_scene_image_sets_current_without_locking_complete_images(
     selected = store.select_empty_scene_image(chapter.id, image.id)
 
     assert selected.current_empty_scene_image_id == image.id
-    assert selected.assembly.empty_scene_image_id == image.id
-    assert selected.assembly.empty_scene_size == {"width": image.width, "height": image.height}
+    assert selected.assembly.empty_scene_image_id is None
+    assert selected.assembly.empty_scene_size is None
+
+
+def test_select_empty_scene_image_preserves_saved_assembly_snapshot_until_resave(
+    tmp_path: Path,
+) -> None:
+    store, chapter, first_image, second_image = make_store_with_two_empty_scene_images_and_assembly(
+        tmp_path
+    )
+
+    selected = store.select_empty_scene_image(chapter.id, second_image.id)
+
+    assert selected.current_empty_scene_image_id == second_image.id
+    assert selected.assembly.empty_scene_image_id == first_image.id
+    assert selected.assembly.empty_scene_size == {
+        "width": first_image.width,
+        "height": first_image.height,
+    }
+    assert selected.assembly.updated_at is not None

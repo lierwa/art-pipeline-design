@@ -1,18 +1,35 @@
+import { useState } from "react";
+
 import type { ChapterScenePackage } from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
-import { exportAssemblyPreviewFile, isAssemblyReady } from "./AssemblyWorkspacePanel";
+import type { AssemblyWorkspaceLockFinalState } from "./AssemblyWorkspacePanel";
 
 type FinalScenePanelProps = {
+  assemblyState: AssemblyWorkspaceLockFinalState;
   scenePackage: ChapterScenePackage;
-  onLockFinal: (file: File) => Promise<ChapterScenePackage | null>;
+  onLockFinal: () => Promise<ChapterScenePackage | null>;
 };
 
-export function FinalScenePanel({ onLockFinal, scenePackage }: FinalScenePanelProps) {
-  const ready = isAssemblyReady(scenePackage);
+export function FinalScenePanel({
+  assemblyState,
+  onLockFinal,
+  scenePackage,
+}: FinalScenePanelProps) {
+  const [isLocking, setIsLocking] = useState(false);
+  const ready = assemblyState.readiness.is_ready;
+  const dirtyActionHint = ready && assemblyState.hasDirtyChanges
+    ? assemblyState.saveState === "saving"
+      ? "Lock Final will wait for the current Assembly save."
+      : "Lock Final will save current Assembly edits first."
+    : null;
 
   async function handleLockFinal() {
-    const file = await exportAssemblyPreviewFile(scenePackage);
-    await onLockFinal(file);
+    setIsLocking(true);
+    try {
+      await onLockFinal();
+    } finally {
+      setIsLocking(false);
+    }
   }
 
   return (
@@ -28,10 +45,17 @@ export function FinalScenePanel({ onLockFinal, scenePackage }: FinalScenePanelPr
       </div>
 
       <div className="chapter-studio-actions">
-        <button type="button" className="course-planner-primary-action" disabled={!ready} onClick={() => void handleLockFinal()}>
+        <button
+          type="button"
+          className="course-planner-primary-action"
+          disabled={!ready || isLocking}
+          onClick={() => void handleLockFinal()}
+        >
           Lock Final
         </button>
       </div>
+
+      {dirtyActionHint ? <p>{dirtyActionHint}</p> : null}
     </section>
   );
 }

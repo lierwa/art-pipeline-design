@@ -29,6 +29,19 @@ class AvoidObjectItem(CoursePlannerModel):
     description: str = ""
 
 
+class TargetObjectExemption(CoursePlannerModel):
+    target_object_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+    @field_validator("reason")
+    @classmethod
+    def _validate_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("Target object exemption reason must not be empty.")
+        return stripped
+
+
 class PromptReadinessConfirmation(CoursePlannerModel):
     avoid_objects_reviewed: bool = False
     style_reference_mode: Literal[
@@ -144,30 +157,9 @@ class CompleteSceneImage(ScenePackageMediaRecord):
 
 
 class ChapterAssetLineage(CoursePlannerModel):
-    source_kind: Literal["pipeline_run_asset", "direct_upload"]
-    source_run_id: str | None = None
-    source_run_asset_id: str | None = None
-    source_complete_image_id: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_lineage(self) -> "ChapterAssetLineage":
-        # WHY: direct upload 和 pipeline run asset 是两套不同来源协议；
-        # 在模型层收紧能保证后续 store / route 只读取一个权威来源，而不是到处猜字段组合。
-        if self.source_kind == "direct_upload":
-            if (
-                self.source_run_id
-                or self.source_run_asset_id
-                or self.source_complete_image_id
-            ):
-                raise ValueError(
-                    "Direct upload lineage cannot include run asset fields."
-                )
-            return self
-        if not self.source_run_id or not self.source_run_asset_id:
-            raise ValueError(
-                "Pipeline run asset lineage requires source_run_id and source_run_asset_id."
-            )
-        return self
+    # WHY: 当前系统还没有可校验的 workspace run asset picker/import 协议；
+    # Chapter Asset 只暴露 direct upload，避免用手填 id 伪造 pipeline lineage。
+    source_kind: Literal["direct_upload"] = "direct_upload"
 
 
 class ChapterAsset(ScenePackageMediaRecord):
@@ -179,12 +171,22 @@ class ChapterAsset(ScenePackageMediaRecord):
     created_at: str = Field(min_length=1)
 
 
+class FinalScenePlacedAssetSnapshot(ScenePackageMediaRecord):
+    placement_id: str = Field(min_length=1)
+    asset_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    lineage: ChapterAssetLineage
+    linked_target_object_id: str | None = None
+    status: Literal["available", "removed"] = "available"
+
+
 class FinalChapterScene(ScenePackageMediaRecord):
     id: str = Field(min_length=1)
     width: int = Field(ge=1)
     height: int = Field(ge=1)
     empty_scene_image_id: str = Field(min_length=1)
     assembly_snapshot: ChapterSceneAssembly
+    placed_assets: list[FinalScenePlacedAssetSnapshot] = Field(default_factory=list)
     prompt_snapshot: str
     reference_snapshot: ImageReferenceSnapshot
     created_at: str = Field(min_length=1)
@@ -200,6 +202,7 @@ class ChapterScenePackage(CoursePlannerModel):
     cast_assignments: list[ChapterCastAssignment] = Field(default_factory=list)
     reference_selections: list[ChapterReferenceSelection] = Field(default_factory=list)
     target_objects: list[TargetObjectItem] = Field(default_factory=list)
+    target_object_exemptions: list[TargetObjectExemption] = Field(default_factory=list)
     avoid_objects: list[AvoidObjectItem] = Field(default_factory=list)
     assembly: ChapterSceneAssembly = Field(default_factory=ChapterSceneAssembly)
     empty_scene_images: list[EmptySceneImage] = Field(default_factory=list)
@@ -207,9 +210,40 @@ class ChapterScenePackage(CoursePlannerModel):
     chapter_assets: list[ChapterAsset] = Field(default_factory=list)
     final_scene: FinalChapterScene | None = None
 
+    @model_validator(mode="after")
+    def _prune_stale_target_object_references(self) -> "ChapterScenePackage":
+        target_object_ids = {target.id for target in self.target_objects}
+        if not target_object_ids:
+            self.target_object_exemptions = []
+            self.chapter_assets = [
+                asset.model_copy(update={"linked_target_object_id": None})
+                if asset.linked_target_object_id is not None
+                else asset
+                for asset in self.chapter_assets
+            ]
+            return self
+        # WHY: target object 是 chapter asset 绑定和 coverage 计算的唯一外键集合；
+        # prompt 删除/替换目标物后，必须同时清理 exemption 与 asset link，避免旧 id 悄悄覆盖新目标。
+        self.target_object_exemptions = [
+            exemption
+            for exemption in self.target_object_exemptions
+            if exemption.target_object_id in target_object_ids
+        ]
+        self.chapter_assets = [
+            asset.model_copy(update={"linked_target_object_id": None})
+            if (
+                asset.linked_target_object_id is not None
+                and asset.linked_target_object_id not in target_object_ids
+            )
+            else asset
+            for asset in self.chapter_assets
+        ]
+        return self
+
 from art_pipeline.course_planner.scene_package_assembly_validation import (
     frontmost_layer_id,
     validate_assembly_manifest,
+    validate_assembly_manifest_structure,
 )
 from art_pipeline.course_planner.scene_package_prompt_projection import (
     build_complete_prompt,

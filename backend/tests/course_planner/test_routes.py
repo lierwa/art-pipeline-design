@@ -165,7 +165,7 @@ def test_chapter_order_and_delete_share_one_list_state(tmp_path: Path) -> None:
     assert chapters_response.json()["chapters"][0]["id"] == second_id
 
 
-def test_state_payload_does_not_expose_prompt_versions_or_image_attempts(
+def test_state_payload_does_not_expose_removed_generation_revision_fields(
     tmp_path: Path,
 ) -> None:
     client = client_with_provider(tmp_path)
@@ -245,6 +245,12 @@ def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path)
         files={"file": ("book.png", _png_bytes(width=32, height=32), "image/png")},
     )
     asset_id = asset_response.json()["scenePackage"]["chapter_assets"][0]["id"]
+    lamp_response = client.post(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
+        data={"displayName": "lamp", "linkedTargetObjectId": "target_object_002"},
+        files={"file": ("lamp.png", _png_bytes(width=24, height=24), "image/png")},
+    )
+    lamp_asset_id = lamp_response.json()["scenePackage"]["chapter_assets"][1]["id"]
     client.put(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/assembly",
         json={
@@ -259,10 +265,18 @@ def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path)
                     "runtime_role": "target",
                     "transform": {"cx": 0.5, "cy": 0.5, "w": 0.2, "h": 0.2, "rotation_deg": 0},
                     "requires_placed": [],
+                },
+                {
+                    "id": "placement_002",
+                    "asset_id": lamp_asset_id,
+                    "display_name": "lamp",
+                    "runtime_role": "target",
+                    "transform": {"cx": 0.7, "cy": 0.5, "w": 0.18, "h": 0.18, "rotation_deg": 0},
+                    "requires_placed": [],
                 }
             ],
             "groups": [],
-            "layer_order": ["placement_001"],
+            "layer_order": ["placement_001", "placement_002"],
         },
     )
     client.post(

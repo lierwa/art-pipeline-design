@@ -1,5 +1,6 @@
 import { type ChangeEvent, useRef } from "react";
 
+import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
 import type { EmptySceneImageUploadInput } from "../api";
 import type { ChapterScenePackage } from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
@@ -24,7 +25,6 @@ export function EmptySceneImagesPanel({
     }
     await onUploadEmptySceneImage(file, {
       referenceImageIds: scenePackage.reference_selections.map((selection) => selection.reference_image_id),
-      promptSnapshot: scenePackage.prompt.prompt_text,
     });
     event.target.value = "";
   }
@@ -48,6 +48,17 @@ export function EmptySceneImagesPanel({
       <div className="chapter-studio-card-list">
         {scenePackage.empty_scene_images.map((image) => {
           const isCurrent = image.id === scenePackage.current_empty_scene_image_id;
+          const isReplacingCurrent = Boolean(scenePackage.current_empty_scene_image_id) && !isCurrent;
+          const selectButton = (
+            <button
+              type="button"
+              className="course-planner-secondary-action"
+              disabled={isCurrent}
+              onClick={isReplacingCurrent ? undefined : () => void onSelectEmptySceneImage(image.id)}
+            >
+              Select as Empty Scene
+            </button>
+          );
           return (
             <article key={image.id} className="chapter-studio-card">
               <div className="chapter-studio-card-header">
@@ -58,9 +69,17 @@ export function EmptySceneImagesPanel({
                 {isCurrent ? <CoursePlannerStatusBadge tone="success">Current Empty Scene</CoursePlannerStatusBadge> : null}
               </div>
               <div className="chapter-studio-actions">
-                <button type="button" className="course-planner-secondary-action" disabled={isCurrent} onClick={() => void onSelectEmptySceneImage(image.id)}>
-                  Select as Empty Scene
-                </button>
+                {isReplacingCurrent ? (
+                  <ConfirmActionDialog
+                    trigger={selectButton}
+                    title="Replace Empty Scene"
+                    description="Switch the Assembly background for this Chapter Scene Package. Existing placements, Chapter Assets, Complete Scene Images, and pipeline run associations stay preserved, but placements may need repositioning against the new Empty Scene."
+                    confirmLabel="Replace Empty Scene"
+                    onConfirm={() => {
+                      void onSelectEmptySceneImage(image.id);
+                    }}
+                  />
+                ) : selectButton}
               </div>
             </article>
           );

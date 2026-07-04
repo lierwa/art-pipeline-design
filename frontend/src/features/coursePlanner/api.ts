@@ -20,25 +20,34 @@ import type { CoursePlannerFetcher } from "./apiClient";
 
 export type { CoursePlannerFetcher } from "./apiClient";
 export type {
-  ChapterAssetUploadInput,
+  ChapterCastAssignmentInput,
+  ChapterReferenceSelectionInput,
   ChapterScenePromptInput,
   ChapterScenePromptTargetObjectInput,
   CompleteImageUploadInput,
+  CompleteImageImportResult,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
-  RunAssociationInput,
+  ReferenceLibraryImageUploadInput,
 } from "./scenePackageApi";
 export {
-  associateCompleteImageRun,
+  assignCharacterIpToChapter,
+  deleteCompleteSceneImage,
+  deleteChapterAsset,
+  duplicateChapterAsset,
   fetchChapterScenePackage,
+  importCompleteSceneImageToPipeline,
+  listCharacterIps,
+  listReferenceLibraryImages,
   lockFinalChapterScene,
   saveChapterSceneAssembly,
   selectEmptySceneImage,
+  selectChapterReferenceImage,
   updateChapterScenePrompt,
-  uploadChapterAssetFromRunAsset,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
+  uploadReferenceLibraryImage,
 } from "./scenePackageApi";
 
 export type CreateScenePackRequest = Pick<ScenePack, "title" | "intent" | "notes">;
@@ -133,15 +142,47 @@ function normalizeState(payload: unknown): CoursePlannerState {
   const state = toCamel(payload) as Partial<CoursePlannerState>;
   const scenePacks = state.scenePacks ?? [];
   const chapters = arrayFromPayload<Chapter>(state, "chapters");
+  const candidatesByScenePackId = recordArrayFromPayload<ChapterCandidate>(
+    payload,
+    ["candidatesByScenePackId", "candidates_by_scene_pack_id"],
+  );
+  const chaptersByScenePackId = recordArrayFromPayload<Chapter>(
+    payload,
+    ["chaptersByScenePackId", "chapters_by_scene_pack_id"],
+    orderedChapters,
+  );
   return {
     scenePacks,
     activeScenePackId: state.activeScenePackId ?? scenePacks[0]?.id ?? null,
-    candidatesByScenePackId: state.candidatesByScenePackId ?? {},
-    chaptersByScenePackId: state.chaptersByScenePackId ?? groupBy(chapters, (chapter) => chapter.scenePackId, orderedChapters),
+    candidatesByScenePackId: candidatesByScenePackId ?? {},
+    chaptersByScenePackId: chaptersByScenePackId ?? groupBy(chapters, (chapter) => chapter.scenePackId, orderedChapters),
     selectedChapterId: state.selectedChapterId ?? null,
     asyncStatus: state.asyncStatus ?? {},
     tasks: state.tasks ?? [],
   };
+}
+
+function recordArrayFromPayload<T>(
+  payload: unknown,
+  keys: string[],
+  normalize: (items: T[]) => T[] = (items) => items,
+): Record<string, T[]> | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const source = keys
+    .map((key) => (payload as Record<string, unknown>)[key])
+    .find((value) => Boolean(value) && typeof value === "object" && !Array.isArray(value));
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return null;
+  }
+  // WHY: scene pack id 是动态业务 key，不能经过 toCamel；只转换每个 record value 的字段名。
+  return Object.fromEntries(
+    Object.entries(source as Record<string, unknown>).map(([key, value]) => [
+      key,
+      normalize(Array.isArray(value) ? value.map((item) => toCamel(item) as T) : []),
+    ]),
+  );
 }
 
 function groupBy<T>(

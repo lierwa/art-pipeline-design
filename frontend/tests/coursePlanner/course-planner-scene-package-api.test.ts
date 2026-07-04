@@ -6,7 +6,8 @@ import {
 } from "../app/appTestHarness";
 
 import {
-  associateCompleteImageRun,
+  deleteChapterAsset,
+  duplicateChapterAsset,
   fetchChapterScenePackage,
   lockFinalChapterScene,
   saveChapterSceneAssembly,
@@ -58,7 +59,6 @@ describe("course planner scene package API client", () => {
     const selectedResult = await selectEmptySceneImage("chapter_001", "empty_scene_001", fetcher);
     const completeFile = new File(["complete"], "complete.png", { type: "image/png" });
     const completeResult = await uploadCompleteSceneImage("chapter_001", completeFile, completeImageUploadInput(), fetcher);
-    const runResult = await associateCompleteImageRun("chapter_001", "complete_scene_001", runAssociationInput(), fetcher);
     const assetFile = new File(["asset"], "pillow.png", { type: "image/png" });
     const assetResult = await uploadDirectChapterAsset("chapter_001", assetFile, directAssetUploadInput(), fetcher);
     const assemblyResult = await saveChapterSceneAssembly("chapter_001", assemblyManifestFixture(), fetcher);
@@ -74,15 +74,13 @@ describe("course planner scene package API client", () => {
       ["/api/course-planner/chapters/chapter_001/scene-package/empty-scene-images", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/current-empty-scene", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/complete-images", "POST"],
-      ["/api/course-planner/chapters/chapter_001/scene-package/complete-images/complete_scene_001/run", "PATCH"],
       ["/api/course-planner/chapters/chapter_001/scene-package/chapter-assets/direct-upload", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/assembly", "PUT"],
       ["/api/course-planner/chapters/chapter_001/scene-package/final-scene", "POST"],
     ]);
     expect(JSON.parse(String(calls[1].init?.body))).toEqual(promptPatchRequestPayload());
     expect(JSON.parse(String(calls[3].init?.body))).toEqual({ emptySceneImageId: "empty_scene_001" });
-    expect(JSON.parse(String(calls[5].init?.body))).toEqual({ runId: "run_123", runStatus: "completed" });
-    expect(JSON.parse(String(calls[7].init?.body))).toEqual(assemblyManifestFixture());
+    expect(JSON.parse(String(calls[6].init?.body))).toEqual(assemblyManifestFixture());
     expect(packageResult.chapter_id).toBe("chapter_001");
     expect(packageResult.prompt.prompt_text).toBe("Low-shadow room scene.");
     expect(packageResult.prompt_confirmations.style_reference_mode).toBe("confirmed_empty");
@@ -91,7 +89,6 @@ describe("course planner scene package API client", () => {
     expect(emptyResult.empty_scene_images[0].reference_snapshot.reference_image_ids).toEqual(["reference_001", "reference_002"]);
     expect(selectedResult.current_empty_scene_image_id).toBe("empty_scene_001");
     expect(completeResult.complete_images[0].generation_note).toBe("brighter morning light");
-    expect(runResult.complete_images[0].pipeline_run_id).toBe("run_123");
     expect(assetResult.chapter_assets[0].lineage.source_kind).toBe("direct_upload");
     expect(assemblyResult.assembly.layer_order).toEqual(["placement_001"]);
     expect(finalSceneResult.final_scene?.empty_scene_image_id).toBe("empty_scene_001");
@@ -107,6 +104,25 @@ describe("course planner scene package API client", () => {
     expect(fetcher.calls.map(([input, init]) => [input, init?.method])).toEqual([
       ["/api/course-planner/chapters/chapter_001/scene-package/empty-scene-images", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/current-empty-scene", "POST"],
+    ]);
+  });
+
+  it("duplicates and deletes Chapter Assets through scene-package routes without request bodies", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ input: String(input), init });
+      return new Response(JSON.stringify(scenePackageResponseFor(String(input), init)), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    await duplicateChapterAsset("chapter_001", "chapter_asset_001", fetcher);
+    await deleteChapterAsset("chapter_001", "chapter_asset_001", fetcher);
+
+    expect(calls.map((call) => [call.input, call.init?.method, call.init?.body ?? null])).toEqual([
+      ["/api/course-planner/chapters/chapter_001/scene-package/chapter-assets/chapter_asset_001/duplicate", "POST", null],
+      ["/api/course-planner/chapters/chapter_001/scene-package/chapter-assets/chapter_asset_001", "DELETE", null],
     ]);
   });
 
@@ -150,10 +166,10 @@ describe("course planner scene package API client", () => {
     const assetBody = calls[2].init?.body as FormData;
 
     expect(emptyBody.get("file")).toBe(emptyFile);
-    expect(emptyBody.get("promptSnapshot")).toBe("Custom empty prompt snapshot.");
+    expect(emptyBody.get("promptSnapshot")).toBeNull();
     expect(emptyBody.getAll("referenceImageIds")).toEqual(["reference_001", "reference_002"]);
     expect(completeBody.get("file")).toBe(completeFile);
-    expect(completeBody.get("promptSnapshot")).toBe("Custom complete prompt snapshot.");
+    expect(completeBody.get("promptSnapshot")).toBeNull();
     expect(completeBody.get("generationNote")).toBe("brighter morning light");
     expect(completeBody.getAll("referenceImageIds")).toEqual(["reference_001"]);
     expect(assetBody.get("file")).toBe(assetFile);
@@ -179,6 +195,7 @@ describe("course planner scene package API client", () => {
       promptText: "Brighter breakfast room.",
     });
   });
+
 });
 
 function scenePackageFetcher() {
@@ -235,7 +252,6 @@ function promptPatchRequestPayload() {
 function emptySceneUploadInput() {
   return {
     referenceImageIds: ["reference_001", "reference_002"],
-    promptSnapshot: "Custom empty prompt snapshot.",
   };
 }
 
@@ -243,14 +259,6 @@ function completeImageUploadInput() {
   return {
     generationNote: "brighter morning light",
     referenceImageIds: ["reference_001"],
-    promptSnapshot: "Custom complete prompt snapshot.",
-  };
-}
-
-function runAssociationInput() {
-  return {
-    runId: "run_123",
-    runStatus: "completed",
   };
 }
 
@@ -277,10 +285,13 @@ function scenePackageResponseFor(input: string, init?: RequestInit): unknown {
   if (input.endsWith("/scene-package/complete-images") && init?.method === "POST") {
     return { scenePackage: scenePackageFixture() };
   }
-  if (input.endsWith("/complete-images/complete_scene_001/run") && init?.method === "PATCH") {
-    return { scenePackage: scenePackageFixtureWithRunAssociation() };
-  }
   if (input.endsWith("/scene-package/chapter-assets/direct-upload") && init?.method === "POST") {
+    return { scenePackage: scenePackageFixture() };
+  }
+  if (input.endsWith("/scene-package/chapter-assets/chapter_asset_001/duplicate") && init?.method === "POST") {
+    return { scenePackage: scenePackageFixture() };
+  }
+  if (input.endsWith("/scene-package/chapter-assets/chapter_asset_001") && init?.method === "DELETE") {
     return { scenePackage: scenePackageFixture() };
   }
   if (input.endsWith("/scene-package/assembly") && init?.method === "PUT") {
@@ -296,135 +307,160 @@ function scenePackageFixture() {
   return {
     chapter_id: "chapter_001",
     current_empty_scene_image_id: "empty_scene_001",
-    prompt: {
-      prompt_text: "Low-shadow room scene.",
-      scene_spatial_contract: "Bed against back wall, desk by window, floor kept clear.",
-      updated_at: "2026-07-03T08:00:00Z",
-    },
-    prompt_confirmations: {
-      avoid_objects_reviewed: true,
-      style_reference_mode: "confirmed_empty",
-    },
-    cast_assignments: [
-      {
-        id: "cast_assignment_001",
-        character_ip_id: "character_001",
-        role_label: "lead",
-        action_intent: "Reaches for cloth.",
-        reference_image_ids: ["reference_001"],
-      },
-    ],
-    reference_selections: [
-      {
-        id: "reference_selection_001",
-        reference_image_id: "reference_001",
-        prompt_role: "style",
-      },
-    ],
-    target_objects: [
-      {
-        id: "target_object_001",
-        label: "book",
-        description: "Yellow cover.",
-        priority: "required",
-      },
-    ],
-    avoid_objects: [
-      {
-        id: "avoid_object_001",
-        label: "shattered glass",
-        description: "unsafe prop",
-      },
-    ],
-    empty_scene_images: [
-      {
-        id: "empty_scene_001",
-        original_filename: "empty.png",
-        storage_path: "empty_scene_images/empty_scene_001.png",
-        media_type: "image/png",
-        width: 120,
-        height: 80,
-        status: "available",
-        prompt_snapshot: "Custom empty prompt snapshot.",
-        reference_snapshot: {
-          reference_image_ids: ["reference_001", "reference_002"],
-          current_empty_scene_image_id: null,
-          notes: "",
-        },
-        created_at: "2026-07-03T08:10:00Z",
-      },
-    ],
-    complete_images: [
-      {
-        id: "complete_scene_001",
-        original_filename: "complete.png",
-        storage_path: "complete_images/complete_scene_001.png",
-        media_type: "image/png",
-        width: 120,
-        height: 80,
-        empty_scene_image_id: "empty_scene_001",
-        status: "active",
-        prompt_snapshot: "Custom complete prompt snapshot.",
-        reference_snapshot: {
-          reference_image_ids: ["reference_001"],
-          current_empty_scene_image_id: "empty_scene_001",
-          notes: "",
-        },
-        generation_note: "brighter morning light",
-        pipeline_run_id: null,
-        pipeline_run_status: null,
-        created_at: "2026-07-03T08:20:00Z",
-      },
-    ],
-    chapter_assets: [
-      {
-        id: "chapter_asset_001",
-        display_name: "抱枕",
-        original_filename: "pillow.png",
-        storage_path: "chapter_assets/chapter_asset_001.png",
-        media_type: "image/png",
-        lineage: {
-          source_kind: "direct_upload",
-          source_run_id: null,
-          source_run_asset_id: null,
-          source_complete_image_id: null,
-        },
-        linked_target_object_id: "target_object_001",
-        status: "available",
-        created_at: "2026-07-03T08:25:00Z",
-      },
-    ],
+    prompt: promptFixture(),
+    prompt_confirmations: promptConfirmationsFixture(),
+    cast_assignments: castAssignmentFixtures(),
+    reference_selections: referenceSelectionFixtures(),
+    target_objects: targetObjectFixtures(),
+    target_object_exemptions: [],
+    avoid_objects: avoidObjectFixtures(),
+    empty_scene_images: emptySceneImageFixtures(),
+    complete_images: completeImageFixtures(),
+    chapter_assets: chapterAssetFixtures(),
     assembly: assemblyManifestFixture(),
-    final_scene: {
-      id: "final_scene_001",
-      original_filename: "final.png",
-      storage_path: "final_scene/final_scene_001.png",
+    final_scene: finalSceneFixture(),
+  };
+}
+
+function promptFixture() {
+  return {
+    prompt_text: "Low-shadow room scene.",
+    scene_spatial_contract: "Bed against back wall, desk by window, floor kept clear.",
+    updated_at: "2026-07-03T08:00:00Z",
+  };
+}
+
+function promptConfirmationsFixture() {
+  return {
+    avoid_objects_reviewed: true,
+    style_reference_mode: "confirmed_empty",
+  };
+}
+
+function castAssignmentFixtures() {
+  return [
+    {
+      id: "cast_assignment_001",
+      character_ip_id: "character_001",
+      role_label: "lead",
+      action_intent: "Reaches for cloth.",
+      reference_image_ids: ["reference_001"],
+    },
+  ];
+}
+
+function referenceSelectionFixtures() {
+  return [
+    {
+      id: "reference_selection_001",
+      reference_image_id: "reference_001",
+      prompt_role: "style",
+    },
+  ];
+}
+
+function targetObjectFixtures() {
+  return [
+    {
+      id: "target_object_001",
+      label: "book",
+      description: "Yellow cover.",
+      priority: "required",
+    },
+  ];
+}
+
+function avoidObjectFixtures() {
+  return [
+    {
+      id: "avoid_object_001",
+      label: "shattered glass",
+      description: "unsafe prop",
+    },
+  ];
+}
+
+function emptySceneImageFixtures() {
+  return [
+    {
+      id: "empty_scene_001",
+      original_filename: "empty.png",
+      storage_path: "empty_scene_images/empty_scene_001.png",
+      media_type: "image/png",
+      width: 120,
+      height: 80,
+      status: "available",
+      prompt_snapshot: "Custom empty prompt snapshot.",
+      reference_snapshot: {
+        reference_image_ids: ["reference_001", "reference_002"],
+        current_empty_scene_image_id: null,
+        notes: "",
+      },
+      created_at: "2026-07-03T08:10:00Z",
+    },
+  ];
+}
+
+function completeImageFixtures() {
+  return [
+    {
+      id: "complete_scene_001",
+      original_filename: "complete.png",
+      storage_path: "complete_images/complete_scene_001.png",
       media_type: "image/png",
       width: 120,
       height: 80,
       empty_scene_image_id: "empty_scene_001",
-      assembly_snapshot: assemblyManifestFixture(),
-      prompt_snapshot: "Custom final prompt snapshot.",
+      status: "active",
+      prompt_snapshot: "Custom complete prompt snapshot.",
       reference_snapshot: {
         reference_image_ids: ["reference_001"],
         current_empty_scene_image_id: "empty_scene_001",
         notes: "",
       },
-      created_at: "2026-07-03T08:40:00Z",
+      generation_note: "brighter morning light",
+      pipeline_run_id: null,
+      pipeline_run_status: null,
+      created_at: "2026-07-03T08:20:00Z",
     },
-  };
+  ];
 }
 
-function scenePackageFixtureWithRunAssociation() {
-  return {
-    ...scenePackageFixture(),
-    complete_images: [
-      {
-        ...scenePackageFixture().complete_images[0],
-        pipeline_run_id: "run_123",
-        pipeline_run_status: "completed",
+function chapterAssetFixtures() {
+  return [
+    {
+      id: "chapter_asset_001",
+      display_name: "抱枕",
+      original_filename: "pillow.png",
+      storage_path: "chapter_assets/chapter_asset_001.png",
+      media_type: "image/png",
+      lineage: {
+        source_kind: "direct_upload",
       },
-    ],
+      linked_target_object_id: "target_object_001",
+      status: "available",
+      created_at: "2026-07-03T08:25:00Z",
+    },
+  ];
+}
+
+function finalSceneFixture() {
+  return {
+    id: "final_scene_001",
+    original_filename: "final.png",
+    storage_path: "final_scene/final_scene_001.png",
+    media_type: "image/png",
+    width: 120,
+    height: 80,
+    empty_scene_image_id: "empty_scene_001",
+    assembly_snapshot: assemblyManifestFixture(),
+    prompt_snapshot: "Custom final prompt snapshot.",
+    reference_snapshot: {
+      reference_image_ids: ["reference_001"],
+      current_empty_scene_image_id: "empty_scene_001",
+      notes: "",
+    },
+    created_at: "2026-07-03T08:40:00Z",
   };
 }
 

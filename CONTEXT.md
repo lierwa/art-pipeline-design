@@ -63,7 +63,7 @@ A short, optional instruction for one external ChatGPT/Image2 generation attempt
 
 ## Chapter Scene Package Progress
 
-The chapter-facing progress state derived from its Chapter Scene Package. It replaces Prompt Version progress as the chapter's primary production status.
+The chapter-facing progress state derived from its Chapter Scene Package. It is the chapter's primary production status.
 
 ## Chapter Scene Studio
 

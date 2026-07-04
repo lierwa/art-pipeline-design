@@ -132,3 +132,59 @@ Important:
 
 - `git diff --check`
   - Result: clean
+
+## Task 3 Second Reviewer Findings Requiring Fix
+
+Important:
+- Remove dead backend prompt-authoring schema types from models.py: SceneDirectorPlan, ObjectPlan, CastBinding, SceneVocabulary, PromptTuning, and related PromptPackage-only structures if no surviving backend route/test imports them. In particular, remove PromptTuning.must_keep/avoid as a second facts source.
+
+## Task 3 Legacy Backend Model Cleanup Fix (2026-07-03)
+
+### Fix summary
+
+- Removed dead backend prompt-authoring schema exports from `backend/art_pipeline/course_planner/models.py`:
+  - `SceneDirectorPlan`
+  - `ObjectPlan`
+  - `CastBinding`
+  - `SceneVocabulary`
+  - `PromptTuning`
+- Removed dead legacy scene-version/AI-review backend runtime from `backend/art_pipeline/course_planner/store.py`, including:
+  - `SceneVersion`
+  - `SceneVersionLock`
+  - `AIReview`
+  - scene-version create/read/lock/review helpers
+  - scene-version PNG/version-id helper functions and imports
+- Added narrow regression tests to keep the deleted backend API surface from reappearing.
+
+### Evidence
+
+- Codegraph caller check for `create_scene_version`: no callers.
+- Codegraph caller check for `SceneDirectorPlan`: no backend callers.
+- Repo grep outside `backend/art_pipeline/course_planner/**` found no surviving backend/test callers for the deleted runtime symbols.
+
+### Verification
+
+- Red:
+  - `cd /Users/guojunxi/Desktop/work/art-pipeline-design/backend && uv run --python 3.12 --extra dev pytest tests/course_planner/test_models.py::test_models_module_does_not_export_dead_prompt_authoring_types tests/course_planner/test_store.py::test_store_does_not_expose_legacy_scene_version_runtime -q`
+  - Result before fix: `2 failed`
+
+- Green:
+  - Same targeted command after fix
+  - Result: `2 passed`
+
+## Task 3 Review Fixes (2026-07-03)
+
+### Fix summary
+
+- Removed stale backend `Chapter.status` values `prompt_ready` and `has_attempts`; surviving backend vocabulary is now `draft | designing | imported`.
+- Added backend regression coverage that rejects those deleted status values at model-validation time.
+- Restored atomic temp-file + `os.replace(...)` semantics for `scene_context.json` writes in `import_to_pipeline.py`.
+- Deleted the last concrete frontend consumer of the removed uploads review workflow:
+  - `ImageAttemptReviewPage` route import and route entry from `AppRoutes.tsx`
+  - `frontend/src/features/coursePlanner/pages/ImageAttemptReviewPage.tsx`
+  - `frontend/tests/coursePlanner/image-attempt-review.test.tsx`
+
+### Patch hygiene
+
+- Did not re-add `/api/course-planner/uploads/{asset_path:path}` because that endpoint only served the deleted ImageAttempt review surface.
+- Removed the concrete stale route/page/test instead of adding compatibility code on top of the dead workflow.

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from art_pipeline.course_planner.scene_package_models import frontmost_layer_id
+from art_pipeline.course_planner.scene_package_models import (
+    TargetObjectItem,
+    frontmost_layer_id,
+)
 from art_pipeline.course_planner.scene_package_assembly_validation import (
     validate_assembly_manifest,
 )
@@ -96,6 +99,52 @@ def test_manifest_rejects_unknown_group_placement_reference() -> None:
         "group_001" in error
         and "unknown placement ids" in error
         and "placement_missing" in error
+        for error in errors
+    )
+
+
+def test_manifest_requires_every_target_object_to_be_covered_by_placed_asset() -> None:
+    package = make_package_with_selected_empty_scene().model_copy(
+        update={
+            "target_objects": [
+                TargetObjectItem(id="target_001", label="book", priority="required"),
+                TargetObjectItem(id="target_002", label="lamp", priority="required"),
+            ]
+        }
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any(
+        "target object" in error.lower()
+        and "target_002" in error
+        and "lamp" in error
+        for error in errors
+    )
+
+
+def test_manifest_rejects_target_object_exemption_without_placed_asset_coverage() -> None:
+    package = make_package_with_selected_empty_scene().model_copy(
+        update={
+            "target_objects": [
+                TargetObjectItem(id="target_001", label="book", priority="required"),
+                TargetObjectItem(id="target_002", label="lamp", priority="required"),
+            ],
+            "target_object_exemptions": [
+                {
+                    "target_object_id": "target_002",
+                    "reason": "lamp is painted into the selected empty scene",
+                }
+            ],
+        }
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any(
+        "target object" in error.lower()
+        and "target_002" in error
+        and "lamp" in error
         for error in errors
     )
 
