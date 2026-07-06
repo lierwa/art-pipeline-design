@@ -1,4 +1,4 @@
-export type ScenePackageMediaKind = "empty_scene_images" | "chapter_assets";
+export type ScenePackageMediaKind = "empty_scene_images" | "complete_images" | "chapter_assets" | "final_scene";
 
 export function scenePackageMediaUrl(
   chapterId: string,

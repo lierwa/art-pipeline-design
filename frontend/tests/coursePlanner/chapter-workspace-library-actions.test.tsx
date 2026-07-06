@@ -6,6 +6,7 @@ import {
   screen,
   userEvent,
   waitFor,
+  within,
 } from "../app/appTestHarness";
 
 import {
@@ -33,7 +34,7 @@ describe("Chapter Scene Studio library and run actions", () => {
     }
   });
 
-  it("keeps chapter assets limited to direct uploads without a verified picker", async () => {
+  it("keeps chapter asset actions behind the Assembly editor entry point", async () => {
     const view = renderChapterWorkspace({
       scenePackage: studioScenePackageFixture({
         complete_images: [{
@@ -45,22 +46,49 @@ describe("Chapter Scene Studio library and run actions", () => {
     });
 
     try {
-      await screen.findByRole("region", { name: "Assembly asset pool" });
-      expect(screen.getByRole("button", { name: "Upload Scene Asset" })).toBeEnabled();
+      await screen.findByRole("region", { name: "Assembly summary" });
+      expect(screen.getByRole("link", { name: "Open Assembly Editor" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Upload Scene Asset" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Add from Run/i })).not.toBeInTheDocument();
     } finally {
       view.restore();
     }
   });
 
-  it("binds Character IP identity from existing library selections", async () => {
+  it("opens Bind Character IP and Upload Reference inside the shared drawer and restores focus on close", async () => {
+    const user = userEvent.setup();
     const view = renderChapterWorkspace({
       scenePackage: studioScenePackageFixture(),
     });
 
     try {
-      await screen.findByRole("region", { name: "Library selection" });
-      expect(screen.getByRole("button", { name: "Bind Character IP" })).toBeEnabled();
+      const libraryPanel = await screen.findByRole("region", { name: "Library selection" });
+      const bindButton = within(libraryPanel).getByRole("button", { name: "Bind Character IP" });
+      const uploadButton = within(libraryPanel).getByRole("button", { name: "Upload Reference" });
+
+      expect(libraryPanel.querySelector("details")).toBeNull();
+      expect(screen.queryByRole("complementary", { name: "Bind Character IP" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Upload Reference" })).not.toBeInTheDocument();
+
+      await user.click(bindButton);
+
+      const bindDrawer = await screen.findByRole("complementary", { name: "Bind Character IP" });
+      expect(bindDrawer).toHaveClass("course-planner-drawer");
+      expect(within(bindDrawer).getByRole("heading", { name: "Character IP" })).toBeInTheDocument();
+
+      await user.click(within(bindDrawer).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Bind Character IP" })).not.toBeInTheDocument());
+      await waitFor(() => expect(bindButton).toHaveFocus());
+
+      await user.click(uploadButton);
+
+      const uploadDrawer = await screen.findByRole("complementary", { name: "Upload Reference" });
+      expect(uploadDrawer).toHaveClass("course-planner-drawer");
+      expect(within(uploadDrawer).getByRole("heading", { name: "Reference Images" })).toBeInTheDocument();
+
+      await user.click(within(uploadDrawer).getByRole("button", { name: "Close" }));
+      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Upload Reference" })).not.toBeInTheDocument());
+      await waitFor(() => expect(uploadButton).toHaveFocus());
     } finally {
       view.restore();
     }

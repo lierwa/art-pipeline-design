@@ -1,104 +1,97 @@
-import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
-import { ImageOff, Redo2, ScanSearch, Undo2, ZoomIn, ZoomOut } from "lucide-react";
-import { Tldraw, type Editor, useEditor, useReactor } from "tldraw";
-// WHY: tldraw 只是摆放编辑器的 authoring 边界实现，但它的交互壳依赖官方样式；
-// 样式必须跟 editor 入口一起加载，避免全局页面误以为自己拥有 canvas 内部 UI。
-import "tldraw/tldraw.css";
-
-import type { AssemblyManifestDraft } from "../assembly/assemblyManifestDraft";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import {
-  buildTldrawAssemblySnapshot,
-  isAssemblyManagedAssetId,
-  isAssemblyManagedShapeId,
-  isTrustedAssemblyBackgroundShape,
-  normalizePlacementShapeForProjection,
-  projectManifestChangesFromCanvas,
-  readPlacementIdFromShape,
-  selectionShapeIdForPlacement,
-} from "../assembly/tldrawAssemblyAdapter";
-import type { ChapterScenePackage } from "../types";
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  Hand,
+  ImageOff,
+  Maximize2,
+  MousePointer2,
+  Redo2,
+  Save,
+  SquareDashed,
+  Tags,
+  Undo2,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
+
+import { IconButton } from "../../../shared/ui/IconButton";
+import type { ElementSelectionMode, OverlayState } from "../../../domain/workspace";
+import type { AssemblyManifestDraft } from "../assembly/assemblyManifestDraft";
+import type { AsyncOperationState, ChapterScenePackage } from "../types";
+import {
+  AssemblyAuthoringCanvas,
+  type AssemblyAuthoringCanvasControls,
+} from "./AssemblyAuthoringCanvas";
 
 type AssemblyEditorCanvasProps = {
+  actionLabel?: string;
+  canRedo?: boolean;
+  canTriggerSave?: boolean;
+  canUndo?: boolean;
+  canvasControls?: AssemblyAuthoringCanvasControls | null;
+  canvasOverlays?: OverlayState;
   draft: AssemblyManifestDraft;
+  saveStatus?: AsyncOperationState;
   scenePackage: ChapterScenePackage;
   selectedPlacementId: string | null;
+  selectedPlacementIds?: string[];
+  onAddAsset?: (assetId: string, center?: { x: number; y: number }) => Promise<void> | void;
+  onBoxEditEnd?: (placementId: string) => void;
+  onBoxEditStart?: (placementId: string) => void;
   onDraftChange: (draft: AssemblyManifestDraft) => void;
-  onSelectPlacement: (placementId: string | null) => void;
-};
-
-export type AssemblyEditorShapeLike = {
-  id: string;
-  x: number;
-  y: number;
-  rotation: number;
-  isLocked?: boolean;
-  props: { assetId?: string; w?: number; h?: number };
-  meta?: { kind?: string; source?: string; placementId?: string };
-};
-
-type AssemblyEditorLike = Pick<Editor,
-  | "createAssets"
-  | "createShapes"
-  | "deleteAssets"
-  | "deleteShapes"
-  | "getAssets"
-  | "getCurrentPageShapes"
-  | "getCurrentPageShapesSorted"
-  | "getSelectedShapeIds"
-  | "getSelectedShapes"
-  | "run"
-  | "select"
-  | "selectNone"
-  | "zoomToBounds">;
-
-type AssemblyCameraFitState = {
-  hasFittedInitialScene: boolean;
-  lastFittedEmptySceneImageId: string | null;
+  onEditorControlsChange?: (controls: AssemblyAuthoringCanvasControls | null) => void;
+  onGroupSelectedLayers?: () => void;
+  onRedo?: () => void;
+  onSave?: () => Promise<void>;
+  onSelectAllPlacements?: () => void;
+  onSelectPlacement: (placementId: string | null, mode?: ElementSelectionMode) => void;
+  onSelectPlacementIds?: (placementIds: string[]) => void;
+  onToggleCanvasOverlay?: (key: "showBoxes" | "showNames") => void;
+  onUngroupSelectedLayers?: () => void;
+  onUndo?: () => void;
 };
 
 export function AssemblyEditorCanvas({
+  actionLabel = "Save Assembly",
+  canRedo = false,
+  canTriggerSave = false,
+  canUndo = false,
+  canvasControls,
+  canvasOverlays = DEFAULT_ASSEMBLY_CANVAS_OVERLAYS,
   draft,
+  onAddAsset,
+  onBoxEditEnd,
+  onBoxEditStart,
   onDraftChange,
+  onEditorControlsChange,
+  onGroupSelectedLayers,
+  onRedo,
+  onSave,
+  onSelectAllPlacements,
   onSelectPlacement,
+  onSelectPlacementIds,
+  onToggleCanvasOverlay,
+  onUngroupSelectedLayers,
+  onUndo,
+  saveStatus,
   scenePackage,
   selectedPlacementId,
+  selectedPlacementIds,
 }: AssemblyEditorCanvasProps) {
+  const [localCanvasControls, setLocalCanvasControls] = useState<AssemblyAuthoringCanvasControls | null>(null);
   const emptySceneImage = scenePackage.empty_scene_images.find((image) => image.id === draft.empty_scene_image_id) ?? null;
-  const editorRef = useRef<Editor | null>(null);
-  const isApplyingSnapshotRef = useRef(false);
-  const cameraFitStateRef = useRef<AssemblyCameraFitState>({
-    hasFittedInitialScene: false,
-    lastFittedEmptySceneImageId: null,
-  });
+  const resolvedCanvasControls = canvasControls ?? localCanvasControls;
 
-  const snapshot = useMemo(() => buildTldrawAssemblySnapshot({ draft, scenePackage }), [draft, scenePackage]);
-
-  const handleMount = useCallback((editor: Editor) => {
-    editorRef.current = editor;
-    editor.setCurrentTool("select");
-    applySnapshotToEditor(editor, snapshot, isApplyingSnapshotRef, cameraFitStateRef);
-    syncSelectionToEditor(editor, selectedPlacementId);
-  }, [selectedPlacementId, snapshot]);
-
-  useEffect(() => {
-    return () => {
-      editorRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!editorRef.current) {
-      return;
-    }
-    applySnapshotToEditor(editorRef.current, snapshot, isApplyingSnapshotRef, cameraFitStateRef);
-  }, [snapshot]);
-
-  useEffect(() => {
-    if (!editorRef.current) {
-      return;
-    }
-    syncSelectionToEditor(editorRef.current, selectedPlacementId);
-  }, [selectedPlacementId]);
+  function handleEditorControlsChange(controls: AssemblyAuthoringCanvasControls | null) {
+    setLocalCanvasControls(controls);
+    onEditorControlsChange?.(controls);
+  }
 
   if (!emptySceneImage) {
     return (
@@ -113,284 +106,249 @@ export function AssemblyEditorCanvas({
   }
 
   return (
-    <section className="assembly-editor-stage" aria-label="Assembly canvas">
-      <div className="assembly-editor-toolbar" role="toolbar" aria-label="Assembly canvas controls">
-        <button
-          type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action"
-          onClick={() => editorRef.current?.undo()}
-          aria-label="Undo"
-        >
-          <Undo2 size={16} aria-hidden="true" />
-          <span>Undo</span>
-        </button>
-        <button
-          type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action"
-          onClick={() => editorRef.current?.redo()}
-          aria-label="Redo"
-        >
-          <Redo2 size={16} aria-hidden="true" />
-          <span>Redo</span>
-        </button>
-        <button
-          type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action"
-          onClick={() => editorRef.current?.zoomToBounds(snapshot.fitBounds, { inset: 48 })}
-          aria-label="Fit"
-        >
-          <ScanSearch size={16} aria-hidden="true" />
-          <span>Fit</span>
-        </button>
-        <button
-          type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action"
-          onClick={() => editorRef.current?.zoomIn()}
-          aria-label="Zoom in"
-        >
-          <ZoomIn size={16} aria-hidden="true" />
-          <span>Zoom in</span>
-        </button>
-        <button
-          type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action"
-          onClick={() => editorRef.current?.zoomOut()}
-          aria-label="Zoom out"
-        >
-          <ZoomOut size={16} aria-hidden="true" />
-          <span>Zoom out</span>
-        </button>
-      </div>
+    <section className="assembly-editor-stage canvas-workspace" aria-label="Assembly canvas" style={{ minHeight: "0px" }}>
+      <h2 className="visually-hidden">Canvas</h2>
+      <AssemblyCanvasToolbar
+        actionLabel={actionLabel}
+        canRedo={canRedo}
+        canTriggerSave={canTriggerSave && Boolean(onSave)}
+        canUndo={canUndo}
+        controls={resolvedCanvasControls}
+        overlays={canvasOverlays}
+        canvasSizeLabel={formatCanvasSize({ width: emptySceneImage.width, height: emptySceneImage.height })}
+        saveStatus={saveStatus}
+        onRedo={onRedo}
+        onSave={onSave}
+        onToggleOverlay={onToggleCanvasOverlay}
+        onUndo={onUndo}
+      />
       <div
-        className="assembly-editor-artboard assembly-editor-tldraw"
-        style={{ aspectRatio: `${emptySceneImage.width} / ${emptySceneImage.height}` }}
+        className="assembly-editor-canvas-body canvas-stage-shell"
+        data-testid="assembly-editor-canvas-body"
+        style={{ height: "100%", minHeight: "0px" }}
       >
-        <Tldraw autoFocus={false} hideUi onMount={handleMount}>
-          <AssemblyEditorBridge
-            draft={draft}
-            emptySceneSize={{ width: emptySceneImage.width, height: emptySceneImage.height }}
-            isApplyingSnapshotRef={isApplyingSnapshotRef}
-            onDraftChange={onDraftChange}
-            onSelectPlacement={onSelectPlacement}
-          />
-        </Tldraw>
+        <AssemblyAuthoringCanvas
+          draft={draft}
+          overlays={canvasOverlays}
+          scenePackage={scenePackage}
+          selectedPlacementId={selectedPlacementId}
+          selectedPlacementIds={selectedPlacementIds}
+          onAddAsset={onAddAsset}
+          onBoxEditEnd={onBoxEditEnd}
+          onBoxEditStart={onBoxEditStart}
+          onDraftChange={onDraftChange}
+          onEditorControlsChange={handleEditorControlsChange}
+          onGroupSelectedLayers={onGroupSelectedLayers}
+          onRedo={onRedo}
+          onSave={onSave}
+          onSelectAllPlacements={onSelectAllPlacements}
+          onSelectPlacement={onSelectPlacement}
+          onSelectPlacementIds={onSelectPlacementIds}
+          onUngroupSelectedLayers={onUngroupSelectedLayers}
+          onUndo={onUndo}
+          canRedo={canRedo}
+          canSave={canTriggerSave && Boolean(onSave)}
+          canUndo={canUndo}
+        />
       </div>
     </section>
   );
 }
 
-type AssemblyEditorBridgeProps = {
-  draft: AssemblyManifestDraft;
-  emptySceneSize: { width: number; height: number };
-  isApplyingSnapshotRef: MutableRefObject<boolean>;
-  onDraftChange: (draft: AssemblyManifestDraft) => void;
-  onSelectPlacement: (placementId: string | null) => void;
+function AssemblyCanvasToolbar({
+  actionLabel,
+  canRedo,
+  canTriggerSave,
+  canUndo,
+  canvasSizeLabel,
+  controls,
+  overlays,
+  saveStatus,
+  onRedo,
+  onSave,
+  onToggleOverlay,
+  onUndo,
+}: {
+  actionLabel: string;
+  canRedo: boolean;
+  canTriggerSave: boolean;
+  canUndo: boolean;
+  canvasSizeLabel: string;
+  controls: AssemblyAuthoringCanvasControls | null;
+  overlays: OverlayState;
+  saveStatus?: AsyncOperationState;
+  onRedo?: () => void;
+  onSave?: () => Promise<void>;
+  onToggleOverlay?: (key: "showBoxes" | "showNames") => void;
+  onUndo?: () => void;
+}) {
+  const zoomPercent = Math.round(controls?.zoomPercent ?? 100);
+  const hasCanvasControls = Boolean(controls);
+
+  return (
+    <Tooltip.Provider delayDuration={250}>
+      <div className="canvas-toolbar assembly-canvas-toolbar" role="toolbar" aria-label="Canvas tools">
+        <div className="canvas-tool-group" aria-label="Assembly editing tools">
+          <IconButton
+            label="Select"
+            aria-label="Select"
+            aria-pressed={hasCanvasControls && !controls?.isPanMode}
+            icon={<MousePointer2 size={16} strokeWidth={2.2} />}
+            isActive={hasCanvasControls && !controls?.isPanMode}
+            disabled={!controls}
+            onClick={controls?.select}
+          />
+          <IconButton
+            label="Pan canvas"
+            aria-label="Pan canvas"
+            aria-pressed={Boolean(controls?.isPanMode)}
+            icon={<Hand size={16} strokeWidth={2.2} />}
+            isActive={Boolean(controls?.isPanMode)}
+            disabled={!controls}
+            onClick={controls?.pan}
+          />
+        </div>
+
+        <div className="canvas-history-controls" aria-label="History controls">
+          <IconButton
+            label="Undo"
+            icon={<Undo2 size={16} strokeWidth={2.2} />}
+            disabled={!canUndo || !onUndo}
+            onClick={onUndo}
+          />
+          <IconButton
+            label="Redo"
+            icon={<Redo2 size={16} strokeWidth={2.2} />}
+            disabled={!canRedo || !onRedo}
+            onClick={onRedo}
+          />
+        </div>
+
+        <div className="canvas-tool-group" aria-label="Alignment controls">
+          <IconButton
+            label="Align left"
+            icon={<AlignStartVertical size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("left")}
+          />
+          <IconButton
+            label="Align horizontal center"
+            icon={<AlignCenterVertical size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("hcenter")}
+          />
+          <IconButton
+            label="Align right"
+            icon={<AlignEndVertical size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("right")}
+          />
+          <IconButton
+            label="Align top"
+            icon={<AlignStartHorizontal size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("top")}
+          />
+          <IconButton
+            label="Align vertical middle"
+            icon={<AlignCenterHorizontal size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("vcenter")}
+          />
+          <IconButton
+            label="Align bottom"
+            icon={<AlignEndHorizontal size={16} strokeWidth={2.2} />}
+            disabled={!controls?.canAlign}
+            onClick={() => controls?.align("bottom")}
+          />
+        </div>
+
+        <div className="zoom-controls" aria-label="Zoom controls">
+          <IconButton
+            label="Zoom out"
+            icon={<ZoomOut size={16} strokeWidth={2.2} />}
+            disabled={!controls || zoomPercent <= 40}
+            onClick={controls?.zoomOut}
+          />
+          <span>{zoomPercent}%</span>
+          <IconButton
+            label="Zoom in"
+            icon={<ZoomIn size={16} strokeWidth={2.2} />}
+            disabled={!controls || zoomPercent >= 200}
+            onClick={controls?.zoomIn}
+          />
+          <IconButton
+            label="Fit canvas"
+            icon={<Maximize2 size={16} strokeWidth={2.2} />}
+            disabled={!controls}
+            onClick={controls?.fit}
+          />
+        </div>
+
+        <div className="canvas-overlay-switches" aria-label="Canvas overlays">
+          <OverlayToggle
+            checked={overlays.showBoxes}
+            icon={<SquareDashed size={16} strokeWidth={2.2} />}
+            label="Show boxes"
+            onChange={() => onToggleOverlay?.("showBoxes")}
+          />
+          <OverlayToggle
+            checked={overlays.showNames}
+            icon={<Tags size={16} strokeWidth={2.2} />}
+            label="Show names"
+            onChange={() => onToggleOverlay?.("showNames")}
+          />
+        </div>
+
+        <div className="canvas-draft-actions assembly-canvas-actions">
+          <span className="assembly-canvas-size-label">{canvasSizeLabel}</span>
+          <IconButton
+            label={saveStatus?.status === "pending" ? "Saving Assembly" : actionLabel}
+            aria-label={saveStatus?.status === "pending" ? "Saving Assembly" : actionLabel}
+            icon={<Save size={16} strokeWidth={2.2} />}
+            showLabel
+            disabled={!canTriggerSave || !onSave || saveStatus?.status === "pending"}
+            onClick={() => void onSave?.()}
+          />
+        </div>
+      </div>
+    </Tooltip.Provider>
+  );
+}
+
+function OverlayToggle({
+  checked,
+  icon,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  icon: ReactNode;
+  label: string;
+  onChange: () => void;
+}) {
+  return (
+    <label className="panel-checkbox overlay-toggle">
+      <input
+        aria-label={label}
+        checked={checked}
+        type="checkbox"
+        onChange={onChange}
+      />
+      <span className="shared-icon-button-icon" aria-hidden="true">{icon}</span>
+      <span className="visually-hidden">{label}</span>
+    </label>
+  );
+}
+
+function formatCanvasSize(size: { width: number; height: number }) {
+  return `${size.width} x ${size.height}`;
+}
+
+const DEFAULT_ASSEMBLY_CANVAS_OVERLAYS: OverlayState = {
+  showBoxes: true,
+  showMasks: false,
+  showNames: true,
+  showRejected: false,
+  showThumbs: true,
 };
-
-function AssemblyEditorBridge({
-  draft,
-  emptySceneSize,
-  isApplyingSnapshotRef,
-  onDraftChange,
-  onSelectPlacement,
-}: AssemblyEditorBridgeProps) {
-  const editor = useEditor();
-
-  useReactor("assembly-editor-selection", () => {
-    if (isApplyingSnapshotRef.current) {
-      return;
-    }
-    const selectionState = readPlacementSelectionState(editor);
-    if (selectionState.shouldClearSelection) {
-      editor.selectNone();
-    }
-    onSelectPlacement(selectionState.placementId);
-  }, [editor, isApplyingSnapshotRef, onSelectPlacement]);
-
-  useReactor("assembly-editor-projection", () => {
-    if (isApplyingSnapshotRef.current) {
-      return;
-    }
-    const shapesInZOrder = editor.getCurrentPageShapesSorted()
-      .map((shape) => normalizePlacementShapeForProjection(shape as unknown as AssemblyEditorShapeLike))
-      .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
-
-    const projected = projectManifestChangesFromCanvas({
-      draft,
-      shapesInZOrder,
-      emptySceneSize,
-    });
-    if (sameProjection(draft, projected)) {
-      return;
-    }
-    onDraftChange({
-      ...draft,
-      placements: projected.placements,
-      layer_order: projected.layer_order,
-    });
-  }, [draft, editor, emptySceneSize, isApplyingSnapshotRef, onDraftChange]);
-
-  return null;
-}
-
-export function createAssemblyCameraFitState(): MutableRefObject<AssemblyCameraFitState> {
-  return {
-    current: {
-      hasFittedInitialScene: false,
-      lastFittedEmptySceneImageId: null,
-    },
-  };
-}
-
-export function readPlacementSelectionState(
-  editor: Pick<AssemblyEditorLike, "getSelectedShapes">,
-): { placementId: string | null; shouldClearSelection: boolean } {
-  const selectedShapes = editor.getSelectedShapes().map((shape) => shape as unknown as AssemblyEditorShapeLike);
-  const placementShape = selectedShapes.find((shape) => Boolean(readPlacementIdFromShape(shape)));
-  if (placementShape) {
-    return {
-      placementId: readPlacementIdFromShape(placementShape),
-      shouldClearSelection: false,
-    };
-  }
-  return {
-    placementId: null,
-    // WHY: jsdom 里无法可靠证明 tldraw 原生 hit-test/lock 行为；这里在 bridge 边界主动清掉背景选中，
-    // 保证业务层永远不会把 Empty Scene 当作可选 placement。
-    shouldClearSelection: selectedShapes.some((shape) => isTrustedAssemblyBackgroundShape(shape)),
-  };
-}
-
-export function syncSelectionToEditor(
-  editor: Pick<AssemblyEditorLike, "getSelectedShapeIds" | "select" | "selectNone">,
-  selectedPlacementId: string | null,
-) {
-  const expectedSelection = selectedPlacementId ? selectionShapeIdForPlacement(selectedPlacementId) : null;
-  const currentSelection = [...editor.getSelectedShapeIds()].map(String)[0] ?? null;
-  if (currentSelection === expectedSelection) {
-    return;
-  }
-  if (expectedSelection) {
-    editor.select(expectedSelection as never);
-    return;
-  }
-  editor.selectNone();
-}
-
-export function applySnapshotToEditor(
-  editor: AssemblyEditorLike,
-  snapshot: ReturnType<typeof buildTldrawAssemblySnapshot>,
-  isApplyingSnapshotRef: MutableRefObject<boolean>,
-  cameraFitStateRef: MutableRefObject<AssemblyCameraFitState>,
-) {
-  if (snapshotAlreadyApplied(editor, snapshot)) {
-    return;
-  }
-
-  const emptySceneImageId = snapshot.backgroundAsset.meta.sourceId;
-  const shouldFitCamera = !cameraFitStateRef.current.hasFittedInitialScene
-    || cameraFitStateRef.current.lastFittedEmptySceneImageId !== emptySceneImageId;
-
-  isApplyingSnapshotRef.current = true;
-  editor.run(() => {
-    const currentShapeIds = editor.getCurrentPageShapes()
-      .map((shape) => String(shape.id))
-      .filter((shapeId) => isAssemblyManagedShapeId(shapeId));
-    if (currentShapeIds.length > 0) {
-      editor.deleteShapes(currentShapeIds as never);
-    }
-
-    const currentAssetIds = editor.getAssets()
-      .map((asset) => String(asset.id))
-      .filter((assetId) => isAssemblyManagedAssetId(assetId));
-    if (currentAssetIds.length > 0) {
-      editor.deleteAssets(currentAssetIds as never);
-    }
-
-    editor.createAssets([snapshot.backgroundAsset, ...snapshot.assetRecords] as never);
-    editor.createShapes([
-      snapshot.backgroundShape,
-      ...[...snapshot.placementShapes].reverse(),
-    ] as never);
-
-    if (shouldFitCamera) {
-      editor.zoomToBounds(snapshot.fitBounds, { inset: 48 });
-    }
-  }, { history: "ignore", ignoreShapeLock: true });
-
-  if (shouldFitCamera) {
-    cameraFitStateRef.current = {
-      hasFittedInitialScene: true,
-      lastFittedEmptySceneImageId: emptySceneImageId,
-    };
-  }
-
-  requestAnimationFrame(() => {
-    isApplyingSnapshotRef.current = false;
-  });
-}
-
-function snapshotAlreadyApplied(
-  editor: AssemblyEditorLike,
-  snapshot: ReturnType<typeof buildTldrawAssemblySnapshot>,
-) {
-  const currentShapes = editor.getCurrentPageShapes()
-    .map((shape) => shape as unknown as {
-      id: string;
-      x: number;
-      y: number;
-      rotation: number;
-      isLocked?: boolean;
-      props: { assetId?: string; w?: number; h?: number };
-    })
-    .filter((shape) => isAssemblyManagedShapeId(shape.id));
-  const expectedShapes = [snapshot.backgroundShape, ...snapshot.placementShapes];
-
-  if (currentShapes.length !== expectedShapes.length) {
-    return false;
-  }
-
-  const currentAssets = editor.getAssets()
-    .map((asset) => asset as unknown as { id: string; props: { src?: string } })
-    .filter((asset) => isAssemblyManagedAssetId(asset.id));
-  const expectedAssets = [snapshot.backgroundAsset, ...snapshot.assetRecords];
-  if (currentAssets.length !== expectedAssets.length) {
-    return false;
-  }
-
-  const currentShapeById = new Map(currentShapes.map((shape) => [shape.id, shape]));
-  for (const shape of expectedShapes) {
-    const currentShape = currentShapeById.get(shape.id);
-    if (!currentShape) {
-      return false;
-    }
-    if (
-      currentShape.x !== shape.x ||
-      currentShape.y !== shape.y ||
-      currentShape.rotation !== shape.rotation ||
-      currentShape.props.assetId !== shape.props.assetId ||
-      currentShape.props.w !== shape.props.w ||
-      currentShape.props.h !== shape.props.h ||
-      Boolean(currentShape.isLocked) !== Boolean(shape.isLocked)
-    ) {
-      return false;
-    }
-  }
-
-  const currentAssetById = new Map(currentAssets.map((asset) => [asset.id, asset]));
-  for (const asset of expectedAssets) {
-    if (currentAssetById.get(asset.id)?.props.src !== asset.props.src) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function sameProjection(
-  draft: AssemblyManifestDraft,
-  projected: Pick<AssemblyManifestDraft, "placements" | "layer_order">,
-) {
-  return JSON.stringify(draft.placements) === JSON.stringify(projected.placements) &&
-    JSON.stringify(draft.layer_order) === JSON.stringify(projected.layer_order);
-}

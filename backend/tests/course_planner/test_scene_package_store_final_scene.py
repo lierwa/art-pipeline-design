@@ -35,18 +35,39 @@ def test_lock_final_scene_requires_selected_empty_scene(tmp_path: Path) -> None:
         )
 
 
-def test_lock_final_scene_requires_placed_asset(tmp_path: Path) -> None:
+def test_lock_final_scene_allows_zero_placements_when_manifest_is_ready(
+    tmp_path: Path,
+) -> None:
     store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
+    package = store.read_chapter_scene_package(chapter.id)
+    store.update_chapter_scene_prompt(
+        chapter.id,
+        prompt_text=package.prompt.prompt_text,
+        scene_spatial_contract=package.prompt.scene_spatial_contract,
+        target_objects=[],
+        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
+    )
+    package = store.read_chapter_scene_package(chapter.id)
+    store.save_chapter_scene_assembly(
+        chapter.id,
+        ChapterSceneAssembly(
+            empty_scene_image_id=package.current_empty_scene_image_id,
+            empty_scene_size=package.assembly.empty_scene_size,
+            placements=[],
+            groups=[],
+            layer_order=[],
+        ),
+    )
 
-    with pytest.raises(
-        ScenePackagePreconditionError,
-        match="placed Scene Asset",
-    ):
-        store.lock_final_chapter_scene(
-            chapter.id,
-            image_bytes=make_png_bytes(width=96, height=64),
-            original_filename="final.png",
-        )
+    locked = store.lock_final_chapter_scene(
+        chapter.id,
+        image_bytes=make_png_bytes(width=96, height=64),
+        original_filename="final.png",
+    )
+
+    assert locked.final_scene is not None
+    assert locked.final_scene.assembly_snapshot.placements == []
+    assert locked.final_scene.placed_assets == []
 
 
 def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:

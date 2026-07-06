@@ -10,7 +10,7 @@ export function AssemblyTargetCoveragePanel({
 }: AssemblyTargetCoveragePanelProps) {
   return (
     <section
-      className="chapter-studio-panel chapter-studio-panel-stack"
+      className="chapter-studio-panel chapter-studio-panel-stack assembly-target-coverage-panel"
       aria-label="Assembly target coverage"
     >
       <div className="chapter-studio-panel-heading">

@@ -1,6 +1,7 @@
 import "./assemblyEditorDependencyMocks";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { act } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
@@ -15,59 +16,13 @@ import {
   waitFor,
   within,
 } from "../app/appTestHarness";
-import type { DirectChapterAssetUploadInput } from "../../src/features/coursePlanner/api";
-import {
-  buildAssemblyReadiness,
-  isAssemblyReady,
-} from "../../src/features/coursePlanner/assembly/assemblyReadiness";
-import { exportAssemblyPreviewFile } from "../../src/features/coursePlanner/assembly/assemblyExport";
-import { buildTldrawAssemblySnapshot } from "../../src/features/coursePlanner/assembly/tldrawAssemblyAdapter";
-import {
-  applySnapshotToEditor,
-  createAssemblyCameraFitState,
-  readPlacementSelectionState,
-  syncSelectionToEditor,
-  type AssemblyEditorShapeLike,
-} from "../../src/features/coursePlanner/components/AssemblyEditorCanvas";
-import { ChapterSceneStudio } from "../../src/features/coursePlanner/components/ChapterSceneStudio";
-import { studioStatusLabel } from "../../src/features/coursePlanner/pages/ChapterWorkspacePage";
-import type {
-  AsyncStatusMap,
-  ChapterSceneAssemblyManifest,
-  ChapterScenePackage,
-} from "../../src/features/coursePlanner/types";
-import {
-  characterIpFixture,
-  referenceImageFixture,
-  sceneAsset,
-  snapshot,
-  studioChapterFixture,
-  studioScenePackageFixture,
-  studioScenePackFixture,
-} from "./chapterWorkspaceFixtures";
-
-import {
-  ASSEMBLY_AUTOSAVE_DEBOUNCE_MS,
-  AssemblyEditorHarness,
-  type AssemblyEditorHarnessControls,
-  advanceAutosaveCycle,
-  advanceAutosaveTime,
-  buildLockedFinalScene,
-  buildSnapshot,
-  emptyAssemblyManifest,
-  flushAsyncScenePackage,
-  mockCanvasBlob,
-  mockScenePackageImages,
-  scenePackageWithDependentPlacements,
-  scenePackageWithGroupedPlacements,
-  scenePackageWithReplacementCandidate,
-  scenePackageWithTwoPlacements,
-  scenePackageWithTwoPlacementsConfig,
-} from "./assemblyEditorHarness";
-import { createMockAssemblyEditor, layerLabels } from "./assemblyEditorTestUtils";
+import { AssemblyWorkspacePanel } from "../../src/features/coursePlanner/components/AssemblyWorkspacePanel";
+import { studioScenePackageFixture } from "./chapterWorkspaceFixtures";
+import { AssemblyEditorHarness, mockScenePackageImages, scenePackageWithTwoPlacements } from "./assemblyEditorHarness";
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  localStorage.clear();
   vi.stubGlobal("requestAnimationFrame", ((callback: FrameRequestCallback) => {
     callback(performance.now());
     return 1;
@@ -78,152 +33,133 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
-  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
+describe("Assembly editor navigation shell", () => {
+  it("sizes the Assembly route from the parent app-shell row instead of the full viewport", () => {
+    const shellCss = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyEditorShell.css"),
+      "utf8",
+    );
+    const workspaceCss = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyWorkspace.css"),
+      "utf8",
+    );
 
-describe("Chapter Scene Studio assembly editor wiring", () => {
-  it("renders the tldraw-backed editor controls when an Empty Scene Image is selected", async () => {
-    mockScenePackageImages();
-    render(<AssemblyEditorHarness initialScenePackage={studioScenePackageFixture()} />);
-
-    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Redo" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Fit" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Zoom in" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Zoom out" })).toBeInTheDocument();
-    expect(screen.getByTestId("mock-tldraw-root")).toBeInTheDocument();
+    for (const css of [shellCss, workspaceCss]) {
+      const pageRule = css.match(/\.chapter-assembly-editor-page\s*\{[^}]+}/)?.[0] ?? "";
+      expect(pageRule).toContain("height: 100%");
+      expect(pageRule).toContain("min-height: 0");
+      expect(pageRule).not.toContain("height: 100vh");
+    }
   });
 
-  it("disables Add to Assembly when no Empty Scene Image is selected", async () => {
+  it("renders local Assembly header and Back to Chapter context", async () => {
+    mockScenePackageImages();
+    render(
+      <MemoryRouter>
+        <AssemblyWorkspacePanel
+          backTo="/course-planner/chapters/chapter_breakfast_kitchen"
+          chapterTitle="Chapter 02 - Breakfast Time"
+          onDeleteChapterAsset={vi.fn(async () => null)}
+          onDuplicateChapterAsset={vi.fn(async () => null)}
+          onListGeneratedAssets={vi.fn(async () => [])}
+          onMaterializeGeneratedAsset={vi.fn(async () => null)}
+          onSaveAssembly={vi.fn(async () => null)}
+          onUploadDirectAsset={vi.fn(async () => null)}
+          scenePackage={studioScenePackageFixture()}
+        />
+      </MemoryRouter>,
+    );
+
+    const workspace = await screen.findByRole("region", { name: "Assembly workspace" });
+    expect(within(workspace).getByRole("link", { name: "Back to Chapter" })).toHaveAttribute(
+      "href",
+      "/course-planner/chapters/chapter_breakfast_kitchen",
+    );
+    expect(within(workspace).getByText("Assembly")).toBeInTheDocument();
+    expect(within(workspace).getByText("Chapter 02 - Breakfast Time")).toBeInTheDocument();
+  });
+
+  it("renders Assembly under its product top bar with a resizable three-panel editor", async () => {
+    mockScenePackageImages();
+    render(
+      <MemoryRouter>
+        <AssemblyWorkspacePanel
+          backTo="/course-planner/chapters/chapter_breakfast_kitchen"
+          chapterTitle="Chapter 02 - Breakfast Time"
+          onDeleteChapterAsset={vi.fn(async () => null)}
+          onDuplicateChapterAsset={vi.fn(async () => null)}
+          onListGeneratedAssets={vi.fn(async () => [])}
+          onMaterializeGeneratedAsset={vi.fn(async () => null)}
+          onSaveAssembly={vi.fn(async () => null)}
+          onUploadDirectAsset={vi.fn(async () => null)}
+          scenePackage={studioScenePackageFixture()}
+        />
+      </MemoryRouter>,
+    );
+
+    const workspace = await screen.findByRole("region", { name: "Assembly workspace" });
+    const topbar = within(workspace).getByRole("banner", { name: "Assembly editor top bar" });
+    const editorLayout = within(workspace).getByTestId("assembly-editor-layout");
+
+    expect(topbar.compareDocumentPosition(editorLayout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(editorLayout).toHaveAttribute("data-panel-group");
+    expect(editorLayout).toHaveClass("assembly-editor-layout");
+    expect(editorLayout).toHaveStyle({ height: "100%" });
+    expect(within(editorLayout).getAllByTestId(/assembly-editor-(assets|canvas|inspector)-panel/)).toHaveLength(3);
+    expect(within(editorLayout).getAllByRole("separator", { name: /Resize .* rail/ })).toHaveLength(2);
+  });
+
+  it("persists rail widths only in local UI storage and never in the Assembly save manifest", async () => {
+    mockScenePackageImages();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithTwoPlacements()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const editorLayout = await screen.findByTestId("assembly-editor-layout");
+    expect(within(editorLayout).getByRole("separator", { name: "Resize assets rail" })).toBeInTheDocument();
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    fireEvent.change(within(properties).getByLabelText("Position X"), { target: { value: "450" } });
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+
+    await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    expect(localStorage.getItem("course-planner:assembly-editor:panel-layout")).toBeTruthy();
+    expect(JSON.stringify(saveSpy.mock.calls[0]?.[0])).not.toMatch(/panel|rail|layout/i);
+  });
+
+  it("opens generated Chapter Assets as a fixed overlay without resizing the editor panel grid", async () => {
+    mockScenePackageImages();
     const user = userEvent.setup();
     render(
       <AssemblyEditorHarness
-        initialScenePackage={studioScenePackageFixture({
-          current_empty_scene_image_id: null,
-          assembly: {
-            ...emptyAssemblyManifest(),
-            empty_scene_image_id: null,
-            empty_scene_size: null,
-          },
-        })}
+        generatedAssets={[{
+          complete_scene_image_id: "complete_scene_001",
+          pipeline_run_id: "pipeline_run_001",
+          run_asset_id: "asset_generated_bowl",
+          display_name: "Generated bowl",
+          state: "ready",
+          width: 512,
+          height: 512,
+          unavailable_reason: null,
+          chapter_asset_id: null,
+        }]}
+        initialScenePackage={scenePackageWithTwoPlacements()}
       />,
     );
 
-    const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
-    expect(within(assetPool).getByText("Select an Empty Scene Image to enable Add to Assembly.")).toBeInTheDocument();
-    const addButton = within(assetPool).getByRole("button", { name: "Add to Assembly" });
-    expect(addButton).toBeDisabled();
+    const editorLayout = await screen.findByTestId("assembly-editor-layout");
+    const panelCountBeforeOpen = within(editorLayout).getAllByTestId(/assembly-editor-(assets|canvas|inspector)-panel/).length;
+    await user.click(screen.getByRole("button", { name: "Import generated assets" }));
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
-    expect(screen.getByText("Select an Empty Scene Image to start the Assembly editor.")).toBeInTheDocument();
-  });
-
-  it("shows target coverage from placed assets and keeps historical notes non-blocking", async () => {
-    mockScenePackageImages();
-    render(
-      <AssemblyEditorHarness
-        initialScenePackage={studioScenePackageFixture({
-          target_object_exemptions: [
-            {
-              target_object_id: "target_object_cloth",
-              reason: "Legacy note from an earlier review.",
-            },
-          ],
-        })}
-      />,
-    );
-
-    const coveragePanel = screen.getByRole("region", { name: "Assembly target coverage" });
-    expect(within(coveragePanel).getByText("Breakfast bowl")).toBeInTheDocument();
-    expect(within(coveragePanel).getByText("Covered")).toBeInTheDocument();
-    expect(within(coveragePanel).getByText("cloth")).toBeInTheDocument();
-    expect(within(coveragePanel).getByText("Missing")).toBeInTheDocument();
-    expect(within(coveragePanel).getByText("Note: Legacy note from an earlier review.")).toBeInTheDocument();
-    expect(screen.getByText("Missing target objects: cloth.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Lock Final" })).toBeDisabled();
-    expect(within(coveragePanel).queryByText("Exempted")).not.toBeInTheDocument();
-    expect(within(coveragePanel).queryByRole("button", { name: /exemption/i })).not.toBeInTheDocument();
-  });
-
-  it("surfaces a save-first Lock Final action when the selected Empty Scene changes after the assembly was last saved", async () => {
-    mockScenePackageImages();
-    render(
-      <AssemblyEditorHarness
-        initialScenePackage={{
-          ...scenePackageWithTwoPlacements(),
-          current_empty_scene_image_id: "empty_scene_002",
-          empty_scene_images: [
-            scenePackageWithTwoPlacements().empty_scene_images[0],
-            {
-              ...scenePackageWithTwoPlacements().empty_scene_images[0],
-              id: "empty_scene_002",
-              original_filename: "empty-scene-2.png",
-            },
-          ],
-          assembly: {
-            ...scenePackageWithTwoPlacements().assembly,
-            empty_scene_image_id: "empty_scene_001",
-          },
-        }}
-      />,
-    );
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Lock Final" })).toBeEnabled());
-  });
-
-  it("projects mismatch readiness from the manifest argument instead of hard-coding scenePackage.assembly", () => {
-    const scenePackage = {
-      ...scenePackageWithTwoPlacements(),
-      current_empty_scene_image_id: "empty_scene_002",
-      empty_scene_images: [
-        scenePackageWithTwoPlacements().empty_scene_images[0],
-        {
-          ...scenePackageWithTwoPlacements().empty_scene_images[0],
-          id: "empty_scene_002",
-          original_filename: "empty-scene-2.png",
-        },
-      ],
-      assembly: {
-        ...scenePackageWithTwoPlacements().assembly,
-        empty_scene_image_id: "empty_scene_001",
-      },
-    };
-
-    const matchingDraftManifest = {
-      ...scenePackage.assembly,
-      empty_scene_image_id: "empty_scene_002",
-      empty_scene_size: { width: 1024, height: 1024 },
-    };
-
-    expect(buildAssemblyReadiness(scenePackage).is_ready).toBe(false);
-    expect(
-      buildAssemblyReadiness(scenePackage, matchingDraftManifest).reasons,
-    ).not.toContain(
-      "Saved Assembly still points to a different Empty Scene Image. Re-save after reviewing the current selection.",
-    );
-  });
-
-  it("does not report Assembly ready in the page header when saved assembly is stale", () => {
-    const scenePackage = {
-      ...scenePackageWithTwoPlacements(),
-      current_empty_scene_image_id: "empty_scene_002",
-      empty_scene_images: [
-        scenePackageWithTwoPlacements().empty_scene_images[0],
-        {
-          ...scenePackageWithTwoPlacements().empty_scene_images[0],
-          id: "empty_scene_002",
-          original_filename: "empty-scene-2.png",
-        },
-      ],
-      assembly: {
-        ...scenePackageWithTwoPlacements().assembly,
-        empty_scene_image_id: "empty_scene_001",
-      },
-    };
-
-    expect(isAssemblyReady(scenePackage)).toBe(false);
-    expect(studioStatusLabel("ready", scenePackage)).toBe("Images ready");
+    const drawer = await screen.findByRole("complementary", { name: "Generated Chapter Assets" });
+    expect(drawer.closest(".course-planner-drawer-overlay")).toBeInTheDocument();
+    expect(drawer.closest(".assembly-editor-layout")).toBeNull();
+    expect(within(editorLayout).getAllByTestId(/assembly-editor-(assets|canvas|inspector)-panel/)).toHaveLength(panelCountBeforeOpen);
   });
 });

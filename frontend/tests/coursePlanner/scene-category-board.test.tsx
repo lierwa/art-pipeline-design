@@ -34,7 +34,7 @@ describe("Scene Category Board", () => {
       expect(pageHeading).toBeInTheDocument();
       const pageHeader = pageHeading.closest(".course-planner-page-header");
       expect(pageHeader).not.toBeNull();
-      expect(within(pageHeader as HTMLElement).getByText("室内家庭篇")).toBeInTheDocument();
+      expect(await within(pageHeader as HTMLElement).findByText("室内家庭篇")).toBeInTheDocument();
       expect(screen.getByRole("navigation", { name: "Scene Pack list" })).toHaveTextContent("室内家庭篇");
       expect(screen.queryByLabelText("Target Level")).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Chapter Count")).not.toBeInTheDocument();
@@ -48,9 +48,13 @@ describe("Scene Category Board", () => {
       expect(screen.getAllByRole("region", { name: "Chapter list" })).toHaveLength(1);
       const packItem = screen.getByRole("group", { name: /Scene Pack 室内家庭篇/s });
       expect(within(packItem).getByRole("group", { name: "Scene Pack actions for 室内家庭篇" })).toBeInTheDocument();
-      expect(within(packItem).getByRole("button", { name: /Edit/i })).toBeVisible();
-      expect(within(packItem).getByRole("button", { name: /Archive/i })).toBeVisible();
-      expect(within(packItem).getByRole("button", { name: /Delete/i })).toBeVisible();
+      expect(within(packItem).getByRole("button", { name: /Edit/i })).toHaveClass("course-planner-icon-button");
+      expect(within(packItem).getByRole("button", { name: /Archive/i })).toHaveClass("course-planner-icon-button");
+      expect(within(packItem).getByRole("button", { name: /Delete/i })).toHaveClass("course-planner-icon-button");
+      expect(within(packItem).queryByText(/^Edit$/)).not.toBeInTheDocument();
+      expect(within(packItem).queryByText(/^Archive$/)).not.toBeInTheDocument();
+      expect(within(packItem).queryByText(/^Delete$/)).not.toBeInTheDocument();
+      expect(pageHeader?.parentElement).toHaveClass("scene-category-board-page__header");
     } finally {
       restoreFetch();
       window.history.pushState({}, "", "/");
@@ -241,6 +245,34 @@ describe("Scene Category Board", () => {
     }
   });
 
+  it("keeps destructive Scene Pack actions behind confirmation while using compact controls", async () => {
+    const user = userEvent.setup();
+    const restoreFetch = installCoursePlannerFetchMock();
+
+    try {
+      window.history.pushState({}, "", "/course-planner");
+      render(<App />);
+
+      await screen.findByRole("heading", { name: "Scene Pack / Chapter Board" });
+      const packItem = screen.getByRole("group", { name: /Scene Pack 室内家庭篇/s });
+
+      await user.click(within(packItem).getByRole("button", { name: "Archive Scene Pack 室内家庭篇" }));
+      const archiveDialog = await screen.findByRole("alertdialog", { name: "Archive Scene Pack" });
+      expect(archiveDialog).toHaveTextContent("Archive this Scene Pack");
+      await user.click(within(archiveDialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => {
+        expect(screen.queryByRole("alertdialog", { name: "Archive Scene Pack" })).not.toBeInTheDocument();
+      });
+
+      await user.click(within(packItem).getByRole("button", { name: "Delete Scene Pack 室内家庭篇" }));
+      const deleteDialog = await screen.findByRole("alertdialog", { name: "Delete Scene Pack" });
+      expect(deleteDialog).toHaveTextContent("Existing files stay in the scene library.");
+    } finally {
+      restoreFetch();
+      window.history.pushState({}, "", "/");
+    }
+  });
+
   it("hides the dismissed error toast while keeping the inline error visible", async () => {
     vi.useFakeTimers();
     const restoreFetch = installFetchMock(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -263,7 +295,12 @@ describe("Scene Category Board", () => {
         await Promise.resolve();
       });
 
-      expect(screen.getByRole("alert")).toHaveTextContent("Course Planner state failed to load.");
+      const page = screen.getByRole("main");
+      const inlineError = screen.getByRole("alert");
+      expect(page).toHaveClass("has-inline-error");
+      expect(inlineError).toHaveClass("course-planner-inline-error");
+      expect(inlineError).not.toHaveClass("course-planner-error");
+      expect(inlineError).toHaveTextContent("Course Planner state failed to load.");
       expect(screen.getByText("Course Planner action failed")).toBeInTheDocument();
 
       await act(async () => {
@@ -271,7 +308,7 @@ describe("Scene Category Board", () => {
       });
 
       expect(screen.queryByText("Course Planner action failed")).not.toBeInTheDocument();
-      expect(screen.getByRole("alert")).toHaveTextContent("Course Planner state failed to load.");
+      expect(inlineError).toHaveTextContent("Course Planner state failed to load.");
     } finally {
       vi.useRealTimers();
       restoreFetch();

@@ -1,4 +1,5 @@
 import { useState, type DragEvent } from "react";
+import { ExternalLink, GripVertical, Trash2 } from "lucide-react";
 import { Link } from "react-router";
 
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
@@ -49,10 +50,12 @@ export function SelectedChapterSequence({
             const deleteButton = (
               <button
                 type="button"
+                className="course-planner-icon-button course-planner-compact-icon-action"
                 aria-label={`Delete Chapter ${chapter.title}`}
+                title={`Delete Chapter ${chapter.title}`}
                 disabled={isDeleteDisabled}
               >
-                {isDeleting ? "Deleting..." : "Trash"}
+                {isDeleting ? "Deleting..." : <Trash2 size={14} aria-hidden="true" />}
               </button>
             );
 
@@ -60,28 +63,35 @@ export function SelectedChapterSequence({
               <li
                 key={chapter.id}
                 className="selected-sequence-item"
-                draggable={!isBusy}
-                onDragStart={() => setDraggedChapterId(chapter.id)}
-                onDragEnd={() => setDraggedChapterId(null)}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => handleDrop(event, chapter.id)}
               >
                 <button
                   type="button"
-                  className="chapter-drag-handle"
+                  className="chapter-drag-handle course-planner-icon-button course-planner-compact-icon-action"
                   aria-label={`Drag handle for ${chapter.title}`}
+                  title={`Drag handle for ${chapter.title}`}
+                  draggable={!isBusy}
                   disabled={isBusy}
+                  onDragStart={() => setDraggedChapterId(chapter.id)}
+                  onDragEnd={() => setDraggedChapterId(null)}
                 >
-                  ::
+                  <GripVertical size={16} aria-hidden="true" />
                 </button>
-                <div>
+                <div className="selected-sequence-content">
                   <span>#{index + 1}</span>
                   <h3>{chapter.title}</h3>
                   <p>{chapter.summary}</p>
                 </div>
                 <div className="selected-sequence-actions">
-                  <Link to={`/course-planner/chapters/${encodeURIComponent(chapter.id)}`} aria-label={`Open Designer for ${chapter.title}`}>
-                    Open Designer
+                  <Link
+                    className="course-planner-compact-link"
+                    to={`/course-planner/chapters/${encodeURIComponent(chapter.id)}`}
+                    aria-label={`Open Designer for ${chapter.title}`}
+                    title={`Open Designer for ${chapter.title}`}
+                  >
+                    <ExternalLink size={14} aria-hidden="true" />
+                    <span>Open Designer</span>
                   </Link>
                   {isDeleteDisabled ? (
                     deleteButton

@@ -194,7 +194,9 @@ def test_lock_final_scene_uploads_composed_png_and_records_snapshot(
     assert final_scene["height"] == 80
 
 
-def test_lock_final_scene_requires_placed_asset(client: TestClient) -> None:
+def test_lock_final_scene_allows_zero_placements_without_required_targets(
+    client: TestClient,
+) -> None:
     chapter_id = _create_chapter(client)
     empty_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
@@ -205,11 +207,24 @@ def test_lock_final_scene_requires_placed_asset(client: TestClient) -> None:
         f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
         json={"emptySceneImageId": empty_id},
     )
+    client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/assembly",
+        json={
+            "schema_version": 1,
+            "empty_scene_image_id": empty_id,
+            "empty_scene_size": {"width": 120, "height": 80},
+            "placements": [],
+            "groups": [],
+            "layer_order": [],
+        },
+    )
 
     response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene",
         files={"file": ("final.png", _png_bytes(width=120, height=80), "image/png")},
     )
 
-    assert response.status_code == 409
-    assert "placed Scene Asset" in response.json()["detail"]
+    assert response.status_code == 200
+    final_scene = response.json()["scenePackage"]["final_scene"]
+    assert final_scene["assembly_snapshot"]["placements"] == []
+    assert final_scene["placed_assets"] == []

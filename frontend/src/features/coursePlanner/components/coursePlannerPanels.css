@@ -118,12 +118,18 @@
 .chapter-card h3,
 .selected-sequence-item h3,
 .chapter-studio-card h3,
-.chapter-studio-readiness-row h3,
-.chapter-studio-fact-block h3 {
+.chapter-studio-readiness-row h3 {
   margin: 0;
   color: var(--course-text-strong);
   font-size: 0.92rem;
   font-weight: 790;
+}
+
+.chapter-studio-rail-header h2 {
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .chapter-studio-step-list {
@@ -185,8 +191,44 @@
 .chapter-studio-main {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(240px, 0.62fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
   gap: 1rem;
+}
+
+.chapter-studio-main-heading {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1rem;
+  align-items: end;
+}
+
+.chapter-studio-main-heading h1,
+.chapter-studio-main-heading p,
+.chapter-studio-main-heading span {
+  margin: 0;
+}
+
+.chapter-studio-main-heading p {
+  color: var(--course-accent);
+  font-size: 0.72rem;
+  font-weight: 780;
+  text-transform: uppercase;
+}
+
+.chapter-studio-main-heading h1 {
+  margin-top: 0.25rem;
+  color: var(--course-text-strong);
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+.chapter-studio-main-heading span {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--course-text-muted);
+  font-size: 0.86rem;
 }
 
 .chapter-studio-column,
@@ -196,11 +238,47 @@
   gap: 0.75rem;
 }
 
-.chapter-studio-facts-grid,
 .chapter-studio-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.6rem;
+}
+
+.chapter-prompt-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+}
+
+.chapter-prompt-summary-grid > div {
+  min-width: 0;
+  padding: 0 0.8rem;
+  border-left: 1px solid #1b3448;
+}
+
+.chapter-prompt-summary-grid > div:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.chapter-prompt-summary-grid dt {
+  color: var(--course-text-muted);
+  font-size: 0.72rem;
+}
+
+.chapter-prompt-summary-grid dd {
+  margin: 0.28rem 0 0;
+  overflow: hidden;
+  color: var(--course-text-strong);
+  font-size: 0.86rem;
+  font-weight: 780;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chapter-studio-form-grid-compact {
@@ -220,6 +298,120 @@
 .chapter-studio-card-list {
   display: grid;
   gap: 0.6rem;
+}
+
+.chapter-studio-readiness-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.6rem;
+}
+
+.chapter-studio-readiness-actions {
+  display: inline-flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.chapter-studio-inline-disclosure {
+  position: relative;
+}
+
+.chapter-studio-inline-disclosure summary {
+  min-width: 132px;
+  padding: 0.44rem 0.72rem;
+  border: 1px solid #246278;
+  border-radius: 8px;
+  background: #0f7084;
+  color: var(--course-text-strong);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 800;
+  list-style: none;
+  text-align: center;
+}
+
+.chapter-studio-inline-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.chapter-studio-inline-disclosure-panel {
+  position: absolute;
+  right: 0;
+  z-index: 8;
+  width: min(460px, 70vw);
+  margin-top: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.36);
+}
+
+.chapter-studio-readiness-row p {
+  margin: 0.16rem 0 0;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.chapter-assembly-summary-card {
+  display: grid;
+  gap: 0.85rem;
+  align-items: stretch;
+}
+
+.chapter-assembly-summary-heading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.chapter-assembly-summary-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.chapter-assembly-summary-copy p {
+  margin: 0;
+  color: var(--course-text-muted);
+}
+
+.chapter-assembly-summary-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.chapter-assembly-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.chapter-assembly-summary-metrics > div {
+  min-width: 0;
+  padding: 0.72rem 0.82rem;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+}
+
+.chapter-assembly-summary-metrics dt {
+  color: var(--course-text-muted);
+  font-size: 0.68rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.chapter-assembly-summary-metrics dd {
+  margin: 0.18rem 0 0;
+  color: var(--course-text-strong);
+  font-size: 0.84rem;
+  font-weight: 780;
 }
 
 @media (max-width: 1180px) {
@@ -262,9 +454,21 @@
   .candidate-evaluation dl,
   .chapter-card dl,
   .planning-progress,
-  .chapter-studio-facts-grid,
+  .chapter-assembly-summary-card,
+  .chapter-prompt-summary-grid,
   .chapter-studio-form-grid,
   .chapter-board {
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-assembly-summary-metrics,
+  .chapter-assembly-summary-heading {
+    grid-column: auto;
+    grid-row: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-studio-main-heading {
     grid-template-columns: 1fr;
   }
 }

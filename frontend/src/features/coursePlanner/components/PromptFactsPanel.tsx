@@ -6,7 +6,6 @@ import type {
   ChapterScenePackage,
   ReferenceLibraryImage,
 } from "../types";
-import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
 
 type PromptFactsPanelProps = {
   characterIps: CharacterIpProfile[];
@@ -42,16 +41,13 @@ export function PromptFactsPanel({
     () => scenePackage.cast_assignments.map((assignment) => characterLabel(characterIps, assignment.character_ip_id)),
     [characterIps, scenePackage.cast_assignments],
   );
-  const characterReferenceNames = useMemo(
-    () => scenePackage.cast_assignments.flatMap((assignment) =>
-      assignment.reference_image_ids.map((referenceId) => referenceLabel(referenceImages, referenceId)),
-    ),
-    [referenceImages, scenePackage.cast_assignments],
-  );
   const styleReferenceNames = useMemo(
     () => styleSelections.map((selection) => referenceLabel(referenceImages, selection.reference_image_id)),
     [referenceImages, styleSelections],
   );
+  const styleSummary = styleReferenceNames.length > 0
+    ? `${styleReferenceNames.length} selected`
+    : styleReferenceMode === "confirmed_empty" ? "Confirmed empty" : "Unreviewed";
 
   async function handleSave() {
     setIsSaving(true);
@@ -76,45 +72,15 @@ export function PromptFactsPanel({
           <h2>Prompt Facts</h2>
           <p>{scenePackage.prompt.updated_at ? `Updated ${scenePackage.prompt.updated_at}` : "Draft"}</p>
         </div>
-        <CoursePlannerStatusBadge tone={avoidReviewed ? "success" : "warning"}>
-          {avoidReviewed ? "Reviewed" : "Pending"}
-        </CoursePlannerStatusBadge>
       </div>
 
-      <div className="chapter-studio-form-grid">
-        <label className="course-planner-field">
-          <span>Prompt text</span>
-          <textarea value={promptText} onChange={(event) => setPromptText(event.target.value)} />
-        </label>
-        <label className="course-planner-field">
-          <span>Spatial contract</span>
-          <textarea value={spatialContract} onChange={(event) => setSpatialContract(event.target.value)} />
-        </label>
-      </div>
-
-      <div className="chapter-studio-facts-grid">
-        <FactBlock title="Character IP" items={characterNames} emptyText="Pending" />
-        <FactBlock title="Cast action" items={scenePackage.cast_assignments.map((assignment) => assignment.action_intent)} emptyText="Pending" />
-        <FactBlock title="Character references" items={characterReferenceNames} emptyText="Pending" />
-        <FactBlock title="Target objects" items={scenePackage.target_objects.map((item) => item.label)} emptyText="None" />
-        <FactBlock title="Avoid objects" items={scenePackage.avoid_objects.map((item) => item.label)} emptyText="None" />
-        <FactBlock title="Style references" items={styleReferenceNames} emptyText="Confirmed empty" />
-      </div>
-
-      <div className="chapter-studio-form-grid chapter-studio-form-grid-compact">
-        <label className="course-planner-field chapter-studio-checkbox">
-          <span>Avoid reviewed</span>
-          <input type="checkbox" checked={avoidReviewed} onChange={(event) => setAvoidReviewed(event.target.checked)} />
-        </label>
-        <label className="course-planner-field">
-          <span>Style mode</span>
-          <select value={styleReferenceMode} onChange={(event) => setStyleReferenceMode(event.target.value as typeof styleReferenceMode)}>
-            <option value="unreviewed">Unreviewed</option>
-            <option value="selected">Selected</option>
-            <option value="confirmed_empty">Confirmed empty</option>
-          </select>
-        </label>
-      </div>
+      <dl className="chapter-prompt-summary-grid">
+        <PromptSummaryMetric label="Characters" value={String(characterNames.length)} />
+        <PromptSummaryMetric label="Target Objects" value={String(scenePackage.target_objects.length)} />
+        <PromptSummaryMetric label="Avoid Objects" value={String(scenePackage.avoid_objects.length)} />
+        <PromptSummaryMetric label="Style" value={styleSummary} />
+        <PromptSummaryMetric label="Time & Place" value={spatialContract.trim() ? "Defined" : "Missing"} />
+      </dl>
 
       <div className="chapter-studio-actions">
         <button type="button" className="course-planner-primary-action" disabled={isSaving} onClick={handleSave}>
@@ -122,6 +88,15 @@ export function PromptFactsPanel({
         </button>
       </div>
     </section>
+  );
+}
+
+function PromptSummaryMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
   );
 }
 
@@ -137,25 +112,4 @@ function referenceLabel(referenceImages: ReferenceLibraryImage[], referenceImage
   return image.tags.length > 0
     ? `${image.original_filename} (${image.tags.join(", ")})`
     : image.original_filename;
-}
-
-function FactBlock({ emptyText, items, title }: { title: string; items: string[]; emptyText: string }) {
-  const values = items.filter((item) => item.trim().length > 0);
-
-  return (
-    <section className="chapter-studio-fact-block">
-      <h3>{title}</h3>
-      {values.length ? (
-        <div className="course-planner-chip-list">
-          {values.map((item) => (
-            <span key={item} className="course-planner-chip">
-              {item}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <p>{emptyText}</p>
-      )}
-    </section>
-  );
 }

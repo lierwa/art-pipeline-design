@@ -1,13 +1,26 @@
+.chapter-assembly-editor-page {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  padding: 0.9rem;
+  overflow: hidden;
+}
+
 .assembly-workspace-header-actions,
-.assembly-asset-actions,
-.assembly-layer-toolbar {
+.assembly-asset-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
 }
 
-.assembly-asset-status-badges,
+.assembly-layer-panel-heading {
+  align-items: start;
+}
+
+.assembly-asset-status-dots,
 .assembly-alignment-review {
   display: flex;
   flex-wrap: wrap;
@@ -15,31 +28,75 @@
   align-items: center;
 }
 
-.assembly-workspace-shell {
-  display: grid;
-  grid-template-columns: minmax(260px, 0.95fr) minmax(0, 1.4fr) minmax(220px, 0.72fr);
-  gap: 0.75rem;
-  align-items: start;
+.assembly-editor-layout {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  gap: 0;
+  align-items: stretch;
 }
 
-.assembly-workspace-main {
-  display: grid;
-  gap: 0.75rem;
+.assembly-workspace {
+  min-height: 0;
+  overflow: hidden;
 }
 
-.assembly-editor-stage,
+.assembly-editor-assets-column,
+.assembly-editor-canvas-column,
+.assembly-editor-inspector-column {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.assembly-editor-assets-column,
+.assembly-editor-inspector-column {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  overflow: auto;
+}
+
+.assembly-editor-inspector-column {
+  grid-template-rows: minmax(190px, auto) minmax(0, 1fr) auto;
+}
+
+.assembly-editor-canvas-column .assembly-editor-stage {
+  height: 100%;
+}
+
 .assembly-editor-empty-state,
-.assembly-asset-row,
-.assembly-layer-row,
-.assembly-property-list > div {
+.assembly-asset-row {
   border: 1px solid #1b3448;
   border-radius: 8px;
   background: #071522;
 }
 
-.assembly-editor-stage,
 .assembly-editor-empty-state {
   padding: 0.75rem;
+}
+
+.assembly-editor-stage {
+  position: relative;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+}
+
+.assembly-editor-canvas-body {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+}
+
+.assembly-authoring-canvas {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
 }
 
 .assembly-editor-empty-state {
@@ -53,16 +110,12 @@
 }
 
 .assembly-editor-empty-state strong,
-.assembly-asset-details dd,
-.assembly-property-list dd,
-.assembly-layer-row span {
+.assembly-asset-details dd {
   color: var(--course-text-strong);
 }
 
 .assembly-editor-empty-state p,
 .assembly-asset-details dt,
-.assembly-property-list dt,
-.assembly-layer-row small,
 .assembly-asset-pool-help {
   margin: 0;
   color: var(--course-text-muted);
@@ -76,51 +129,71 @@
   font-size: 0.74rem;
 }
 
-.assembly-editor-artboard {
-  position: relative;
-  width: 100%;
-  overflow: hidden;
-  border: 1px solid #254059;
+.assembly-editor-icon-button {
+  width: 2.15rem;
+  min-width: 2.15rem;
+  height: 2.15rem;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.assembly-placement-context-menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 172px;
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.3rem;
+  border: 1px solid #28445b;
   border-radius: 8px;
-  background: #02060a;
+  background: #06111c;
+  box-shadow: 0 18px 42px rgb(0 0 0 / 0.34);
 }
 
-.assembly-editor-tldraw {
-  min-height: 320px;
+.assembly-placement-context-menu-item {
+  min-height: 32px;
+  padding: 0 0.62rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--course-text-strong);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 720;
+  text-align: left;
 }
 
-.assembly-editor-tldraw .tl-container,
-.assembly-editor-tldraw .tl-theme__dark,
-.assembly-editor-tldraw .tl-theme__light {
-  background: #02060a;
+.assembly-placement-context-menu-item:hover,
+.assembly-placement-context-menu-item:focus-visible {
+  background: #0c2a3a;
+  outline: 0;
 }
 
-.assembly-editor-toolbar {
-  position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
-  z-index: 3;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.assembly-editor-placement-selected,
-.assembly-layer-row-selected {
-  box-shadow: 0 0 0 1px rgb(128 215 255 / 0.78);
+.assembly-placement-context-menu-item-danger {
+  color: #fca5a5;
 }
 
 .assembly-asset-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 0.65rem;
-  padding: 0.65rem;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem;
+}
+
+.assembly-asset-row-actionable {
+  cursor: pointer;
+}
+
+.assembly-asset-row:focus-visible {
+  outline: 2px solid #4fc3f7;
+  outline-offset: 2px;
 }
 
 .assembly-asset-thumb {
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   border-radius: 6px;
   object-fit: cover;
   background: #040b12;
@@ -130,6 +203,72 @@
   min-width: 0;
   display: grid;
   gap: 0.55rem;
+}
+
+.assembly-asset-meta h3,
+.assembly-asset-meta p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-asset-meta h3 {
+  margin: 0;
+  color: var(--course-text-strong);
+  font-size: 0.85rem;
+}
+
+.assembly-asset-meta p {
+  margin: 0.12rem 0 0;
+  color: var(--course-text-muted);
+  font-size: 0.72rem;
+}
+
+.assembly-asset-status-dots {
+  gap: 0.35rem;
+}
+
+.assembly-asset-usage-dot {
+  width: 0.58rem;
+  height: 0.58rem;
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgb(2 8 14 / 0.72);
+}
+
+.assembly-asset-usage-dot-used {
+  background: #5be49b;
+}
+
+.assembly-asset-usage-dot-unused {
+  background: #5c7286;
+}
+
+.assembly-asset-usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.72rem;
+  align-items: center;
+  padding-top: 0.54rem;
+  border-top: 1px solid #1b3448;
+  color: var(--course-text-muted);
+  font-size: 0.72rem;
+}
+
+.assembly-asset-legend-item {
+  display: inline-flex;
+  gap: 0.34rem;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.assembly-asset-actions {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: repeat(4, 2.15rem);
+  gap: 0.35rem;
+  justify-content: start;
 }
 
 .assembly-alignment-review {
@@ -150,225 +289,60 @@
   color: var(--course-text-strong);
 }
 
-.assembly-asset-details,
-.assembly-property-list {
+.assembly-asset-details {
   display: grid;
   gap: 0.45rem;
   margin: 0;
 }
 
-.assembly-asset-details > div,
-.assembly-property-list > div {
+.assembly-asset-details > div {
   display: grid;
   gap: 0.12rem;
   padding: 0.45rem 0.5rem;
-}
-
-.assembly-layer-list {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.assembly-layer-tree-shell {
-  min-height: 0;
-  border: 1px solid #1b3448;
-  border-radius: 8px;
-  background: #071522;
-  overflow: hidden;
-}
-
-.assembly-layer-tree-row {
-  min-width: 0;
-}
-
-.assembly-layer-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.5rem;
-  align-items: center;
-  width: 100%;
-  padding: 0.55rem 0.6rem;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  text-align: left;
-}
-
-.assembly-layer-row:hover {
-  background: rgb(12 30 42 / 0.82);
-}
-
-.assembly-layer-row-label {
-  min-width: 0;
-  display: inline-flex;
-  gap: 0.45rem;
-  align-items: center;
-}
-
-.assembly-layer-expander {
-  width: 12px;
-  color: var(--course-text-muted);
-  text-align: center;
-}
-
-.assembly-layer-expander-placeholder {
-  opacity: 0.5;
-}
-
-.assembly-segmented-control {
-  display: inline-flex;
-  gap: 0.35rem;
-  padding: 0.25rem;
-  border: 1px solid #1b3448;
-  border-radius: 8px;
-  background: #08121b;
-}
-
-.assembly-segmented-option {
-  min-width: 88px;
-  padding: 0.45rem 0.7rem;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--course-text-muted);
-}
-
-.assembly-segmented-option-active {
-  background: #10304a;
-  color: var(--course-text-strong);
-}
-
-.assembly-transform-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
-}
-
-.assembly-field {
-  display: grid;
-  gap: 0.25rem;
-  min-width: 0;
-}
-
-.assembly-field span,
-.assembly-dependency-option small {
-  color: var(--course-text-muted);
-  font-size: 0.74rem;
-}
-
-.assembly-field input,
-.assembly-field select {
-  width: 100%;
 }
 
 .assembly-upload-target-field {
   min-width: 150px;
 }
 
-.assembly-dependency-list,
-.assembly-property-actions {
-  display: grid;
-  gap: 0.45rem;
+@media (max-width: 1280px) {
+  .assembly-editor-layout {
+    gap: 0;
+  }
 }
 
-.assembly-dependency-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas:
-    "input id"
-    ". name";
-  column-gap: 0.45rem;
-  row-gap: 0.1rem;
-  align-items: start;
-  padding: 0.5rem;
-  border: 1px solid #183044;
-  border-radius: 8px;
-  background: #08121b;
+@media (max-width: 1080px) {
+  .assembly-editor-layout {
+    min-height: 0;
+  }
+
+  .assembly-editor-inspector-column {
+    grid-template-rows: none;
+  }
+
+  .assembly-editor-stage {
+    min-height: 0;
+  }
 }
 
-.assembly-dependency-option input {
-  grid-area: input;
-  margin-top: 0.15rem;
-}
+@media (max-width: 620px) {
+  .chapter-assembly-editor-page {
+    padding: 0.6rem;
+  }
 
-.assembly-dependency-option span {
-  grid-area: id;
-  color: var(--course-text-strong);
-}
+  .assembly-asset-row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
 
-.assembly-dependency-option small {
-  grid-area: name;
-}
+  .assembly-asset-thumb {
+    width: 48px;
+    height: 48px;
+  }
 
-.assembly-dependency-option-disabled {
-  opacity: 0.6;
-}
+  .assembly-asset-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(4, 2.15rem);
+    justify-content: start;
+  }
 
-.chapter-studio-subpanel {
-  display: grid;
-  gap: 0.55rem;
-  padding: 0.68rem;
-  border: 1px solid #1b3448;
-  border-radius: 8px;
-  background: #071522;
 }
-
-.chapter-studio-subpanel h3,
-.chapter-studio-mini-card h4 {
-  margin: 0;
-  color: var(--course-text-strong);
-  font-size: 0.82rem;
-  font-weight: 790;
-}
-
-.chapter-studio-mini-card {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.55rem;
-  align-items: center;
-  padding: 0.55rem;
-  border: 1px solid #183044;
-  border-radius: 8px;
-  background: #08121b;
-}
-
-.chapter-studio-mini-card p {
-  margin: 0.16rem 0 0;
-  color: var(--course-text-muted);
-  font-size: 0.74rem;
-}
-
-.chapter-studio-icon-action {
-  display: inline-flex;
-  gap: 0.38rem;
-  align-items: center;
-  justify-content: center;
-}
-
-.chapter-studio-preview-frame {
-  min-height: 280px;
-  border: 1px solid #1d4058;
-  border-radius: 12px;
-  background: #071522;
-  overflow: hidden;
-}
-
-.chapter-studio-preview-frame svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-.chapter-studio-preview-bg {
-  fill: #0b1d29;
-}
-
-.chapter-studio-preview-asset {
-  stroke: rgb(7 16 24 / 0.58);
-  stroke-width: 1.2;
-}
-
-.chapter-studio-preview-asset-0 { fill: #89ddff; }
-.chapter-studio-preview-asset-1 { fill: #91f7dc; }
-.chapter-studio-preview-asset-2 { fill: #ffe082; }

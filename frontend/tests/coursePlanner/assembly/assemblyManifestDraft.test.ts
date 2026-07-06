@@ -78,11 +78,44 @@ describe("assemblyManifestDraft", () => {
     expect(draft.layer_order).toEqual(["placement_chapter_asset_cloth"]);
   });
 
-  it("does not create a second placement when the asset is already used", () => {
-    const draft = addAssetPlacement(createAssemblyDraft(studioScenePackageFixture()), "chapter_asset_bowl");
+  it("creates multiple placement records for the same Chapter Asset without renaming the asset source", () => {
+    const scenePackage = studioScenePackageFixture();
 
-    expect(draft.placements).toHaveLength(1);
-    expect(draft.layer_order).toEqual(["placement_bowl"]);
+    const secondPlacementDraft = addAssetPlacement(createAssemblyDraft(scenePackage), "chapter_asset_bowl");
+    const thirdPlacementDraft = addAssetPlacement(secondPlacementDraft, "chapter_asset_bowl");
+
+    expect(thirdPlacementDraft.placements.map((placement) => ({
+      id: placement.id,
+      asset_id: placement.asset_id,
+      display_name: placement.display_name,
+    }))).toEqual([
+      { id: "placement_bowl", asset_id: "chapter_asset_bowl", display_name: "Breakfast bowl" },
+      { id: "placement_chapter_asset_bowl", asset_id: "chapter_asset_bowl", display_name: "Breakfast bowl 2" },
+      { id: "placement_chapter_asset_bowl_2", asset_id: "chapter_asset_bowl", display_name: "Breakfast bowl 3" },
+    ]);
+    expect(thirdPlacementDraft.layer_order).toEqual([
+      "placement_chapter_asset_bowl_2",
+      "placement_chapter_asset_bowl",
+      "placement_bowl",
+    ]);
+    expect(scenePackage.chapter_assets[0]?.display_name).toBe("Breakfast bowl");
+    expect(thirdPlacementDraft.asset_catalog.chapter_asset_bowl?.display_name).toBe("Breakfast bowl");
+  });
+
+  it("fills an available non-conflicting display suffix after deleting an earlier duplicate", () => {
+    const draft = createAssemblyDraft(studioScenePackageFixture());
+    const secondPlacementDraft = addAssetPlacement(draft, "chapter_asset_bowl");
+    const thirdPlacementDraft = addAssetPlacement(secondPlacementDraft, "chapter_asset_bowl");
+    const withSecondRemoved = removePlacement(thirdPlacementDraft, "placement_chapter_asset_bowl");
+
+    const nextDraft = addAssetPlacement(withSecondRemoved, "chapter_asset_bowl");
+
+    expect(nextDraft.placements.map((placement) => placement.display_name)).toEqual([
+      "Breakfast bowl",
+      "Breakfast bowl 3",
+      "Breakfast bowl 2",
+    ]);
+    expect(new Set(nextDraft.placements.map((placement) => placement.display_name)).size).toBe(3);
   });
 
   it("clamps invalid normalized transform values when projecting for save", () => {
@@ -377,27 +410,27 @@ describe("assemblyManifestDraft", () => {
     ]);
   });
 
-  it("never emits editor-only shape ids or tldraw records when projecting a manifest", () => {
+  it("never emits editor-only records when projecting a manifest", () => {
     const draft = createAssemblyDraft(studioScenePackageFixture());
     const editorDraft = {
       ...draft,
       placements: draft.placements.map((placement) => ({
         ...placement,
         editor_shape_id: "shape:placement_bowl",
-        tldraw_record: { id: "shape:placement_bowl", typeName: "shape" },
+        legacy_canvas_record: { id: "shape:placement_bowl", typeName: "shape" },
       })),
       groups: draft.groups.map((group) => ({
         ...group,
         editor_shape_id: "shape:group_1",
       })),
-      tldraw_document: { records: [] },
+      legacy_canvas_document: { records: [] },
     };
 
     const manifest = projectManifestForSave(editorDraft);
 
-    expect(manifest).not.toHaveProperty("tldraw_document");
+    expect(manifest).not.toHaveProperty("legacy_canvas_document");
     expect(manifest.placements[0]).not.toHaveProperty("editor_shape_id");
-    expect(manifest.placements[0]).not.toHaveProperty("tldraw_record");
+    expect(manifest.placements[0]).not.toHaveProperty("legacy_canvas_record");
   });
 
   it("dedupes raw layer_order during draft creation and save projection but still keeps every placement", () => {

@@ -1,65 +1,56 @@
-import { Save } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { useState, type MouseEvent } from "react";
+import { Link, useNavigate } from "react-router";
 
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
 import type { AssemblyReadiness } from "../assembly/assemblyReadiness";
-import type { AsyncOperationState } from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
 import type { AssemblyWorkspaceSaveState } from "./AssemblyWorkspacePanel";
 
 type AssemblyWorkspaceFeedbackProps = {
-  actionLabel: string;
   alignmentRiskPlacementCount: number;
-  canTriggerSave: boolean;
+  backTo?: string;
+  chapterTitle?: string;
   placementCount: number;
   readiness: AssemblyReadiness;
   saveError: string | null;
   saveState: AssemblyWorkspaceSaveState;
-  saveStatus?: AsyncOperationState;
+  onBeforeBackNavigation?: () => Promise<boolean>;
   onClearPlacementsForCurrentEmptyScene: () => Promise<void>;
-  onSave: () => Promise<void>;
 };
 
 export function AssemblyWorkspaceFeedback({
-  actionLabel,
   alignmentRiskPlacementCount,
-  canTriggerSave,
+  backTo,
+  chapterTitle,
   placementCount,
   readiness,
   saveError,
   saveState,
-  saveStatus,
+  onBeforeBackNavigation,
   onClearPlacementsForCurrentEmptyScene,
-  onSave,
 }: AssemblyWorkspaceFeedbackProps) {
   const showAlignmentReview = alignmentRiskPlacementCount > 0;
 
   return (
-    <>
-      <div className="chapter-studio-panel-heading">
-        <div>
-          <h2>Assembly</h2>
-          <p>{placementCount} placements</p>
+    <div className="assembly-workspace-feedback">
+      <header className="assembly-editor-topbar" aria-label="Assembly editor top bar">
+        <div className="assembly-editor-topbar-context">
+          {backTo ? (
+            <BackNavigationLink backTo={backTo} onBeforeBackNavigation={onBeforeBackNavigation} />
+          ) : null}
+          <div className="assembly-editor-topbar-labels">
+            <TopbarLabel label="Assembly" />
+            <TopbarLabel label={chapterTitle ?? "Untitled Chapter"} />
+          </div>
+          <span className="assembly-editor-context-count">{placementCountLabel(placementCount)}</span>
         </div>
-        <div className="assembly-workspace-header-actions">
-          <CoursePlannerStatusBadge tone={saveState === "saved" ? "success" : saveState === "saving" ? "info" : "danger"}>
-            {saveStateLabel(saveState)}
-          </CoursePlannerStatusBadge>
-          <button
-            type="button"
-            className="course-planner-primary-action chapter-studio-icon-action"
-            disabled={!canTriggerSave || saveStatus?.status === "pending"}
-            onClick={() => void onSave()}
-          >
-            <Save size={16} aria-hidden="true" />
-            {saveStatus?.status === "pending" ? "Saving Assembly" : actionLabel}
-          </button>
-        </div>
-      </div>
+      </header>
 
       {saveState !== "saved" && saveError ? (
         <div role="status" className="course-planner-inline-error">
-          <CoursePlannerStatusBadge tone="danger">{saveState === "conflict" ? "Save conflict" : "Save failed"}</CoursePlannerStatusBadge>
-          <p>{saveError}</p>
+          <CoursePlannerStatusBadge tone="danger">{saveState === "conflict" ? "Conflict" : "Error"}</CoursePlannerStatusBadge>
+          <p>{saveFeedbackMessage(saveState, saveError)}</p>
         </div>
       ) : null}
 
@@ -94,16 +85,80 @@ export function AssemblyWorkspaceFeedback({
           </div>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
-function saveStateLabel(saveState: AssemblyWorkspaceSaveState) {
+function BackNavigationLink({
+  backTo,
+  onBeforeBackNavigation,
+}: {
+  backTo: string;
+  onBeforeBackNavigation?: () => Promise<boolean>;
+}) {
+  const navigate = useNavigate();
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  const handleClick = async (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
+      return;
+    }
+    if (!onBeforeBackNavigation) {
+      return;
+    }
+    event.preventDefault();
+    if (isNavigating) {
+      return;
+    }
+    setIsNavigating(true);
+    let didNavigate = false;
+    try {
+      // WHY: Back 是离开高频编辑面的持久化边界；先 flush 可保存的 dirty draft，
+      // 避免 unmount 清掉 debounce timer 后把作者刚改的坐标丢在本地内存里。
+      const canNavigate = await onBeforeBackNavigation();
+      if (canNavigate) {
+        didNavigate = true;
+        navigate(backTo);
+      }
+    } finally {
+      if (!didNavigate) {
+        setIsNavigating(false);
+      }
+    }
+  };
+
+  return (
+    <Link
+      className="assembly-editor-topbar-back"
+      to={backTo}
+      aria-disabled={isNavigating}
+      aria-label="Back to Chapter"
+      title="Back to Chapter"
+      onClick={(event) => void handleClick(event)}
+    >
+      <ArrowLeft size={16} aria-hidden="true" />
+    </Link>
+  );
+}
+
+function TopbarLabel({ label }: { label: string }) {
+  return (
+    <span className="assembly-editor-dropdown-label" title={label}>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function saveFeedbackMessage(saveState: AssemblyWorkspaceSaveState, saveError: string) {
   if (saveState === "conflict") {
-    return "Save conflict";
+    return `${saveError} Retry overwrites the newer server assembly with your local draft.`;
   }
-  if (saveState === "saving") {
-    return "Saving";
+  if (saveState === "failed") {
+    return `${saveError} Retry saves the same local manifest after the failed request.`;
   }
-  return saveState === "saved" ? "Saved" : "Save failed";
+  return saveError;
+}
+
+function placementCountLabel(placementCount: number) {
+  return `${placementCount} ${placementCount === 1 ? "placement" : "placements"}`;
 }

@@ -3,6 +3,7 @@ import type {
   CharacterIpProfile,
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
+  GeneratedChapterAsset,
   ReferenceLibraryImage,
   TargetObjectItem,
   WorkspaceRunImportSummary,
@@ -60,6 +61,15 @@ export type DirectChapterAssetUploadInput = {
 };
 export type CompleteImageImportResult = {
   run: WorkspaceRunImportSummary;
+  scenePackage: ChapterScenePackage;
+};
+export type GeneratedChapterAssetMaterializeInput = {
+  completeSceneImageId: string;
+  pipelineRunId: string;
+  runAssetId: string;
+};
+export type GeneratedChapterAssetMaterializeResult = {
+  chapterAsset: ChapterScenePackage["chapter_assets"][number];
   scenePackage: ChapterScenePackage;
 };
 
@@ -209,6 +219,41 @@ export async function importCompleteSceneImageToPipeline(
   const run = payloadValue<WorkspaceRunImportSummary>(payload, "run");
   const scenePackage = payloadValue<ChapterScenePackage>(payload, "scenePackage");
   return { run, scenePackage };
+}
+
+export async function listGeneratedChapterAssets(
+  chapterId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<GeneratedChapterAsset[]> {
+  const payload = await requestJson(
+    fetcher,
+    `${scenePackagePath(chapterId)}/generated-assets`,
+    { method: "GET" },
+    "Could not load generated Chapter Assets.",
+  );
+  const value = payloadValue<GeneratedChapterAsset[]>(payload, "generatedAssets");
+  return Array.isArray(value) ? value : [];
+}
+
+export async function materializeGeneratedChapterAsset(
+  chapterId: string,
+  input: GeneratedChapterAssetMaterializeInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<GeneratedChapterAssetMaterializeResult> {
+  const payload = await requestJson(
+    fetcher,
+    `${scenePackagePath(chapterId)}/generated-assets/materialize`,
+    jsonRequest("POST", {
+      completeSceneImageId: input.completeSceneImageId,
+      pipelineRunId: input.pipelineRunId,
+      runAssetId: input.runAssetId,
+    }),
+    "Could not import generated Chapter Asset.",
+  );
+  return {
+    chapterAsset: payloadValue<ChapterScenePackage["chapter_assets"][number]>(payload, "chapterAsset"),
+    scenePackage: payloadValue<ChapterScenePackage>(payload, "scenePackage"),
+  };
 }
 
 export async function uploadDirectChapterAsset(

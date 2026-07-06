@@ -133,13 +133,15 @@ export function SceneCategoryBoardPage() {
     <>
       {createPortal(feedbackToast, document.body)}
 
-      <main className="scene-category-board-page">
-        <CoursePlannerPageHeader
-          title="Scene Pack / Chapter Board"
-          description={activeScenePack?.title ?? "Select a Scene Pack to start Chapter planning."}
-          status={<CoursePlannerStatusBadge label={operationLabel(planner.asyncStatus)} tone={operationTone(planner.asyncStatus)} />}
-        />
-        {inlineError ? <p className="course-planner-error" role="alert">{inlineError}</p> : null}
+      <main className={inlineError ? "scene-category-board-page has-inline-error" : "scene-category-board-page"}>
+        <div className="scene-category-board-page__header">
+          <CoursePlannerPageHeader
+            title="Scene Pack / Chapter Board"
+            description={activeScenePack?.title ?? "Select a Scene Pack to start Chapter planning."}
+            status={<CoursePlannerStatusBadge label={operationLabel(planner.asyncStatus)} tone={operationTone(planner.asyncStatus)} />}
+          />
+        </div>
+        {inlineError ? <p className="course-planner-inline-error" role="alert">{inlineError}</p> : null}
 
         <div className="scene-category-board-layout">
           <SceneCategoryList

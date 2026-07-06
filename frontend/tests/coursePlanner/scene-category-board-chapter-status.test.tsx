@@ -1,25 +1,17 @@
-import {
-  describe,
-  expect,
-  it,
-  render,
-  screen,
-  within,
-} from "../app/appTestHarness";
-import { MemoryRouter } from "react-router";
+import { BrowserRouter, MemoryRouter } from "react-router";
+
+import { describe, expect, it, render, screen, userEvent, within } from "../app/appTestHarness";
 
 import { ChapterBoard } from "../../src/features/coursePlanner/components/ChapterBoard";
-import type {
-  Chapter,
-  ChapterScenePackage,
-} from "../../src/features/coursePlanner/types";
+import { SelectedChapterSequence } from "../../src/features/coursePlanner/components/SelectedChapterSequence";
+import type { Chapter, ChapterScenePackage } from "../../src/features/coursePlanner/types";
 
 describe("Scene Category Board chapter status contract", () => {
   it("renders chapter production metrics from the chapter scene package contract", () => {
     render(
       <MemoryRouter>
         <ChapterBoard
-          chapters={[chapterFixture()]}
+          chapters={[chapter("chapter_breakfast_kitchen", "早餐厨房")]}
           chapterScenePackagesByChapterId={{
             chapter_breakfast_kitchen: scenePackageFixture(),
           }}
@@ -29,6 +21,9 @@ describe("Scene Category Board chapter status contract", () => {
 
     const board = screen.getByRole("region", { name: "Chapter Board" });
     expect(within(board).getByText("Prompt Text")).toBeInTheDocument();
+    expect(within(board).getByText("Target Objects")).toBeInTheDocument();
+    expect(within(board).getByText("Placed Assets")).toBeInTheDocument();
+    expect(within(board).getByText("Final Scene")).toBeInTheDocument();
     expect(within(board).getByText("ready")).toBeInTheDocument();
     expect(within(board).getByText("2 objects")).toBeInTheDocument();
     expect(within(board).getByText("1 asset placed")).toBeInTheDocument();
@@ -36,17 +31,55 @@ describe("Scene Category Board chapter status contract", () => {
   });
 });
 
-function chapterFixture(): Chapter {
+describe("Scene Category Board chapter density", () => {
+  it("uses a compact drag handle and compact chapter actions while keeping delete confirmation", async () => {
+    const user = userEvent.setup();
+    render(
+      <BrowserRouter>
+        <SelectedChapterSequence
+          chapters={[chapter("chapter_breakfast_kitchen", "早餐厨房")]}
+          deletingChapterId={null}
+          isReordering={false}
+          onDeleteChapter={() => undefined}
+          onReorderChapters={() => undefined}
+        />
+      </BrowserRouter>,
+    );
+
+    const chapterList = screen.getByRole("region", { name: "Chapter list" });
+    const chapterItem = within(chapterList).getByRole("listitem");
+    expect(chapterItem).not.toHaveAttribute("draggable", "true");
+
+    const dragHandle = within(chapterItem).getByRole("button", { name: "Drag handle for 早餐厨房" });
+    expect(dragHandle).toHaveClass("course-planner-icon-button");
+    expect(dragHandle).toHaveAttribute("draggable", "true");
+
+    const openDesigner = within(chapterItem).getByRole("link", { name: "Open Designer for 早餐厨房" });
+    expect(openDesigner).toHaveClass("course-planner-compact-link");
+
+    const deleteButton = within(chapterItem).getByRole("button", { name: "Delete Chapter 早餐厨房" });
+    expect(deleteButton).toHaveClass("course-planner-icon-button");
+
+    await user.click(deleteButton);
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Chapter" });
+    expect(dialog).toHaveTextContent("Delete 早餐厨房 from this Scene Pack's accepted Chapter list.");
+  });
+});
+
+function chapter(id: string, title: string): Chapter {
   return {
-    id: "chapter_breakfast_kitchen",
+    id,
     scenePackId: "packHome",
-    title: "早餐厨房",
+    title,
     summary: "厨房餐台和冰箱前的早晨动线",
+    sortOrder: 1,
+    status: "draft",
     seed: {
       scenePackId: "packHome",
       scenePackTitle: "室内家庭篇",
-      chapterId: "chapter_breakfast_kitchen",
-      chapterTitle: "早餐厨房",
+      chapterId: id,
+      chapterTitle: title,
       chapterIntent: "厨房餐台和冰箱前的早晨动线",
       sceneDomain: "indoor-home",
       dailyMoment: "morning",
@@ -60,10 +93,8 @@ function chapterFixture(): Chapter {
         referenceAssetIds: [],
         constraints: ["保持家庭主角一致"],
       },
-      styleNotes: "温暖晨光、家庭写实感",
+      styleNotes: "Pipeline blue-black visual density",
     },
-    sortOrder: 1,
-    status: "draft",
   };
 }
 
@@ -96,10 +127,25 @@ function scenePackageFixture(): ChapterScenePackage {
         priority: "required",
       },
     ],
+    target_object_exemptions: [],
     avoid_objects: [],
     empty_scene_images: [],
     complete_images: [],
-    chapter_assets: [],
+    chapter_assets: [
+      {
+        id: "asset_bowl",
+        display_name: "Breakfast bowl",
+        original_filename: "bowl.png",
+        storage_path: "chapter_assets/asset_bowl.png",
+        media_type: "image/png",
+        lineage: {
+          source_kind: "direct_upload",
+        },
+        linked_target_object_id: "target_object_bowl",
+        status: "available",
+        created_at: "2026-07-03T10:01:00Z",
+      },
+    ],
     assembly: {
       schema_version: 1,
       empty_scene_image_id: "empty_scene_001",

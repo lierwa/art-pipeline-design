@@ -10,20 +10,14 @@ import type {
 
 type DraftAssetCatalog = Record<string, Pick<ChapterAsset, "display_name" | "status">>;
 
-export type AssemblyDraftPlacement = ChapterSceneAssemblyPlacement & {
-  editor_shape_id?: string | null;
-  tldraw_record?: unknown;
-};
+export type AssemblyDraftPlacement = ChapterSceneAssemblyPlacement;
 
-export type AssemblyDraftGroup = ChapterSceneAssemblyGroup & {
-  editor_shape_id?: string | null;
-};
+export type AssemblyDraftGroup = ChapterSceneAssemblyGroup;
 
 export type AssemblyManifestDraft = Omit<ChapterSceneAssemblyManifest, "placements" | "groups"> & {
   placements: AssemblyDraftPlacement[];
   groups: AssemblyDraftGroup[];
   asset_catalog: DraftAssetCatalog;
-  tldraw_document?: unknown;
 };
 
 export type AssemblyDraftValidationError = {
@@ -53,7 +47,7 @@ const DEFAULT_TRANSFORM: ChapterSceneAssemblyTransform = {
 const MIN_NORMALIZED_SIZE = 0.001;
 
 // WHY: 这个模块专门隔离 scene-package manifest 协议；canvas、layer tree、属性面板都只
-// 读写一份纯 draft，而不是各自直接拼 backend payload，避免 tldraw authoring 细节扩散成持久化合同。
+// 读写一份纯 draft，而不是各自直接拼 backend payload，避免 authoring 细节扩散成持久化合同。
 export function createAssemblyDraft(scenePackage: ChapterScenePackage): AssemblyManifestDraft {
   const currentEmptyScene = scenePackage.empty_scene_images.find(
     (image) => image.id === scenePackage.current_empty_scene_image_id,
@@ -73,10 +67,6 @@ export function createAssemblyDraft(scenePackage: ChapterScenePackage): Assembly
 }
 
 export function addAssetPlacement(draft: AssemblyManifestDraft, assetId: string): AssemblyManifestDraft {
-  if (draft.placements.some((placement) => placement.asset_id === assetId)) {
-    return draft;
-  }
-
   const asset = draft.asset_catalog[assetId];
   if (!asset || asset.status !== "available") {
     return draft;
@@ -86,7 +76,7 @@ export function addAssetPlacement(draft: AssemblyManifestDraft, assetId: string)
   const placement: AssemblyDraftPlacement = {
     id: placementId,
     asset_id: assetId,
-    display_name: asset.display_name,
+    display_name: nextPlacementDisplayName(draft, assetId, asset.display_name),
     runtime_role: "target",
     transform: { ...DEFAULT_TRANSFORM },
     group_id: null,
@@ -133,6 +123,63 @@ export function movePlacementLayer(
   return { ...draft, layer_order: nextOrder };
 }
 
+export function movePlacementToGroup(
+  draft: AssemblyManifestDraft,
+  placementId: string,
+  groupId: string,
+  groupIndex: number,
+): AssemblyManifestDraft {
+  const placement = draft.placements.find((candidate) => candidate.id === placementId);
+  const group = draft.groups.find((candidate) => candidate.id === groupId);
+  if (!placement || !group || placement.group_id !== null) {
+    return draft;
+  }
+
+  const currentOrder = normalizeLayerOrder(draft.placements, draft.layer_order);
+  const currentGroupOrder = currentOrder.filter((candidateId) => {
+    const candidate = draft.placements.find((item) => item.id === candidateId);
+    return candidate?.group_id === groupId;
+  });
+  if (currentGroupOrder.length === 0) {
+    return draft;
+  }
+
+  const nextGroupOrder = [...currentGroupOrder];
+  nextGroupOrder.splice(clampIndex(groupIndex, nextGroupOrder.length), 0, placementId);
+  const nextGroupIdSet = new Set(nextGroupOrder);
+  const orderWithoutMovedPlacement = currentOrder.filter((candidateId) => candidateId !== placementId);
+  const nextLayerOrder: string[] = [];
+  let insertedGroupBlock = false;
+
+  for (const candidateId of orderWithoutMovedPlacement) {
+    if (nextGroupIdSet.has(candidateId)) {
+      if (!insertedGroupBlock) {
+        nextLayerOrder.push(...nextGroupOrder);
+        insertedGroupBlock = true;
+      }
+      continue;
+    }
+    nextLayerOrder.push(candidateId);
+  }
+
+  // WHY: 分组成员顺序和 layer_order 必须在 manifest 边界一次性更新；
+  // 否则 tree 与 canvas 会分别推导 group 内顺序，形成两个事实源。
+  return {
+    ...draft,
+    placements: draft.placements.map((candidate) => (
+      candidate.id === placementId
+        ? { ...candidate, group_id: groupId }
+        : candidate
+    )),
+    groups: draft.groups.map((candidate) => (
+      candidate.id === groupId
+        ? { ...candidate, placement_ids: nextGroupOrder }
+        : candidate
+    )),
+    layer_order: insertedGroupBlock ? nextLayerOrder : currentOrder,
+  };
+}
+
 export function removePlacement(draft: AssemblyManifestDraft, placementId: string): AssemblyManifestDraft {
   const remainingPlacements = draft.placements
     .filter((placement) => placement.id !== placementId)
@@ -158,6 +205,38 @@ export function removePlacement(draft: AssemblyManifestDraft, placementId: strin
     )),
     groups: normalizedGroups,
     layer_order: normalizeLayerOrder(remainingPlacements, draft.layer_order.filter((id) => id !== placementId)),
+  };
+}
+
+export function removePlacementGroup(draft: AssemblyManifestDraft, groupId: string): AssemblyManifestDraft {
+  const group = draft.groups.find((candidate) => candidate.id === groupId);
+  if (!group) {
+    return draft;
+  }
+
+  const removedPlacementIds = new Set([
+    ...group.placement_ids,
+    ...draft.placements
+      .filter((placement) => placement.group_id === groupId)
+      .map((placement) => placement.id),
+  ]);
+  const remainingPlacements = draft.placements
+    .filter((placement) => !removedPlacementIds.has(placement.id))
+    .map((placement) => ({
+      ...placement,
+      requires_placed: placement.requires_placed.filter((requiredId) => !removedPlacementIds.has(requiredId)),
+    }));
+
+  // WHY: 删除 group 是破坏性命令而不是 ungroup；在 manifest 边界一次性删掉成员、
+  // group 记录和依赖边，避免 Layer Tree 与属性面板各自实现一套删除语义。
+  return {
+    ...draft,
+    placements: remainingPlacements,
+    groups: draft.groups.filter((candidate) => candidate.id !== groupId),
+    layer_order: normalizeLayerOrder(
+      remainingPlacements,
+      draft.layer_order.filter((placementId) => !removedPlacementIds.has(placementId)),
+    ),
   };
 }
 
@@ -330,6 +409,27 @@ function nextPlacementId(draft: AssemblyManifestDraft, assetId: string): string 
     counter += 1;
   }
   return `${baseId}_${counter}`;
+}
+
+function nextPlacementDisplayName(
+  draft: AssemblyManifestDraft,
+  assetId: string,
+  assetDisplayName: string,
+): string {
+  const existingDisplayNames = new Set(
+    draft.placements
+      .filter((placement) => placement.asset_id === assetId)
+      .map((placement) => placement.display_name),
+  );
+  if (!existingDisplayNames.has(assetDisplayName)) {
+    return assetDisplayName;
+  }
+
+  let counter = 2;
+  while (existingDisplayNames.has(`${assetDisplayName} ${counter}`)) {
+    counter += 1;
+  }
+  return `${assetDisplayName} ${counter}`;
 }
 
 function nextGroupId(draft: AssemblyManifestDraft): string {

@@ -1,27 +1,24 @@
 import { useState } from "react";
+import { ImageIcon } from "lucide-react";
 
 import type { ChapterScenePackage } from "../types";
-import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
-import type { AssemblyWorkspaceLockFinalState } from "./AssemblyWorkspacePanel";
+import type { AssemblyReadiness } from "../assembly/assemblyReadiness";
+import { scenePackageMediaUrl } from "../scenePackageMedia";
 
 type FinalScenePanelProps = {
-  assemblyState: AssemblyWorkspaceLockFinalState;
+  assemblyReadiness: AssemblyReadiness;
   scenePackage: ChapterScenePackage;
   onLockFinal: () => Promise<ChapterScenePackage | null>;
 };
 
 export function FinalScenePanel({
-  assemblyState,
+  assemblyReadiness,
   onLockFinal,
   scenePackage,
 }: FinalScenePanelProps) {
   const [isLocking, setIsLocking] = useState(false);
-  const ready = assemblyState.readiness.is_ready;
-  const dirtyActionHint = ready && assemblyState.hasDirtyChanges
-    ? assemblyState.saveState === "saving"
-      ? "Lock Final will wait for the current Assembly save."
-      : "Lock Final will save current Assembly edits first."
-    : null;
+  const ready = assemblyReadiness.is_ready;
+  const isLocked = Boolean(scenePackage.final_scene);
 
   async function handleLockFinal() {
     setIsLocking(true);
@@ -37,25 +34,33 @@ export function FinalScenePanel({
       <div className="chapter-studio-panel-heading">
         <div>
           <h2>Final</h2>
-          <p>{scenePackage.final_scene?.original_filename ?? "Not locked"}</p>
+          <p>{scenePackage.final_scene ? "Locked" : "Not locked"}</p>
         </div>
-        <CoursePlannerStatusBadge tone={scenePackage.final_scene ? "success" : ready ? "info" : "warning"}>
-          {scenePackage.final_scene ? "Locked" : ready ? "Ready" : "Pending"}
-        </CoursePlannerStatusBadge>
-      </div>
-
-      <div className="chapter-studio-actions">
         <button
           type="button"
-          className="course-planner-primary-action"
-          disabled={!ready || isLocking}
+          className="course-planner-secondary-action"
+          disabled={isLocked || !ready || isLocking}
           onClick={() => void handleLockFinal()}
         >
-          Lock Final
+          {isLocked ? "Locked" : "Lock Final"}
         </button>
       </div>
 
-      {dirtyActionHint ? <p>{dirtyActionHint}</p> : null}
+      <div className="chapter-final-body">
+        <div className="chapter-final-preview">
+          {isLocked && scenePackage.final_scene ? (
+            <img
+              alt=""
+              src={scenePackageMediaUrl(scenePackage.chapter_id, "final_scene", scenePackage.final_scene.id)}
+            />
+          ) : (
+            <ImageIcon size={42} aria-hidden="true" />
+          )}
+        </div>
+        <div className="chapter-final-copy">
+          <p>{scenePackage.final_scene ? `${scenePackage.final_scene.original_filename} is locked for export.` : "Lock final to generate and export final images."}</p>
+        </div>
+      </div>
     </section>
   );
 }

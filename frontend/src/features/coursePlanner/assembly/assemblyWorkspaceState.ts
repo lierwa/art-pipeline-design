@@ -15,7 +15,10 @@ export function sameEmptySceneSize(
 }
 
 export function manifestKeyOf(manifest: ChapterScenePackage["assembly"]) {
-  return JSON.stringify(manifest);
+  const { updated_at: _updatedAt, ...materialManifest } = manifest;
+  // WHY: updated_at 是服务端持久化元数据，不是作者在 Assembly editor 里编辑的内容。
+  // 把它纳入 dirty/conflict key 会把后台刷新或保存回包误判成远端内容冲突。
+  return JSON.stringify(materialManifest);
 }
 
 export function reconcileAlignmentRiskPlacementIds(

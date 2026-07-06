@@ -1,6 +1,8 @@
-import { PointerEvent, useEffect, useRef, useState } from "react";
+import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  thumbnailUrl,
+  workspaceAssetUrl,
   type Box,
   type CanvasTool,
   type DraftRegion,
@@ -9,7 +11,8 @@ import {
   type SourceMetadata,
   type WorkspaceElement,
 } from "../../domain/workspace";
-import { CanvasArtboard } from "./CanvasArtboard";
+import { CanvasArtboard, type CanvasHitTestStrategy } from "./CanvasArtboard";
+import { workspaceElementToCanvasObject } from "./canvasObjectAdapters";
 import {
   FOCUS_PAN_THRESHOLD,
   type DrawingEvent,
@@ -19,12 +22,20 @@ import {
   pointsToBox,
   readGestureScale,
 } from "./canvasStageGeometry";
+import {
+  ART_PIPELINE_CANVAS_SURFACE_CAPABILITIES,
+  type CanvasObjectView,
+  type CanvasSurfaceCapabilities,
+} from "../canvasObjects";
+
+export { workspaceElementToCanvasObject };
 
 type CanvasStageProps = {
+  canvasObjects?: CanvasObjectView[];
   sourceUrl: string | null;
   source: SourceMetadata | null;
   overlays: OverlayState;
-  overlayElements: WorkspaceElement[];
+  overlayElements?: WorkspaceElement[];
   selectedElementId: string | null;
   selectedElementIds: string[];
   editingElementId: string | null;
@@ -36,8 +47,11 @@ type CanvasStageProps = {
   missingMaskRegion: DraftRegion | null;
   assetCacheKey: number;
   workspaceRunId: string | null;
+  capabilities?: CanvasSurfaceCapabilities;
   canDrawMissingMask: boolean;
   hasUnsavedBoxEdit: boolean;
+  hitTestStrategy?: CanvasHitTestStrategy;
+  showHeader?: boolean;
   zoomPercent: number;
   isPanMode: boolean;
   panOffset: { x: number; y: number };
@@ -52,6 +66,8 @@ type CanvasStageProps = {
   onCommitRenameElement: (elementId: string, name: string) => void;
   onCancelRenameElement: () => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
+  onBoxEditEnd?: (elementId: string) => void;
+  onBoxEditStart?: (elementId: string) => void;
   onZoomByWheel: (deltaY: number) => void;
   onZoomByGesture: (scaleDelta: number) => void;
   onPanChange: (deltaX: number, deltaY: number) => void;
@@ -75,10 +91,11 @@ type PointerDraft = {
 };
 
 export function CanvasStage({
+  canvasObjects: explicitCanvasObjects,
   sourceUrl,
   source,
   overlays,
-  overlayElements,
+  overlayElements = [],
   selectedElementId,
   selectedElementIds,
   editingElementId,
@@ -90,8 +107,11 @@ export function CanvasStage({
   missingMaskRegion,
   assetCacheKey,
   workspaceRunId,
+  capabilities = ART_PIPELINE_CANVAS_SURFACE_CAPABILITIES,
   canDrawMissingMask,
   hasUnsavedBoxEdit,
+  hitTestStrategy = "smallest-on-modified-selection",
+  showHeader = true,
   zoomPercent,
   isPanMode,
   panOffset,
@@ -106,6 +126,8 @@ export function CanvasStage({
   onCommitRenameElement,
   onCancelRenameElement,
   onBoxDraftChange,
+  onBoxEditEnd,
+  onBoxEditStart,
   onZoomByWheel,
   onZoomByGesture,
   onPanChange,
@@ -129,12 +151,34 @@ export function CanvasStage({
   const onZoomByWheelRef = useRef(onZoomByWheel);
   const onZoomByGestureRef = useRef(onZoomByGesture);
   const onPanChangeRef = useRef(onPanChange);
-  const overlayElementsRef = useRef(overlayElements);
+  const canvasObjectsRef = useRef<CanvasObjectView[]>([]);
   const focusPanTimerRef = useRef<number | null>(null);
   const [isFocusPanning, setIsFocusPanning] = useState(false);
 
+  const canvasObjects = useMemo(
+    () => {
+      if (explicitCanvasObjects) {
+        return explicitCanvasObjects;
+      }
+      return overlayElements
+        .slice()
+        // WHY: CanvasObjectView 不携带 pipeline layer；排序只在 pipeline 入口完成，命中测试可把数组顺序当作前后关系。
+        .sort((left, right) => left.layer - right.layer)
+        .map((element) =>
+          workspaceElementToCanvasObject(
+            element,
+            {
+              maskUrl: workspaceAssetUrl(element.mask, assetCacheKey, workspaceRunId),
+              thumbnailUrl: thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId),
+            },
+          ),
+        );
+    },
+    [assetCacheKey, explicitCanvasObjects, overlayElements, workspaceRunId],
+  );
+
   useEffect(() => {
-    overlayElementsRef.current = overlayElements;
+    canvasObjectsRef.current = canvasObjects;
     onZoomByWheelRef.current = onZoomByWheel;
     onZoomByGestureRef.current = onZoomByGesture;
     onPanChangeRef.current = onPanChange;
@@ -153,10 +197,19 @@ export function CanvasStage({
       return;
     }
     if (tool === "click-detect") {
+      if (!capabilities.canClickDetect) {
+        return;
+      }
       onClickDetectPoint?.(eventPointToImage(event, source));
       return;
     }
-    if (tool === "missing-mask" && !canDrawMissingMask) {
+    if (tool === "draw" && !capabilities.canDraw) {
+      return;
+    }
+    if (tool === "split" && !capabilities.canSplit) {
+      return;
+    }
+    if (tool === "missing-mask" && (!canDrawMissingMask || !capabilities.canUseMissingMask)) {
       return;
     }
 
@@ -183,7 +236,7 @@ export function CanvasStage({
       onDraftRegionChange({ bbox });
       return;
     }
-    if (tool === "missing-mask") {
+    if (tool === "missing-mask" && capabilities.canUseMissingMask) {
       onMissingMaskRegionChange({ bbox });
     }
   }
@@ -217,12 +270,12 @@ export function CanvasStage({
       return;
     }
 
-    if (tool === "split") {
+    if (tool === "split" && capabilities.canSplit) {
       onAddSplitRegion({ bbox });
       return;
     }
 
-    if (tool === "missing-mask") {
+    if (tool === "missing-mask" && capabilities.canUseMissingMask) {
       const region = { bbox };
       onMissingMaskRegionChange(region);
       onCompleteMissingMaskRegion(region);
@@ -234,7 +287,9 @@ export function CanvasStage({
       sourceUrl={sourceUrl}
       source={source}
       overlays={overlays}
-      overlayElements={overlayElements}
+      canvasObjects={canvasObjects}
+      capabilities={capabilities}
+      hitTestStrategy={hitTestStrategy}
       selectedElementId={selectedElementId}
       selectedElementIds={selectedElementIds}
       editingElementId={editingElementId}
@@ -242,8 +297,6 @@ export function CanvasStage({
       draftRegion={draftRegion}
       splitRegions={splitRegions}
       missingMaskRegion={missingMaskRegion}
-      assetCacheKey={assetCacheKey}
-      workspaceRunId={workspaceRunId}
       tool={tool}
       isPanMode={isPanMode}
       manualElementName={manualElementName}
@@ -257,6 +310,8 @@ export function CanvasStage({
       onCommitRenameElement={onCommitRenameElement}
       onCancelRenameElement={onCancelRenameElement}
       onBoxDraftChange={onBoxDraftChange}
+      onBoxEditEnd={onBoxEditEnd}
+      onBoxEditStart={onBoxEditStart}
       onManualElementNameChange={onManualElementNameChange}
       onCreateElement={onCreateElement}
       onCreateChildElement={onCreateChildElement}
@@ -357,8 +412,8 @@ export function CanvasStage({
     }
 
     const animationFrame = window.requestAnimationFrame(() => {
-      const selectedElement = overlayElementsRef.current.find((element) => element.id === focusRequest.elementId);
-      if (!selectedElement) {
+      const selectedObject = canvasObjectsRef.current.find((object) => object.id === focusRequest.elementId);
+      if (!selectedObject) {
         return;
       }
       const artboardElement = canvasPanel.querySelector<HTMLElement>(".canvas-artboard");
@@ -373,8 +428,8 @@ export function CanvasStage({
         return;
       }
 
-      const elementCenterX = selectedElement.bbox.x + selectedElement.bbox.w / 2;
-      const elementCenterY = selectedElement.bbox.y + selectedElement.bbox.h / 2;
+      const elementCenterX = selectedObject.box.x + selectedObject.box.w / 2;
+      const elementCenterY = selectedObject.box.y + selectedObject.box.h / 2;
       const elementScreenX = artboardRect.left + (elementCenterX / source.width) * artboardRect.width;
       const elementScreenY = artboardRect.top + (elementCenterY / source.height) * artboardRect.height;
       const { deltaX, deltaY } = calculateFocusPanDelta({
@@ -411,10 +466,12 @@ export function CanvasStage({
       data-testid="canvas-area"
       data-pan-mode={isPanMode ? "true" : "false"}
     >
-      <div className="canvas-header">
-        <h2>Canvas</h2>
-        <span>{sourceDetails}</span>
-      </div>
+      {showHeader ? (
+        <div className="canvas-header">
+          <h2>Canvas</h2>
+          <span>{sourceDetails}</span>
+        </div>
+      ) : null}
       <div
         className="canvas-stage"
         onPointerDown={beginPan}

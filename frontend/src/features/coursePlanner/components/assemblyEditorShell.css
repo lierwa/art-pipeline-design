@@ -1,0 +1,276 @@
+.course-planner-immersive-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.chapter-assembly-editor-page {
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #05080d;
+}
+
+.assembly-product-shell {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  /* WHY: conflict/readiness banners live inside the feedback row; the editor grid must
+     remain its own row so transient save states cannot cover the canvas. */
+  grid-template-rows: auto minmax(0, 1fr) 44px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: #05080d;
+  color: var(--course-text);
+}
+
+.assembly-workspace-feedback {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.assembly-editor-topbar {
+  min-width: 0;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  padding: 0 1rem;
+  border-bottom: 1px solid #1d3246;
+  background: linear-gradient(180deg, rgb(8 15 23 / 0.98), rgb(5 10 16 / 0.98));
+}
+
+.assembly-editor-topbar-context {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.assembly-editor-topbar-back {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #224157;
+  border-radius: 8px;
+  background: #081725;
+  color: #c6e8ff;
+  text-decoration: none;
+}
+
+.assembly-editor-topbar-back:hover {
+  border-color: #1a879c;
+  color: #f5fbff;
+}
+
+.assembly-editor-topbar-labels {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.assembly-editor-dropdown-label,
+.assembly-editor-dropdown-control {
+  min-width: 0;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.32rem;
+  padding: 0 0.58rem;
+  border: 1px solid #1b3145;
+  border-radius: 8px;
+  background: #07111c;
+  color: var(--course-text-strong);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.assembly-editor-dropdown-label span,
+.assembly-editor-dropdown-control span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-editor-dropdown-label:first-child {
+  color: var(--course-accent);
+}
+
+.assembly-editor-dropdown-label:nth-child(2) {
+  max-width: 230px;
+}
+
+.assembly-editor-dropdown-control {
+  width: 72px;
+}
+
+.assembly-editor-context-count {
+  flex: 0 0 auto;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.assembly-workspace-feedback > .chapter-studio-subpanel,
+.assembly-workspace-feedback > .course-planner-inline-error {
+  margin: 0.55rem 0.85rem 0;
+}
+
+.assembly-workspace-feedback > .course-planner-inline-error {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.42rem 0.68rem;
+  border: 1px solid rgb(248 113 113 / 0.36);
+  border-radius: 8px;
+  background: rgb(127 29 29 / 0.18);
+}
+
+.assembly-workspace-feedback > .course-planner-inline-error p {
+  margin: 0;
+  color: var(--course-text-strong);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.assembly-product-shell .assembly-editor-layout {
+  display: flex;
+  gap: 0;
+  padding: 0.9rem;
+  overflow: hidden;
+}
+
+.assembly-product-shell .assembly-editor-assets-column,
+.assembly-product-shell .assembly-editor-canvas-column,
+.assembly-product-shell .assembly-editor-inspector-column {
+  height: 100%;
+}
+
+.assembly-editor-resize-handle {
+  flex: 0 0 12px;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  outline: 0;
+}
+
+.assembly-editor-resize-handle span {
+  width: 3px;
+  height: 44px;
+  border-radius: 999px;
+  background: #28445b;
+}
+
+.assembly-editor-resize-handle:hover span,
+.assembly-editor-resize-handle:focus-visible span,
+.assembly-editor-resize-handle[data-resize-handle-active] span {
+  background: #77d8ff;
+}
+
+.assembly-editor-statusbar {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 320px) minmax(0, 1fr);
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1rem;
+  border-top: 1px solid #1d3246;
+  background: #050b12;
+  color: var(--course-text-muted);
+}
+
+.assembly-editor-statusbar-save,
+.assembly-editor-statusbar-metrics {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.assembly-editor-statusbar-save {
+  gap: 0.45rem;
+  color: #7fe5ad;
+}
+
+.assembly-editor-statusbar-metrics {
+  gap: 1.15rem;
+  justify-content: center;
+}
+
+.assembly-editor-statusbar-metrics span {
+  white-space: nowrap;
+}
+
+.assembly-product-shell .chapter-studio-panel {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.assembly-product-shell .assembly-editor-inspector-column {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.assembly-product-shell .assembly-editor-inspector-column > .chapter-studio-panel {
+  min-height: 0;
+  overflow: auto;
+}
+
+.assembly-editor-icon-button-active {
+  border-color: #008ca5;
+  background: #082f3b;
+  color: var(--course-accent);
+}
+
+.assembly-product-shell .assembly-editor-stage {
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid #202b39;
+  border-radius: 8px;
+  background: #0f1721;
+}
+
+.assembly-product-shell .assembly-canvas-toolbar {
+  padding-inline: 0.72rem;
+}
+
+.assembly-product-shell .assembly-canvas-actions {
+  margin-left: auto;
+}
+
+.assembly-canvas-size-label {
+  color: #93a0b4;
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.assembly-product-shell .assembly-authoring-canvas .canvas-panel {
+  height: 100%;
+  overflow: hidden;
+  background: #0b1119;
+}
+
+.assembly-layer-thumb {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #244056;
+  border-radius: 6px;
+  background: #050b12;
+  object-fit: contain;
+}
+
+@media (max-width: 1280px) {
+  .assembly-product-shell .assembly-editor-layout {
+    padding: 0.72rem;
+  }
+}

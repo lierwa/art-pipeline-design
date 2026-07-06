@@ -1,0 +1,240 @@
+.assembly-placement-list-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.assembly-placement-list-panel > .asset-tree-body {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0.48rem 0.42rem;
+}
+
+.assembly-layer-list {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.assembly-layer-item .asset-tree-row {
+  height: 64px;
+  min-height: 64px;
+  cursor: grab;
+}
+
+.assembly-layer-item .asset-tree-row-depth {
+  grid-template-rows: minmax(48px, auto);
+}
+
+.assembly-layer-row-select {
+  cursor: pointer;
+}
+
+.assembly-layer-thumb {
+  object-fit: contain;
+  background: #040b12;
+}
+
+.assembly-layer-row-actions {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+}
+
+.assembly-layer-drag-affordance {
+  width: 26px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #8fa2b8;
+  cursor: grab;
+}
+
+.assembly-layer-item.is-dragging .assembly-layer-drag-affordance,
+.assembly-layer-row:hover .assembly-layer-drag-affordance {
+  border-color: #2b67b8;
+  background: rgba(39, 117, 255, 0.12);
+  color: #dbeafe;
+}
+
+.assembly-property-compact {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 0.38rem;
+  overflow: auto;
+  padding-right: 0.08rem;
+}
+
+.assembly-placement-properties-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.38rem;
+  padding: 0.72rem;
+  overflow: hidden;
+}
+
+.assembly-placement-properties-heading {
+  min-height: 0;
+  align-items: start;
+}
+
+.assembly-placement-properties-heading h2 {
+  font-size: 0.82rem;
+}
+
+.assembly-placement-properties-heading p {
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.assembly-placement-heading-actions {
+  display: inline-flex;
+  gap: 0.34rem;
+  align-items: center;
+}
+
+.assembly-property-summary-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 0.46rem;
+  align-items: end;
+}
+
+.assembly-property-row,
+.assembly-property-section,
+.assembly-property-name-field {
+  min-width: 0;
+}
+
+.assembly-property-name-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 0.14rem;
+}
+
+.assembly-property-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+  gap: 0.18rem;
+}
+
+.assembly-property-row-label,
+.assembly-field > span {
+  color: var(--course-text-muted);
+  font-size: 0.68rem;
+  line-height: 1.1;
+}
+
+.assembly-property-section {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.assembly-property-section h3 {
+  margin: 0;
+  color: var(--course-text-strong);
+  font-size: 0.76rem;
+  font-weight: 790;
+}
+
+.assembly-segmented-control {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  gap: 0.16rem;
+  padding: 0.14rem;
+  border: 1px solid #1b3448;
+  border-radius: 7px;
+  background: #08121b;
+}
+
+.assembly-segmented-option {
+  min-width: 60px;
+  min-height: 26px;
+  padding: 0.22rem 0.42rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--course-text-muted);
+  font-size: 0.78rem;
+}
+
+.assembly-segmented-option-active {
+  background: #10304a;
+  color: var(--course-text-strong);
+}
+
+.assembly-transform-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.28rem 0.42rem;
+}
+
+.assembly-field {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.assembly-field input,
+.assembly-field select {
+  width: 100%;
+  min-height: 28px;
+  padding: 0.28rem 0.46rem;
+  border: 1px solid #1d354a;
+  border-radius: 6px;
+  background: #06111c;
+  color: var(--course-text-strong);
+  font: inherit;
+  font-size: 0.78rem;
+  outline: 0;
+}
+
+.assembly-field input:focus,
+.assembly-field select:focus {
+  border-color: #138aa3;
+  box-shadow: 0 0 0 2px rgb(0 216 255 / 0.12);
+}
+
+.assembly-product-shell .assembly-property-name-field input[readonly] {
+  border-color: transparent;
+  background: rgb(8 18 27 / 0.62);
+  color: var(--course-text-strong);
+  cursor: default;
+}
+
+.assembly-product-shell .assembly-property-name-field input[readonly]:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.assembly-field-input-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  gap: 0.22rem;
+  align-items: center;
+}
+
+.assembly-field-input-unit small {
+  color: var(--course-text-muted);
+  font-size: 0.66rem;
+  text-align: right;
+}
+
+.assembly-property-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 620px) {
+  .assembly-property-name-field,
+  .assembly-property-row,
+  .assembly-property-summary-grid,
+  .assembly-transform-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

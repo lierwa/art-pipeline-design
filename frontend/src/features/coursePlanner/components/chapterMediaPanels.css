@@ -1,0 +1,135 @@
+.chapter-media-card {
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.chapter-media-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid #24465e;
+  border-radius: 8px;
+  background: #071522;
+  object-fit: cover;
+}
+
+.chapter-media-thumb-wide {
+  aspect-ratio: 16 / 9;
+}
+
+.chapter-media-card-body {
+  min-width: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.chapter-media-card h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-media-note {
+  margin: 0;
+  color: var(--course-text-muted);
+  font-size: 0.72rem;
+}
+
+.chapter-empty-scene-list,
+.chapter-complete-image-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.chapter-empty-scene-card,
+.chapter-complete-image-row {
+  min-width: 0;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: #071522;
+}
+
+.chapter-empty-scene-card {
+  display: grid;
+  grid-template-columns: minmax(170px, 0.9fr) minmax(0, 1.1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 0.78rem;
+}
+
+.chapter-empty-scene-preview {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #24465e;
+  border-radius: 8px;
+  background: #071522;
+  object-fit: cover;
+}
+
+.chapter-empty-scene-body {
+  min-width: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.chapter-empty-scene-body h3,
+.chapter-complete-image-copy h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--course-text-strong);
+  font-size: 0.92rem;
+  font-weight: 790;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-empty-scene-body p,
+.chapter-complete-image-copy p {
+  margin: 0.14rem 0 0;
+  color: var(--course-text-muted);
+  font-size: 0.74rem;
+}
+
+.chapter-empty-scene-upload,
+.chapter-complete-image-upload {
+  justify-self: start;
+}
+
+.chapter-complete-image-row {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.65rem;
+}
+
+.chapter-complete-image-thumb {
+  width: 82px;
+  aspect-ratio: 4 / 3;
+  border: 1px solid #24465e;
+  border-radius: 7px;
+  background: #071522;
+  object-fit: cover;
+}
+
+.chapter-complete-image-copy {
+  min-width: 0;
+}
+
+.chapter-complete-image-actions {
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+@media (max-width: 620px) {
+  .chapter-media-card,
+  .chapter-empty-scene-card,
+  .chapter-complete-image-row {
+    grid-template-columns: 1fr;
+  }
+
+  .chapter-complete-image-actions {
+    justify-content: stretch;
+  }
+}

@@ -175,6 +175,8 @@ export function sceneAsset(
     original_filename: originalFilename,
     storage_path: `scene_package/${id}.png`,
     media_type: "image/png" as const,
+    width: 1024,
+    height: 1024,
     lineage: {
       source_kind: "direct_upload" as const,
     },

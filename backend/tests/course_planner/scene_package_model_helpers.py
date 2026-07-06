@@ -13,6 +13,7 @@ from art_pipeline.course_planner.scene_package_models import (
     ChapterSceneAssembly,
     ChapterScenePackage,
     ChapterScenePrompt,
+    EmptySceneImage,
     PromptReadinessConfirmation,
     TargetObjectItem,
 )
@@ -117,6 +118,7 @@ def make_package_with_selected_empty_scene(
             "current_empty_scene_image_id": empty_scene_image_id,
             "assembly": assembly or make_manifest(asset_id=resolved_assets[0].id),
             "chapter_assets": resolved_assets,
+            "empty_scene_images": [make_empty_scene_image(empty_scene_image_id)],
         }
     )
 
@@ -172,6 +174,7 @@ def make_package_with_two_placements(
                 layer_order=layer_order or ["placement_a", "placement_b"],
             ),
             "chapter_assets": assets,
+            "empty_scene_images": [make_empty_scene_image("empty_scene_001")],
         }
     )
 
@@ -201,6 +204,7 @@ def make_package_with_one_placement(*, layer_order: list[str]) -> ChapterScenePa
                 layer_order=layer_order,
             ),
             "chapter_assets": [asset],
+            "empty_scene_images": [make_empty_scene_image("empty_scene_001")],
         }
     )
 
@@ -250,4 +254,18 @@ def make_chapter_asset(asset_id: str) -> ChapterAsset:
         lineage=ChapterAssetLineage(source_kind="direct_upload"),
         linked_target_object_id="target_001",
         created_at="2026-07-02T10:06:00Z",
+    )
+
+
+def make_empty_scene_image(image_id: str) -> EmptySceneImage:
+    return EmptySceneImage(
+        id=image_id,
+        original_filename=f"{image_id}.png",
+        storage_path=f"empty_scene_images/{image_id}.png",
+        media_type="image/png",
+        width=120,
+        height=80,
+        status="available",
+        prompt_snapshot="Empty scene prompt.",
+        created_at="2026-07-02T10:05:00Z",
     )

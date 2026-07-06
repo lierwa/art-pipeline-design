@@ -15,6 +15,7 @@ import {
   isDisplayableElement,
   isMergeableElement,
 } from "../../domain/workspaceDerived";
+import { reduceSelection } from "../authoring/selectionModel";
 
 type SetState<T> = Dispatch<SetStateAction<T>>;
 
@@ -81,12 +82,16 @@ export function useCanvasInteractionController({
     }
 
     if (mode === "toggle") {
-      const nextSelectedElementIds = selectedElementIds.includes(elementId)
-        ? selectedElementIds.filter((currentId) => currentId !== elementId)
-        : [...selectedElementIds, elementId];
-      const nextFocusedElementId = nextSelectedElementIds.includes(elementId)
-        ? elementId
-        : nextSelectedElementIds[nextSelectedElementIds.length - 1] ?? null;
+      const nextSelection = reduceSelection(
+        {
+          selectedIds: selectedElementIds,
+          primaryId: null,
+          anchorId: selectedElementIds[0] ?? null,
+        },
+        { type: "toggle", id: elementId },
+      );
+      const nextSelectedElementIds = nextSelection.selectedIds;
+      const nextFocusedElementId = nextSelection.primaryId;
       setSelectedElementIds(nextSelectedElementIds);
       setSelectedElementId(nextFocusedElementId);
       setRenamingElementId(null);
@@ -96,8 +101,16 @@ export function useCanvasInteractionController({
       return;
     }
 
-    setSelectedElementId(elementId);
-    setSelectedElementIds([elementId]);
+    const nextSelection = reduceSelection(
+      {
+        selectedIds: selectedElementIds,
+        primaryId: null,
+        anchorId: selectedElementIds[0] ?? null,
+      },
+      { type: "replace", id: elementId },
+    );
+    setSelectedElementId(nextSelection.primaryId);
+    setSelectedElementIds(nextSelection.selectedIds);
     setRenamingElementId(null);
     if (options.focusCanvas) {
       requestCanvasFocus(elementId);

@@ -157,9 +157,40 @@ class CompleteSceneImage(ScenePackageMediaRecord):
 
 
 class ChapterAssetLineage(CoursePlannerModel):
-    # WHY: 当前系统还没有可校验的 workspace run asset picker/import 协议；
-    # Chapter Asset 只暴露 direct upload，避免用手填 id 伪造 pipeline lineage。
-    source_kind: Literal["direct_upload"] = "direct_upload"
+    source_kind: Literal["direct_upload", "generated_asset"] = "direct_upload"
+    complete_scene_image_id: str | None = None
+    pipeline_run_id: str | None = None
+    run_asset_id: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_generated_asset_lineage(self) -> "ChapterAssetLineage":
+        generated_fields = (
+            self.complete_scene_image_id,
+            self.pipeline_run_id,
+            self.run_asset_id,
+        )
+        if self.source_kind == "direct_upload":
+            if any(value is not None for value in generated_fields):
+                raise ValueError(
+                    "direct_upload lineage must not include generated asset ids."
+                )
+            return self
+        missing_fields = [
+            field_name
+            for field_name, value in (
+                ("complete_scene_image_id", self.complete_scene_image_id),
+                ("pipeline_run_id", self.pipeline_run_id),
+                ("run_asset_id", self.run_asset_id),
+            )
+            if value is None or not value.strip()
+        ]
+        if missing_fields:
+            # WHY: generated lineage 是 resolver/materialize/delete 的唯一事实源；
+            # 在模型边界一次性校验，路由层只传递已收窄结构，避免各处解析规则漂移。
+            raise ValueError(
+                "generated_asset lineage requires: " + ", ".join(missing_fields)
+            )
+        return self
 
 
 class ChapterAsset(ScenePackageMediaRecord):

@@ -275,7 +275,7 @@ def test_rejects_assembly_placements_before_any_selected_empty_scene_exists(
     )
     manifest = make_manifest(asset_id=package_with_asset.chapter_assets[0].id)
 
-    with pytest.raises(ValueError, match="current_empty_scene_image_id"):
+    with pytest.raises(ValueError, match="empty_scene_image_id"):
         if method_name == "save":
             store.save_chapter_scene_assembly(chapter.id, manifest)
         else:

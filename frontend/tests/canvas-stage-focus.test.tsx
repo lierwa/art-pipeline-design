@@ -1,4 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CanvasStage } from "../src/features/canvas/CanvasStage";
@@ -56,6 +57,68 @@ describe("CanvasStage focus panning", () => {
 
     expect(onPanChange).toHaveBeenCalledTimes(1);
   });
+
+  it("does not create draw drafts when drawing capability is disabled", () => {
+    const onDraftRegionChange = vi.fn();
+
+    renderCanvasStage({
+      focusRequest: null,
+      onPanChange: vi.fn(),
+      overlayElements: [loadedState.elements[0] as unknown as WorkspaceElement],
+      stageProps: {
+        capabilities: {
+          canDraw: false,
+          canSplit: true,
+          canClickDetect: true,
+          canCreateChild: true,
+          canRenameObjects: true,
+          canUseMissingMask: true,
+        },
+        onDraftRegionChange,
+        tool: "draw",
+      },
+    });
+
+    const surface = screen.getByTestId("canvas-drawing-surface");
+    mockRect(surface, { left: 0, top: 0, width: 600, height: 450 });
+
+    fireEvent.pointerDown(surface, { clientX: 10, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(surface, { clientX: 100, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(surface, { clientX: 100, clientY: 120, pointerId: 1 });
+
+    expect(onDraftRegionChange).not.toHaveBeenCalled();
+  });
+
+  it("hides stale draft and overlay regions when their capabilities are disabled", () => {
+    const onCreateElement = vi.fn();
+    const { container } = renderCanvasStage({
+      focusRequest: null,
+      onPanChange: vi.fn(),
+      overlayElements: [loadedState.elements[0] as unknown as WorkspaceElement],
+      stageProps: {
+        capabilities: {
+          canDraw: false,
+          canSplit: false,
+          canClickDetect: true,
+          canCreateChild: true,
+          canRenameObjects: true,
+          canUseMissingMask: false,
+        },
+        canDrawMissingMask: true,
+        draftRegion: { bbox: { x: 5, y: 6, w: 30, h: 40 } },
+        missingMaskRegion: { bbox: { x: 7, y: 8, w: 20, h: 30 } },
+        onCreateElement,
+        splitRegions: [{ bbox: { x: 9, y: 10, w: 25, h: 35 } }],
+      },
+    });
+
+    expect(screen.queryByRole("button", { name: /create element/i })).not.toBeInTheDocument();
+    expect(container.querySelector(".draft-inline-editor")).toBeNull();
+    expect(container.querySelector(".overlay-item-draft")).toBeNull();
+    expect(container.querySelector(".overlay-item-split")).toBeNull();
+    expect(container.querySelector(".overlay-item-missing")).toBeNull();
+    expect(onCreateElement).not.toHaveBeenCalled();
+  });
 });
 
 async function flushAnimationFrames(callbacks: FrameRequestCallback[]) {
@@ -70,6 +133,7 @@ function renderCanvasStage(props: {
   focusRequest: { elementId: string; sequence: number } | null;
   onPanChange: (deltaX: number, deltaY: number) => void;
   overlayElements: WorkspaceElement[];
+  stageProps?: Partial<ComponentProps<typeof CanvasStage>>;
 }) {
   return render(renderCanvasStageElement(props));
 }
@@ -78,10 +142,12 @@ function renderCanvasStageElement({
   focusRequest,
   onPanChange,
   overlayElements,
+  stageProps,
 }: {
   focusRequest: { elementId: string; sequence: number } | null;
   onPanChange: (deltaX: number, deltaY: number) => void;
   overlayElements: WorkspaceElement[];
+  stageProps?: Partial<ComponentProps<typeof CanvasStage>>;
 }) {
   const source = loadedState.source as SourceMetadata;
   return (
@@ -131,6 +197,7 @@ function renderCanvasStageElement({
       onStartRenameElement={vi.fn()}
       onZoomByGesture={vi.fn()}
       onZoomByWheel={vi.fn()}
+      {...stageProps}
     />
   );
 }

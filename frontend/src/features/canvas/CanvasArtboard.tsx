@@ -7,11 +7,11 @@ import {
   type ElementSelectionMode,
   type OverlayState,
   type SourceMetadata,
-  type WorkspaceElement,
 } from "../../domain/workspace";
 import { CanvasBoxEditLayer } from "./CanvasBoxEditLayer";
 import { CanvasDraftControls } from "./CanvasDraftControls";
 import { CanvasOverlayLayer } from "./CanvasOverlayLayer";
+import type { CanvasObjectView, CanvasSurfaceCapabilities } from "../canvasObjects";
 import {
   type BoxEditDrag,
   type DrawingEvent,
@@ -26,11 +26,15 @@ import {
   resizeBox,
 } from "./canvasStageGeometry";
 
+export type CanvasHitTestStrategy = "front" | "smallest-on-modified-selection";
+
 export type CanvasArtboardProps = {
   sourceUrl: string;
   source: SourceMetadata;
   overlays: OverlayState;
-  overlayElements: WorkspaceElement[];
+  canvasObjects: CanvasObjectView[];
+  capabilities: CanvasSurfaceCapabilities;
+  hitTestStrategy: CanvasHitTestStrategy;
   selectedElementId: string | null;
   selectedElementIds: string[];
   editingElementId: string | null;
@@ -38,8 +42,6 @@ export type CanvasArtboardProps = {
   draftRegion: DraftRegion | null;
   splitRegions: DraftRegion[];
   missingMaskRegion: DraftRegion | null;
-  assetCacheKey: number;
-  workspaceRunId: string | null;
   tool: CanvasTool;
   isPanMode: boolean;
   manualElementName: string;
@@ -53,6 +55,8 @@ export type CanvasArtboardProps = {
   onCommitRenameElement: (elementId: string, name: string) => void;
   onCancelRenameElement: () => void;
   onBoxDraftChange: (elementId: string, bbox: Box) => void;
+  onBoxEditEnd?: (elementId: string) => void;
+  onBoxEditStart?: (elementId: string) => void;
   onManualElementNameChange: (value: string) => void;
   onCreateElement: (name: string) => void;
   onCreateChildElement: (name: string) => void;
@@ -69,7 +73,9 @@ export function CanvasArtboard({
   sourceUrl,
   source,
   overlays,
-  overlayElements,
+  canvasObjects,
+  capabilities,
+  hitTestStrategy,
   selectedElementId,
   selectedElementIds,
   editingElementId,
@@ -77,8 +83,6 @@ export function CanvasArtboard({
   draftRegion,
   splitRegions,
   missingMaskRegion,
-  assetCacheKey,
-  workspaceRunId,
   tool,
   isPanMode,
   manualElementName,
@@ -92,6 +96,8 @@ export function CanvasArtboard({
   onCommitRenameElement,
   onCancelRenameElement,
   onBoxDraftChange,
+  onBoxEditEnd,
+  onBoxEditStart,
   onManualElementNameChange,
   onCreateElement,
   onCreateChildElement,
@@ -121,17 +127,17 @@ export function CanvasArtboard({
     }
     if (tool === "select") {
       const isMergeToggle = event.shiftKey || event.ctrlKey || event.metaKey;
-      const hitElement = findHitElement(event, isMergeToggle ? "smallest" : "front");
-      if (!hitElement) {
+      const hitObject = findHitObject(event, resolveSelectionHitStrategy(isMergeToggle));
+      if (!hitObject) {
         if (!isMergeToggle && (selectedElementId || selectedElementIds.length > 0)) {
           onClearSelection();
         }
         return;
       }
       if (isMergeToggle) {
-        onSelectElement(hitElement.id, "toggle");
+        onSelectElement(hitObject.id, "toggle");
       } else {
-        onSelectElement(hitElement.id, "replace");
+        onSelectElement(hitObject.id, "replace");
       }
       return;
     }
@@ -158,8 +164,8 @@ export function CanvasArtboard({
       return;
     }
 
-    const hitElement = findHitElement(event, "smallest");
-    if (!hitElement) {
+    const hitObject = findHitObject(event, resolveContextMenuHitStrategy());
+    if (!hitObject) {
       return;
     }
 
@@ -167,12 +173,12 @@ export function CanvasArtboard({
     event.stopPropagation();
     const shouldPreserveSelection =
       selectedElementIds.length > 1
-      || (selectedElementIds.length > 0 && !selectedElementIds.includes(hitElement.id));
+      || (selectedElementIds.length > 0 && !selectedElementIds.includes(hitObject.id));
     onSelectElement(
-      hitElement.id,
+      hitObject.id,
       shouldPreserveSelection ? "focus" : "replace",
     );
-    onOpenElementContextMenu(hitElement.id, { x: event.clientX, y: event.clientY });
+    onOpenElementContextMenu(hitObject.id, { x: event.clientX, y: event.clientY });
   }
 
   function shouldIgnoreMouseFallbackEvent(event: DrawingEvent, phase: DrawingEventPhase): boolean {
@@ -214,21 +220,21 @@ export function CanvasArtboard({
 
       const handleControl = target.closest<HTMLElement>("[data-resize-handle]");
       if (handleControl) {
-        const element = overlayElements.find((candidate) => candidate.id === handleControl.dataset.elementId);
+        const object = canvasObjects.find((candidate) => candidate.id === handleControl.dataset.elementId);
         const handle = parseResizeHandle(handleControl.dataset.resizeHandle);
-        if (element && handle) {
+        if (object && handle) {
           event.preventDefault();
-          startBoxEditDrag(event.clientX, event.clientY, element, "resize", handle);
+          startBoxEditDrag(event.clientX, event.clientY, object, "resize", handle);
         }
         return;
       }
 
       const editRegion = target.closest<HTMLElement>("[data-canvas-edit-region]");
       if (editRegion) {
-        const element = overlayElements.find((candidate) => candidate.id === editRegion.dataset.elementId);
-        if (element) {
+        const object = canvasObjects.find((candidate) => candidate.id === editRegion.dataset.elementId);
+        if (object) {
           event.preventDefault();
-          startBoxEditDrag(event.clientX, event.clientY, element, "move", null);
+          startBoxEditDrag(event.clientX, event.clientY, object, "move", null);
         }
       }
     }
@@ -248,7 +254,7 @@ export function CanvasArtboard({
       }
 
       event.preventDefault();
-      boxEditDragRef.current = null;
+      finishBoxEditDrag();
     }
 
     artboard.addEventListener("pointerdown", handleNativePointerDown);
@@ -262,12 +268,12 @@ export function CanvasArtboard({
       artboard.removeEventListener("pointerup", handleNativePointerEnd);
       artboard.removeEventListener("pointercancel", handleNativePointerEnd);
     };
-  }, [onBoxDraftChange, onSelectElement, overlayElements, source]);
+  }, [canvasObjects, onBoxDraftChange, onBoxEditEnd, onBoxEditStart, onSelectElement, source]);
 
   function startBoxEditDrag(
     clientX: number,
     clientY: number,
-    element: WorkspaceElement,
+    object: CanvasObjectView,
     mode: "move" | "resize",
     handle: ResizeHandle | null,
   ) {
@@ -278,32 +284,42 @@ export function CanvasArtboard({
 
     const point = eventPointToImageWithin({ clientX, clientY }, artboard, source);
     boxEditDragRef.current = {
-      elementId: element.id,
+      elementId: object.id,
       mode,
       handle,
       startX: point.x,
       startY: point.y,
-      startBox: element.bbox,
+      startBox: object.box,
     };
-    onSelectElement(element.id);
+    onBoxEditStart?.(object.id);
+    onSelectElement(object.id);
   }
 
-  function beginBoxMove(event: PointerEvent<HTMLDivElement>, element: WorkspaceElement) {
+  function finishBoxEditDrag() {
+    const drag = boxEditDragRef.current;
+    if (!drag) {
+      return;
+    }
+    boxEditDragRef.current = null;
+    onBoxEditEnd?.(drag.elementId);
+  }
+
+  function beginBoxMove(event: PointerEvent<HTMLDivElement>, object: CanvasObjectView) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    startBoxEditDrag(event.clientX, event.clientY, element, "move", null);
+    startBoxEditDrag(event.clientX, event.clientY, object, "move", null);
   }
 
   function beginBoxResize(
     event: PointerEvent<HTMLButtonElement>,
-    element: WorkspaceElement,
+    object: CanvasObjectView,
     handle: ResizeHandle,
   ) {
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    startBoxEditDrag(event.clientX, event.clientY, element, "resize", handle);
+    startBoxEditDrag(event.clientX, event.clientY, object, "resize", handle);
   }
 
   function updateBoxEditFromClient(clientX: number, clientY: number) {
@@ -338,10 +354,10 @@ export function CanvasArtboard({
     }
 
     event.preventDefault();
-    boxEditDragRef.current = null;
+    finishBoxEditDrag();
   }
 
-  function handleEditKeyDown(event: KeyboardEvent<HTMLDivElement>, element: WorkspaceElement) {
+  function handleEditKeyDown(event: KeyboardEvent<HTMLDivElement>, object: CanvasObjectView) {
     const step = event.shiftKey ? 10 : 1;
     const delta = keyboardDelta(event.key, step);
     if (!delta) {
@@ -350,12 +366,12 @@ export function CanvasArtboard({
 
     event.preventDefault();
     event.stopPropagation();
-    onBoxDraftChange(element.id, moveBox(element.bbox, delta.x, delta.y, source));
+    onBoxDraftChange(object.id, moveBox(object.box, delta.x, delta.y, source));
   }
 
   function handleResizeKeyDown(
     event: KeyboardEvent<HTMLButtonElement>,
-    element: WorkspaceElement,
+    object: CanvasObjectView,
     handle: ResizeHandle,
   ) {
     const step = event.shiftKey ? 10 : 1;
@@ -366,28 +382,45 @@ export function CanvasArtboard({
 
     event.preventDefault();
     event.stopPropagation();
-    onBoxDraftChange(element.id, resizeBox(element.bbox, handle, delta.x, delta.y, source));
+    onBoxDraftChange(object.id, resizeBox(object.box, handle, delta.x, delta.y, source));
   }
 
-  function findHitElement(event: DrawingEvent, strategy: "front" | "smallest"): WorkspaceElement | null {
+  function findHitObject(event: DrawingEvent, strategy: "front" | "smallest"): CanvasObjectView | null {
     const artboard = artboardRef.current;
     if (!artboard) {
       return null;
     }
 
     const point = eventPointToImageWithin(event, artboard, source);
-    return [...overlayElements]
-      .filter((element) => element.visible && pointIsInsideBox(point, element.bbox))
+    const layerOrder = new Map(canvasObjects.map((object, index) => [object.id, index]));
+    return [...canvasObjects]
+      .filter((object) => object.isVisible && pointIsInsideBox(point, object.box))
       .sort((left, right) => {
         if (strategy === "smallest") {
-          const areaDelta = boxArea(left.bbox) - boxArea(right.bbox);
+          const areaDelta = boxArea(left.box) - boxArea(right.box);
           if (areaDelta !== 0) {
             return areaDelta;
           }
         }
-        return right.layer - left.layer;
+        return (layerOrder.get(right.id) ?? 0) - (layerOrder.get(left.id) ?? 0);
       })[0] ?? null;
   }
+
+  function resolveSelectionHitStrategy(isModifiedSelection: boolean): "front" | "smallest" {
+    if (hitTestStrategy === "front") {
+      return "front";
+    }
+    return isModifiedSelection ? "smallest" : "front";
+  }
+
+  function resolveContextMenuHitStrategy(): "front" | "smallest" {
+    return hitTestStrategy === "front" ? "front" : "smallest";
+  }
+
+  // WHY: capability 关闭时仍可能收到上层残留草稿状态；共享画布层必须在渲染边界收窄，避免非 pipeline surface 暴露创建/拆分/补 mask 操作。
+  const visibleDraftRegion = capabilities.canDraw ? draftRegion : null;
+  const visibleSplitRegions = capabilities.canSplit ? splitRegions : [];
+  const visibleMissingMaskRegion = capabilities.canUseMissingMask ? missingMaskRegion : null;
 
   return (
     <div
@@ -408,30 +441,29 @@ export function CanvasArtboard({
         src={sourceUrl}
       />
       <CanvasOverlayLayer
-        assetCacheKey={assetCacheKey}
-        draftRegion={draftRegion}
+        canvasObjects={canvasObjects}
+        capabilities={capabilities}
+        draftRegion={visibleDraftRegion}
         editingElementId={editingElementId}
         mergePreview={mergePreview}
-        missingMaskRegion={missingMaskRegion}
-        overlayElements={overlayElements}
+        missingMaskRegion={visibleMissingMaskRegion}
         overlays={overlays}
         renamingElementId={renamingElementId}
         selectedElementId={selectedElementId}
         selectedElementIds={selectedElementIds}
         source={source}
-        splitRegions={splitRegions}
-        workspaceRunId={workspaceRunId}
+        splitRegions={visibleSplitRegions}
         onCancelRenameElement={onCancelRenameElement}
         onCommitRenameElement={onCommitRenameElement}
         onSelectElement={onSelectElement}
         onStartRenameElement={onStartRenameElement}
       />
       <CanvasDraftControls
-        canCreateChildFromDraft={canCreateChildFromDraft}
-        draftRegion={draftRegion}
+        canCreateChildFromDraft={capabilities.canCreateChild && canCreateChildFromDraft}
+        draftRegion={visibleDraftRegion}
         manualElementName={manualElementName}
         source={source}
-        splitRegions={splitRegions}
+        splitRegions={visibleSplitRegions}
         onApplySplit={onApplySplit}
         onClearDrafts={onClearDrafts}
         onCreateChildElement={onCreateChildElement}
@@ -439,9 +471,9 @@ export function CanvasArtboard({
         onManualElementNameChange={onManualElementNameChange}
       />
       <CanvasBoxEditLayer
+        canvasObjects={canvasObjects}
         editingElementId={editingElementId}
         hasUnsavedBoxEdit={hasUnsavedBoxEdit}
-        overlayElements={overlayElements}
         source={source}
         onBeginBoxMove={beginBoxMove}
         onBeginBoxResize={beginBoxResize}

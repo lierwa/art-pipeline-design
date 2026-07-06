@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from art_pipeline.course_planner.api_models import (
     ChapterCastAssignmentRequest,
@@ -9,6 +10,10 @@ from art_pipeline.course_planner.api_models import (
     ChapterScenePromptPatchRequest,
     CharacterIpCreateRequest,
     CurrentEmptySceneImageRequest,
+)
+from art_pipeline.course_planner.generated_assets import (
+    list_generated_chapter_assets,
+    materialize_generated_chapter_asset,
 )
 from art_pipeline.course_planner.import_to_pipeline import (
     import_complete_scene_image_to_pipeline,
@@ -28,6 +33,14 @@ from art_pipeline.course_planner.scene_package_route_helpers import (
 )
 
 scene_package_router = APIRouter(prefix="/api/course-planner")
+
+
+class GeneratedAssetMaterializeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    complete_scene_image_id: str = Field(alias="completeSceneImageId", min_length=1)
+    pipeline_run_id: str = Field(alias="pipelineRunId", min_length=1)
+    run_asset_id: str = Field(alias="runAssetId", min_length=1)
 
 
 def register_scene_package_routes(app) -> None:
@@ -300,6 +313,52 @@ def delete_complete_scene_image(
             child_not_found_detail="Complete scene image not found.",
         ) from exc
     return scene_package_payload(package)
+
+
+@scene_package_router.get("/chapters/{chapterId}/scene-package/generated-assets")
+def get_generated_chapter_assets(
+    request: Request,
+    chapterId: str,
+) -> dict[str, list[dict[str, object]]]:
+    try:
+        assets = list_generated_chapter_assets(
+            store=store_for_request(request),
+            workspace_root=request.app.state.workspace_root,
+            chapter_id=chapterId,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(exc) from exc
+    return {
+        "generatedAssets": [asset.model_dump(mode="json") for asset in assets]
+    }
+
+
+@scene_package_router.post(
+    "/chapters/{chapterId}/scene-package/generated-assets/materialize"
+)
+async def post_materialize_generated_chapter_asset(
+    request: Request,
+    chapterId: str,
+) -> dict[str, object]:
+    payload = await parse_json_model(request, GeneratedAssetMaterializeRequest)
+    try:
+        result = materialize_generated_chapter_asset(
+            store=store_for_request(request),
+            workspace_root=request.app.state.workspace_root,
+            chapter_id=chapterId,
+            complete_scene_image_id=payload.complete_scene_image_id,
+            pipeline_run_id=payload.pipeline_run_id,
+            run_asset_id=payload.run_asset_id,
+        )
+    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
+        raise scene_package_http_exception(
+            exc,
+            child_not_found_detail="Generated asset not found.",
+        ) from exc
+    return {
+        "chapterAsset": result.asset.model_dump(mode="json"),
+        **scene_package_payload(result.package),
+    }
 
 
 @scene_package_router.post(

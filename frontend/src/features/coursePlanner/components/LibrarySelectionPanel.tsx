@@ -1,4 +1,4 @@
-import { type ChangeEvent, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type ReactNode, useMemo, useRef, useState } from "react";
 import { ImagePlus, Link2 } from "lucide-react";
 
 import type {
@@ -18,6 +18,8 @@ type LibrarySelectionPanelProps = {
   referenceImages: ReferenceLibraryImage[];
   scenePackage: ChapterScenePackage;
   onAssignCharacterIp: (input: ChapterCastAssignmentInput) => Promise<ChapterScenePackage | null>;
+  onOpenCharacterBindingDrawer: (trigger: HTMLButtonElement) => void;
+  onOpenReferenceImagesDrawer: (trigger: HTMLButtonElement) => void;
   onSelectReferenceImage: (input: ChapterReferenceSelectionInput) => Promise<ChapterScenePackage | null>;
   onUploadReferenceImage: (file: File, input: ReferenceLibraryImageUploadInput) => Promise<ReferenceLibraryImage | null>;
 };
@@ -29,6 +31,8 @@ export function LibrarySelectionPanel({
   referenceImages,
   scenePackage,
   onAssignCharacterIp,
+  onOpenCharacterBindingDrawer,
+  onOpenReferenceImagesDrawer,
   onSelectReferenceImage,
   onUploadReferenceImage,
 }: LibrarySelectionPanelProps) {
@@ -41,7 +45,9 @@ export function LibrarySelectionPanel({
     [referenceImages],
   );
   const hasCharacterIp = scenePackage.cast_assignments.length > 0;
-  const hasStyleResolution = scenePackage.reference_selections.some((selection) => selection.prompt_role === "style") ||
+  const selectedReferenceCount = scenePackage.reference_selections.length;
+  const selectedStyleReferenceCount = scenePackage.reference_selections.filter((selection) => selection.prompt_role === "style").length;
+  const hasStyleResolution = selectedStyleReferenceCount > 0 ||
     scenePackage.prompt_confirmations.style_reference_mode === "confirmed_empty";
   const hasAvoidReview = scenePackage.prompt_confirmations.avoid_objects_reviewed;
 
@@ -55,32 +61,42 @@ export function LibrarySelectionPanel({
       </div>
 
       <div className="chapter-studio-readiness-list">
-        <ReadinessRow label="Character IP" ready={hasCharacterIp} detail={`${scenePackage.cast_assignments.length} linked`} />
+        <ReadinessRow
+          label="Character IP"
+          ready={hasCharacterIp}
+          detail={`${scenePackage.cast_assignments.length} linked`}
+          action={(
+            <button
+              type="button"
+              className="course-planner-primary-action chapter-studio-icon-action"
+              onClick={(event) => onOpenCharacterBindingDrawer(event.currentTarget)}
+            >
+              Bind Character IP
+            </button>
+          )}
+        />
         <ReadinessRow
           label="Reference Library"
-          ready={hasStyleResolution}
-          detail={scenePackage.prompt_confirmations.style_reference_mode === "confirmed_empty"
-            ? "Confirmed empty"
-            : `${scenePackage.reference_selections.length} selected`}
+          ready={selectedReferenceCount > 0}
+          detail={`${selectedReferenceCount} selected`}
+          action={(
+            <button
+              type="button"
+              className="course-planner-primary-action chapter-studio-icon-action"
+              onClick={(event) => onOpenReferenceImagesDrawer(event.currentTarget)}
+            >
+              Upload Reference
+            </button>
+          )}
         />
         <ReadinessRow label="Avoid reviewed" ready={hasAvoidReview} detail={`${scenePackage.avoid_objects.length} avoid objects`} />
+        <ReadinessRow label="Style references" ready={hasStyleResolution} detail={styleReferenceDetail(scenePackage, selectedStyleReferenceCount)} />
       </div>
-
-      <CharacterBindingPanel
-        availableCharacterIps={availableCharacterIps}
-        onAssignCharacterIp={onAssignCharacterIp}
-        scenePackage={scenePackage}
-      />
-      <ReferenceImagesPanel
-        availableReferences={availableReferences}
-        onSelectReferenceImage={onSelectReferenceImage}
-        onUploadReferenceImage={onUploadReferenceImage}
-      />
     </section>
   );
 }
 
-function CharacterBindingPanel({
+export function CharacterBindingPanel({
   availableCharacterIps,
   onAssignCharacterIp,
   scenePackage,
@@ -149,7 +165,7 @@ function CharacterBindingPanel({
   );
 }
 
-function ReferenceImagesPanel({
+export function ReferenceImagesPanel({
   availableReferences,
   onSelectReferenceImage,
   onUploadReferenceImage,
@@ -249,20 +265,40 @@ function ReferenceImagesPanel({
   );
 }
 
-function ReadinessRow({ detail, label, ready }: { label: string; ready: boolean; detail: string }) {
+function ReadinessRow({
+  action,
+  detail,
+  label,
+  ready,
+}: {
+  action?: ReactNode;
+  label: string;
+  ready: boolean;
+  detail: string;
+}) {
   return (
     <div className="chapter-studio-readiness-row">
       <div>
         <h3>{label}</h3>
         <p>{detail}</p>
       </div>
-      <CoursePlannerStatusBadge tone={ready ? "success" : "warning"}>{ready ? "Ready" : "Pending"}</CoursePlannerStatusBadge>
+      <div className="chapter-studio-readiness-actions">
+        <CoursePlannerStatusBadge tone={ready ? "success" : "warning"}>{ready ? "Ready" : "Pending"}</CoursePlannerStatusBadge>
+        {action}
+      </div>
     </div>
   );
 }
 
 function tagList(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function styleReferenceDetail(scenePackage: ChapterScenePackage, selectedStyleReferenceCount: number): string {
+  if (scenePackage.prompt_confirmations.style_reference_mode === "confirmed_empty") {
+    return "Confirmed empty";
+  }
+  return selectedStyleReferenceCount > 0 ? `${selectedStyleReferenceCount} style selected` : "Unreviewed";
 }
 
 function referenceLabel(referenceImage: ReferenceLibraryImage): string {

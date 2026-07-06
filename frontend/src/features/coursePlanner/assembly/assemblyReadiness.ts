@@ -22,19 +22,12 @@ export function buildAssemblyReadiness(
   manifest: ChapterScenePackage["assembly"] = scenePackage.assembly,
 ): AssemblyReadiness {
   const reasons: string[] = [];
-  if (!scenePackage.current_empty_scene_image_id) {
+  if (!hasAvailableEmptyScene(scenePackage, manifest)) {
     reasons.push("Select an Empty Scene Image.");
   }
-  if (manifest.placements.length === 0) {
-    reasons.push("Place at least one Chapter Asset.");
-  }
-  if (
-    manifest.placements.length > 0
-    && scenePackage.current_empty_scene_image_id
-    && manifest.empty_scene_image_id !== scenePackage.current_empty_scene_image_id
-  ) {
-    // WHY: current_empty_scene_image_id 是作者当前选中的背景事实；
-    // saved manifest 仍指向旧 empty scene 时，必须先显式 resave，不能让页面各处各自猜“已经同步”。
+  if (!hasMatchingCurrentEmptySceneForPlacements(scenePackage, manifest)) {
+    // WHY: backend Lock Final freezes placements against current_empty_scene_image_id；
+    // frontend ready 状态必须暴露同一个领域不变量，不能只验证图片“存在”。
     reasons.push(
       "Saved Assembly still points to a different Empty Scene Image. Re-save after reviewing the current selection.",
     );
@@ -48,9 +41,14 @@ export function buildAssemblyReadiness(
   if (!allPlacementAssetsAvailable(scenePackage, manifest)) {
     reasons.push("Replace placements that reference unavailable Chapter Assets.");
   }
+  if (!allDependencyRefsValid(manifest)) {
+    reasons.push("Fix placement dependency references.");
+  }
 
   const targetCoverage = buildTargetCoverage(scenePackage, manifest);
-  const missingTargets = targetCoverage.filter((item) => item.status === "missing");
+  const missingTargets = targetCoverage.filter((item) => (
+    item.status === "missing" && isRequiredTarget(item.target)
+  ));
   if (missingTargets.length > 0) {
     reasons.push(
       "Missing target objects: "
@@ -60,7 +58,7 @@ export function buildAssemblyReadiness(
   }
 
   return {
-    is_ready: reasons.length === 0 && Boolean(manifest.updated_at),
+    is_ready: reasons.length === 0,
     reasons,
     target_coverage: targetCoverage,
   };
@@ -130,6 +128,46 @@ function allPlacementAssetsAvailable(
   return manifest.placements.every((placement) =>
     availableAssetIds.has(placement.asset_id)
   );
+}
+
+function allDependencyRefsValid(
+  manifest: ChapterScenePackage["assembly"],
+): boolean {
+  const placementIds = new Set(manifest.placements.map((placement) => placement.id));
+  return manifest.placements.every((placement) => (
+    placement.requires_placed.every((requiredId) => placementIds.has(requiredId))
+  ));
+}
+
+function hasAvailableEmptyScene(
+  scenePackage: ChapterScenePackage,
+  manifest: ChapterScenePackage["assembly"],
+): boolean {
+  if (!manifest.empty_scene_image_id) {
+    return false;
+  }
+  // WHY: Ready/Lock Final 只能看 manifest 中持久化的 Empty Scene 引用是否解析到可用领域事实；
+  // selection、drawer、zoom 等 UI 状态不能成为第二套 gate。
+  return scenePackage.empty_scene_images.some((image) => (
+    image.id === manifest.empty_scene_image_id && image.status === "available"
+  ));
+}
+
+function hasMatchingCurrentEmptySceneForPlacements(
+  scenePackage: ChapterScenePackage,
+  manifest: ChapterScenePackage["assembly"],
+): boolean {
+  if (manifest.placements.length === 0) {
+    return true;
+  }
+  return (
+    Boolean(scenePackage.current_empty_scene_image_id)
+    && manifest.empty_scene_image_id === scenePackage.current_empty_scene_image_id
+  );
+}
+
+function isRequiredTarget(target: TargetObjectItem): boolean {
+  return target.priority === "core" || target.priority === "required";
 }
 
 function hasValidPlacementTransforms(

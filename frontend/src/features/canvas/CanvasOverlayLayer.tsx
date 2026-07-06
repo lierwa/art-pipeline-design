@@ -6,26 +6,26 @@ import {
   type ElementSelectionMode,
   type OverlayState,
   type SourceMetadata,
-  type WorkspaceElement,
-  thumbnailUrl,
-  workspaceAssetUrl,
 } from "../../domain/workspace";
-import { boxToPercentStyle } from "./canvasStageGeometry";
+import {
+  boxToPercentStyle,
+  canvasObjectBoxToPercentStyle,
+} from "./canvasStageGeometry";
+import type { CanvasObjectView, CanvasSurfaceCapabilities } from "../canvasObjects";
 
 type CanvasOverlayLayerProps = {
-  assetCacheKey: number;
+  canvasObjects: CanvasObjectView[];
+  capabilities: CanvasSurfaceCapabilities;
   draftRegion: DraftRegion | null;
   editingElementId: string | null;
   mergePreview: Box | null;
   missingMaskRegion: DraftRegion | null;
-  overlayElements: WorkspaceElement[];
   overlays: OverlayState;
   renamingElementId: string | null;
   selectedElementId: string | null;
   selectedElementIds: string[];
   source: SourceMetadata;
   splitRegions: DraftRegion[];
-  workspaceRunId: string | null;
   onCancelRenameElement: () => void;
   onCommitRenameElement: (elementId: string, name: string) => void;
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
@@ -33,19 +33,18 @@ type CanvasOverlayLayerProps = {
 };
 
 export function CanvasOverlayLayer({
-  assetCacheKey,
+  canvasObjects,
+  capabilities,
   draftRegion,
   editingElementId,
   mergePreview,
   missingMaskRegion,
-  overlayElements,
   overlays,
   renamingElementId,
   selectedElementId,
   selectedElementIds,
   source,
   splitRegions,
-  workspaceRunId,
   onCancelRenameElement,
   onCommitRenameElement,
   onSelectElement,
@@ -64,30 +63,30 @@ export function CanvasOverlayLayer({
 
   return (
     <div className="canvas-overlay-layer">
-      {overlayElements.map((element) =>
-        overlays.showMasks && element.mask ? (
+      {canvasObjects.map((object) =>
+        overlays.showMasks && object.maskUrl && object.maskBox ? (
           <img
-            key={`${element.id}-mask`}
+            key={`${object.id}-mask`}
             alt=""
-            data-testid={`overlay-mask-${element.id}`}
+            data-testid={`overlay-mask-${object.id}`}
             className="overlay-mask-image"
-            src={workspaceAssetUrl(element.mask, assetCacheKey, workspaceRunId) ?? undefined}
-            style={boxToPercentStyle(element.canvas, source)}
+            src={object.maskUrl}
+            style={boxToPercentStyle(object.maskBox, source)}
           />
         ) : null,
       )}
-      {overlayElements.map((element) => {
-        const overlayStyle = boxToPercentStyle(element.bbox, source);
-        const isSelected = selectedElementId === element.id;
-        const isMergeSelected = selectedElementIds.includes(element.id);
-        const isEditing = editingElementId === element.id;
-        const isRenaming = renamingElementId === element.id;
+      {canvasObjects.map((object) => {
+        const overlayStyle = canvasObjectBoxToPercentStyle(object.box, source);
+        const isSelected = selectedElementId === object.id;
+        const isMergeSelected = selectedElementIds.includes(object.id);
+        const isEditing = editingElementId === object.id;
+        const isRenaming = renamingElementId === object.id;
         const shouldRenderBox = overlays.showBoxes || isSelected || isMergeSelected || isEditing;
 
         return (
           <div
-            key={element.id}
-            data-testid={`overlay-region-${element.id}`}
+            key={object.id}
+            data-testid={`overlay-region-${object.id}`}
             className={[
               "overlay-item",
               isSelected ? "is-selected" : "",
@@ -96,24 +95,31 @@ export function CanvasOverlayLayer({
             ].filter(Boolean).join(" ")}
             style={overlayStyle}
           >
+            {object.contentImageUrl ? (
+              <img
+                alt=""
+                className="canvas-object-image"
+                src={object.contentImageUrl}
+              />
+            ) : null}
             {shouldRenderBox ? (
               <div
-                data-testid={`overlay-box-${element.id}`}
+                data-testid={`overlay-box-${object.id}`}
                 className="overlay-box"
               />
             ) : null}
             {overlays.showNames ? (
-              isRenaming ? (
+              isRenaming && capabilities.canRenameObjects ? (
                 <input
                   ref={renameInputRef}
-                  aria-label={`Rename ${element.name}`}
-                  data-testid={`overlay-label-${element.id}`}
-                  className={`${overlayLabelClassName(element, source)} overlay-label-input`}
-                  defaultValue={element.label ?? element.name}
+                  aria-label={`Rename ${object.displayName}`}
+                  data-testid={`overlay-label-${object.id}`}
+                  className={`${overlayLabelClassName(object, source)} overlay-label-input`}
+                  defaultValue={object.editableName}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => event.stopPropagation()}
-                  onBlur={(event) => onCommitRenameElement(element.id, event.currentTarget.value)}
+                  onBlur={(event) => onCommitRenameElement(object.id, event.currentTarget.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
@@ -125,29 +131,36 @@ export function CanvasOverlayLayer({
                     }
                   }}
                 />
-              ) : (
+              ) : capabilities.canRenameObjects ? (
                 <button
                   type="button"
-                  data-testid={`overlay-label-${element.id}`}
-                  className={overlayLabelClassName(element, source)}
-                  aria-label={`Rename ${element.name}`}
+                  data-testid={`overlay-label-${object.id}`}
+                  className={overlayLabelClassName(object, source)}
+                  aria-label={`Rename ${object.displayName}`}
                   onPointerDown={(event) => event.stopPropagation()}
                   onMouseDown={(event) => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
-                    onSelectElement(element.id, "replace");
-                    onStartRenameElement(element.id);
+                    onSelectElement(object.id, "replace");
+                    onStartRenameElement(object.id);
                   }}
                 >
-                  {element.name}
+                  {object.displayName}
                 </button>
+              ) : (
+                <span
+                  data-testid={`overlay-label-${object.id}`}
+                  className={overlayLabelClassName(object, source)}
+                >
+                  {object.displayName}
+                </span>
               )
             ) : null}
-            {overlays.showThumbs && isSelected && element.thumbnail ? (
+            {overlays.showThumbs && isSelected && object.thumbnailUrl && !object.contentImageUrl ? (
               <img
                 alt=""
                 className="overlay-thumb"
-                src={thumbnailUrl(element.thumbnail, assetCacheKey, workspaceRunId) ?? undefined}
+                src={object.thumbnailUrl}
               />
             ) : null}
           </div>
@@ -190,12 +203,12 @@ export function CanvasOverlayLayer({
   );
 }
 
-function overlayLabelClassName(element: WorkspaceElement, source: SourceMetadata): string {
+function overlayLabelClassName(object: CanvasObjectView, source: SourceMetadata): string {
   const classes = ["overlay-label"];
-  const relativeWidth = element.bbox.w / source.width;
-  const relativeHeight = element.bbox.h / source.height;
-  const relativeX = element.bbox.x / source.width;
-  const relativeY = element.bbox.y / source.height;
+  const relativeWidth = object.box.w / source.width;
+  const relativeHeight = object.box.h / source.height;
+  const relativeX = object.box.x / source.width;
+  const relativeY = object.box.y / source.height;
 
   if (relativeWidth < 0.09 || relativeHeight < 0.07) {
     classes.push("is-compact");

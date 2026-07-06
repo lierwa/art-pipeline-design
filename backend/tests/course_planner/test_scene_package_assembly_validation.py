@@ -73,6 +73,16 @@ def test_manifest_rejects_mismatched_empty_scene_reference_for_placements() -> N
     assert any("empty_scene_image_id" in error for error in errors)
 
 
+def test_manifest_rejects_empty_scene_reference_that_does_not_exist() -> None:
+    package = make_package_with_selected_empty_scene().model_copy(
+        update={"empty_scene_images": []}
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any("empty scene" in error.lower() and "empty_scene_001" in error for error in errors)
+
+
 def test_manifest_rejects_unknown_or_unavailable_asset() -> None:
     package = make_package_with_selected_empty_scene(
         chapter_assets=[
@@ -147,6 +157,25 @@ def test_manifest_rejects_target_object_exemption_without_placed_asset_coverage(
         and "lamp" in error
         for error in errors
     )
+
+
+def test_manifest_does_not_require_recommended_target_object_coverage() -> None:
+    package = make_package_with_selected_empty_scene().model_copy(
+        update={
+            "target_objects": [
+                TargetObjectItem(id="target_001", label="book", priority="required"),
+                TargetObjectItem(
+                    id="target_recommended",
+                    label="wall clock",
+                    priority="recommended",
+                ),
+            ]
+        }
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert not errors
 
 
 def test_frontmost_layer_id_uses_first_layer_order_entry() -> None:

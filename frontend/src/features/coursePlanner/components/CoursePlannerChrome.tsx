@@ -1,5 +1,5 @@
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
-import { type ReactNode } from "react";
 import { Link } from "react-router";
 
 export type CoursePlannerStatusTone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -35,6 +35,8 @@ export type CoursePlannerDrawerProps = {
   children: ReactNode;
   footer?: ReactNode;
   ariaLabel?: string;
+  backdrop?: boolean;
+  overlay?: boolean;
 };
 
 export type InlineItemAction = {
@@ -174,6 +176,7 @@ export function CoursePlannerDialog({
 
 export function CoursePlannerDrawer({
   ariaLabel,
+  backdrop = false,
   children,
   closeButton,
   description,
@@ -181,16 +184,35 @@ export function CoursePlannerDrawer({
   isOpen = true,
   kicker,
   onClose = () => {},
+  overlay = false,
   title,
 }: CoursePlannerDrawerComponentProps) {
   const titleId = `course-planner-drawer-${slugFromTitle(title)}`;
   const descriptionId = description ? `${titleId}-description` : undefined;
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !backdrop) {
+      return undefined;
+    }
+
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [backdrop, isOpen, onClose]);
 
   if (!isOpen) {
     return null;
   }
 
-  return (
+  const drawerContent = (
     <aside
       className="course-planner-drawer"
       aria-describedby={descriptionId}
@@ -205,7 +227,13 @@ export function CoursePlannerDrawer({
           {description ? <p id={descriptionId}>{description}</p> : null}
         </div>
         {closeButton ?? (
-          <button type="button" className="course-planner-icon-button" aria-label="Close" onClick={onClose}>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="course-planner-icon-button"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <X size={16} aria-hidden="true" />
           </button>
         )}
@@ -213,6 +241,21 @@ export function CoursePlannerDrawer({
       <div className="course-planner-drawer-body">{children}</div>
       {footer ? <div className="course-planner-drawer-footer">{footer}</div> : null}
     </aside>
+  );
+
+  if (overlay && !backdrop) {
+    return <div className="course-planner-drawer-overlay">{drawerContent}</div>;
+  }
+
+  if (!backdrop) {
+    return drawerContent;
+  }
+
+  return (
+    <>
+      <div className="course-planner-drawer-backdrop" aria-hidden="true" onClick={onClose} />
+      {overlay ? <div className="course-planner-drawer-overlay">{drawerContent}</div> : drawerContent}
+    </>
   );
 }
 

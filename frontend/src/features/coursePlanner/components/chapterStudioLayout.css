@@ -1,0 +1,121 @@
+.course-planner-immersive-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.chapter-workspace-page {
+  min-height: 100vh;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 55% 10%, rgb(20 54 72 / 0.26), transparent 32rem),
+    linear-gradient(180deg, #07111a, #05080d 76%);
+}
+
+.chapter-workspace-page .chapter-scene-studio {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  grid-template-columns: 292px minmax(0, 1fr);
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgb(5 12 18 / 0.4);
+}
+
+.chapter-workspace-page .chapter-studio-rail {
+  border-width: 0 1px 0 0;
+  border-color: rgb(61 92 119 / 0.46);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgb(9 22 33 / 0.96), rgb(5 13 21 / 0.96));
+  box-shadow: none;
+}
+
+.chapter-workspace-page .chapter-studio-main {
+  grid-template-columns: minmax(520px, 1.12fr) minmax(420px, 0.88fr);
+  gap: 0.82rem;
+  align-content: start;
+  padding: 1.55rem 1.6rem 1.75rem;
+  overflow: auto;
+}
+
+.chapter-workspace-page .chapter-studio-main-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.chapter-workspace-page .chapter-studio-main-heading h1 {
+  font-size: 1.56rem;
+}
+
+.chapter-workspace-page .chapter-studio-save-indicator {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 0.7rem;
+  border: 1px solid #2c7a4c;
+  border-radius: 999px;
+  color: #9df0b1;
+  font-size: 0.78rem;
+  font-weight: 780;
+}
+
+.chapter-workspace-page .chapter-studio-panel {
+  border-color: rgb(61 92 119 / 0.46);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgb(11 24 35 / 0.92), rgb(6 15 24 / 0.92));
+  box-shadow: none;
+}
+
+.chapter-workspace-page .chapter-studio-card {
+  border-radius: 8px;
+}
+
+.chapter-workspace-page .chapter-assembly-summary-card {
+  min-height: 178px;
+}
+
+.chapter-final-body {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.chapter-final-preview {
+  min-width: 0;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  border: 1px solid #1b3448;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #1a2732, #101923);
+  color: #6d7d8d;
+  overflow: hidden;
+}
+
+.chapter-final-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.chapter-final-copy {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+}
+
+@media (max-width: 1180px) {
+  .chapter-workspace-page {
+    overflow: auto;
+  }
+
+  .chapter-workspace-page .chapter-scene-studio,
+  .chapter-workspace-page .chapter-studio-main {
+    grid-template-columns: 1fr;
+  }
+}

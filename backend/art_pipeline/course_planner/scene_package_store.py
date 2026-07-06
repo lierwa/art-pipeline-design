@@ -37,8 +37,8 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         if not path.exists():
             package = ChapterScenePackage(chapter_id=chapter.id)
             # WHY: Scene Package 是每个 Chapter 天然拥有的子资源；首次读取就落盘，
-            # 能提前稳定后续上传目录，同时不把 Chapter 创建阶段绑上媒体初始化副作用。
-            return self.write_chapter_scene_package(package)
+            # 能提前稳定后续上传目录；此时 Assembly 尚未绑定 Empty Scene，不能套用 Lock Final readiness。
+            return self.write_chapter_scene_package(package, validate_assembly=False)
         package = self._read_model(path, ChapterScenePackage)
         require_match(package.chapter_id, chapter.id, "Scene package chapter_id")
         return package

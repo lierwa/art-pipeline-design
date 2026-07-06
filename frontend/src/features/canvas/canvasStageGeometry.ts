@@ -212,6 +212,23 @@ export function boxToPercentStyle(box: Box, source: SourceMetadata): CSSProperti
   };
 }
 
+export function canvasObjectBoxToPercentStyle(
+  box: Box & { rotationDeg?: number },
+  source: SourceMetadata,
+): CSSProperties {
+  const style = boxToPercentStyle(box, source);
+  if (!box.rotationDeg) {
+    return style;
+  }
+
+  return {
+    ...style,
+    // WHY: Assembly stores rotation on the manifest transform; shared canvas renders it here without changing edit/save box math.
+    transform: `rotate(${box.rotationDeg}deg)`,
+    transformOrigin: "center",
+  };
+}
+
 export function draftEditorStyle(box: Box, source: SourceMetadata): CSSProperties {
   return {
     left: `${(box.x / source.width) * 100}%`,

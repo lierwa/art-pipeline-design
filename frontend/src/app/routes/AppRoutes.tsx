@@ -4,6 +4,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router";
 import { AppWorkbenchContent, type AppWorkbenchProps } from "../components/AppWorkbench";
 import { TopAppBar } from "../components/TopAppBar";
 import { SceneCategoryBoardPage } from "../../features/coursePlanner/pages/SceneCategoryBoardPage";
+import { ChapterAssemblyEditorPage } from "../../features/coursePlanner/pages/ChapterAssemblyEditorPage";
 import { ChapterWorkspacePage } from "../../features/coursePlanner/pages/ChapterWorkspacePage";
 
 type AppRoutesProps = {
@@ -27,6 +28,7 @@ export function AppRoutes({ workbenchProps }: AppRoutesProps) {
         <Route path="/" element={<Navigate to="/pipeline" replace />} />
         <Route path="/pipeline" element={<AppWorkbenchContent {...workbenchProps} />} />
         <Route path="/course-planner" element={<SceneCategoryBoardPage />} />
+        <Route path="/course-planner/chapters/:chapterId/assembly" element={<ChapterAssemblyEditorPage />} />
         <Route path="/course-planner/chapters/:chapterId" element={<ChapterWorkspacePage />} />
         <Route path="/lesson-plan" element={<LessonPlanPage />} />
         <Route path="*" element={<Navigate to="/pipeline" replace />} />

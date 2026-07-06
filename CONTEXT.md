@@ -73,6 +73,11 @@ The chapter-facing workspace for authoring a Chapter Scene Package. It keeps one
 
 A chapter-level scene definition composed from one Empty Scene Image and a pool of reusable Scene Assets. A chapter owns one current Chapter Scene Assembly; future scene upgrades are outside the current domain model. The assembly is the authority for where assets belong in the playable scene, including each asset's intended position and visual stacking order.
 
+## Assembly Authoring Surface
+
+The editor surface used to author Scene Asset Placements for a Chapter Scene Assembly. It follows the art-pipeline canvas interaction model directly; third-party editor document models are implementation details and must not define the product interaction vocabulary.
+_Avoid_: tldraw canvas, placement editor shell.
+
 ## Chapter Scene Assembly Manifest
 
 The engine-agnostic data contract for a Chapter Scene Assembly. It records the Empty Scene Image, placed Scene Assets, groups, spatial transforms, and visual order so runtimes such as Cocos or Flutter can recreate the playable scene without depending on the authoring editor's internal document format.
@@ -112,6 +117,16 @@ An author-supplied single-object image added directly to the Chapter Asset Pool 
 ## Chapter Asset Pool
 
 The set of Scene Assets currently materialized into a chapter and available for the chapter's assembly canvas. Chapter assets keep lineage to their source Pipeline Run Assets or direct upload source, but they are owned by the chapter once added.
+
+## Chapter Asset Card
+
+An asset-pool item with a primary click action. Clicking an unused card adds it to the Chapter Scene Assembly; clicking a used card selects and locates its existing Scene Asset Placement.
+_Avoid_: display-only asset card.
+
+## Chapter Asset Pool Filter
+
+The asset pool supports search and used/unused status, but it does not expose type-category chips or view-mode toggles. Target-object linkage is coverage metadata for readiness, not a browsing taxonomy; the pool uses a single grid presentation for browsing.
+_Avoid_: Target asset filter, Prop asset filter, Scene asset filter, list mode.
 
 ## Pipeline Run Asset
 

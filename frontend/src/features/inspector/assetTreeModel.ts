@@ -1,4 +1,8 @@
 import type { WorkspaceElement } from "../../domain/workspace";
+import {
+  resolveLayerTreeMove,
+  type LayerTreeMoveNode,
+} from "../authoring/layerTreeMoveModel";
 
 export type AssetTreeReorderPosition = "before" | "after";
 
@@ -81,43 +85,42 @@ export function resolveAssetTreeMoveAction(
 
   const normalizedParentId = normalizeParentId(parentId);
   const currentParentId = normalizeParentId(element.parentId);
-  if (normalizedParentId !== currentParentId) {
-    if (normalizedParentId !== null && !canMoveElementToParent(elements, elementId, normalizedParentId)) {
-      return null;
-    }
-    // WHY: react-arborist 已经负责可靠判断“落到哪个父级”；这里仅把外部库协议
-    // 收敛成工作区唯一的父子关系 mutation，避免前端再维护第二套 hover 语义。
-    return { kind: "parent", parentId: normalizedParentId };
-  }
-
-  const siblings = elements.filter(
-    (candidate) =>
-      candidate.id !== elementId
-      && candidate.mergedInto === null
-      && normalizeParentId(candidate.parentId) === currentParentId,
+  const move = resolveLayerTreeMove(
+    toAssetLayerTreeMoveNodes(buildAssetTree(elements.filter(isActiveCandidate))),
+    {
+      dragIds: [elementId],
+      parentId: normalizedParentId,
+      index,
+      canDrop: ({ dragNode, parentNode }) => (
+        parentNode === null || canMoveElementToParent(elements, dragNode.id, parentNode.id)
+      ),
+    },
   );
-  if (siblings.length === 0) {
+  if (!move) {
     return null;
   }
 
-  const clampedIndex = Math.max(0, Math.min(index, siblings.length));
-  if (clampedIndex === 0) {
-    const target = siblings[0];
-    return canReorderElementNearTarget(elements, elementId, target.id)
-      ? { kind: "reorder", targetElementId: target.id, position: "before" }
+  if (move.parentId !== currentParentId) {
+    // WHY: react-arborist 已经负责可靠判断“落到哪个父级”；这里仅把外部库协议
+    // 收敛成工作区唯一的父子关系 mutation，避免前端再维护第二套 hover 语义。
+    return { kind: "parent", parentId: move.parentId };
+  }
+
+  const movedIndex = move.siblingIds.indexOf(elementId);
+  if (movedIndex === -1 || move.siblingIds.length <= 1) {
+    return null;
+  }
+
+  const nextSiblingId = move.siblingIds[movedIndex + 1];
+  if (nextSiblingId) {
+    return canReorderElementNearTarget(elements, elementId, nextSiblingId)
+      ? { kind: "reorder", targetElementId: nextSiblingId, position: "before" }
       : null;
   }
 
-  if (clampedIndex >= siblings.length) {
-    const target = siblings[siblings.length - 1];
-    return canReorderElementNearTarget(elements, elementId, target.id)
-      ? { kind: "reorder", targetElementId: target.id, position: "after" }
-      : null;
-  }
-
-  const target = siblings[clampedIndex];
-  return canReorderElementNearTarget(elements, elementId, target.id)
-    ? { kind: "reorder", targetElementId: target.id, position: "before" }
+  const previousSiblingId = move.siblingIds[movedIndex - 1];
+  return previousSiblingId && canReorderElementNearTarget(elements, elementId, previousSiblingId)
+    ? { kind: "reorder", targetElementId: previousSiblingId, position: "after" }
     : null;
 }
 
@@ -260,4 +263,11 @@ export function statusTagTone(status: WorkspaceElement["status"]): "success" | "
 
 function normalizeParentId(parentId: string | null | undefined): string | null {
   return parentId ?? null;
+}
+
+function toAssetLayerTreeMoveNodes(nodes: AssetTreeNode[]): LayerTreeMoveNode[] {
+  return nodes.map((node) => ({
+    id: node.element.id,
+    children: toAssetLayerTreeMoveNodes(node.children),
+  }));
 }

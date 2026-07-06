@@ -1,227 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import { act } from "@testing-library/react";
 import { vi } from "vitest";
 
-import type { DirectChapterAssetUploadInput } from "../../src/features/coursePlanner/api";
-import { buildTldrawAssemblySnapshot } from "../../src/features/coursePlanner/assembly/tldrawAssemblyAdapter";
-import { ChapterSceneStudio } from "../../src/features/coursePlanner/components/ChapterSceneStudio";
 import type {
-  AsyncStatusMap,
   ChapterSceneAssemblyManifest,
-  ChapterScenePackage,
 } from "../../src/features/coursePlanner/types";
+import { ASSEMBLY_AUTOSAVE_DEBOUNCE_MS } from "../../src/features/coursePlanner/components/assemblyWorkspaceConstants";
 import {
-  characterIpFixture,
-  referenceImageFixture,
   sceneAsset,
-  snapshot,
-  studioChapterFixture,
   studioScenePackageFixture,
-  studioScenePackFixture,
 } from "./chapterWorkspaceFixtures";
-
-export const ASSEMBLY_AUTOSAVE_DEBOUNCE_MS = 800;
-
-export type AssemblyEditorHarnessProps = {
-  initialScenePackage: ChapterScenePackage;
-  onDirectAssetUploadInput?: (input: DirectChapterAssetUploadInput) => void;
-  onHarnessReady?: (controls: AssemblyEditorHarnessControls) => void;
-  lockFinalBehavior?: (
-    file: File,
-    currentScenePackage: ChapterScenePackage,
-    attempt: number,
-  ) => Promise<ChapterScenePackage | null>;
-  onSaveAssemblyManifest?: (manifest: ChapterSceneAssemblyManifest) => void;
-  saveAssemblyBehavior?: (
-    manifest: ChapterSceneAssemblyManifest,
-    currentScenePackage: ChapterScenePackage,
-    attempt: number,
-  ) => Promise<ChapterScenePackage | null>;
-  selectEmptySceneImageBehavior?: (
-    imageId: string,
-    currentScenePackage: ChapterScenePackage,
-  ) => Promise<ChapterScenePackage | null>;
-};
-
-export type AssemblyEditorHarnessControls = {
-  pushScenePackage: (nextScenePackage: ChapterScenePackage) => void;
-};
-
-export function AssemblyEditorHarness({
-  initialScenePackage,
-  onDirectAssetUploadInput,
-  onHarnessReady,
-  lockFinalBehavior,
-  onSaveAssemblyManifest,
-  saveAssemblyBehavior,
-  selectEmptySceneImageBehavior,
-}: AssemblyEditorHarnessProps) {
-  const chapter = useMemo(() => studioChapterFixture(), []);
-  const scenePack = useMemo(() => studioScenePackFixture(), []);
-  const characterIps = useMemo(() => [characterIpFixture()], []);
-  const referenceImages = useMemo(() => [referenceImageFixture()], []);
-  const [scenePackage, setScenePackage] = useState(initialScenePackage);
-  const [asyncStatus, setAsyncStatus] = useState<AsyncStatusMap>({});
-  const saveAttemptRef = useRef(0);
-  const lockAttemptRef = useRef(0);
-
-  async function handleSaveAssembly(manifest: ChapterSceneAssemblyManifest) {
-    onSaveAssemblyManifest?.(manifest);
-    setAsyncStatus({
-      [`scenePackage:assemblySave:${chapter.id}`]: { status: "pending" },
-    });
-    saveAttemptRef.current += 1;
-    try {
-      await Promise.resolve();
-      const nextScenePackage = saveAssemblyBehavior
-        ? await saveAssemblyBehavior(manifest, scenePackage, saveAttemptRef.current)
-        : {
-            ...scenePackage,
-            assembly: {
-              ...manifest,
-              updated_at: "2026-07-03T12:30:00Z",
-            },
-          };
-      if (!nextScenePackage) {
-        setAsyncStatus({
-          [`scenePackage:assemblySave:${chapter.id}`]: { status: "failed", error: "Assembly save returned no package." },
-        });
-        return null;
-      }
-      setScenePackage(nextScenePackage);
-      setAsyncStatus({
-        [`scenePackage:assemblySave:${chapter.id}`]: { status: "succeeded" },
-      });
-      return nextScenePackage;
-    } catch (error) {
-      setAsyncStatus({
-        [`scenePackage:assemblySave:${chapter.id}`]: {
-          status: "failed",
-          error: error instanceof Error ? error.message : "Assembly save failed.",
-        },
-      });
-      return null;
-    }
-  }
-
-  async function handleUploadDirectAsset(file: File, input: DirectChapterAssetUploadInput) {
-    onDirectAssetUploadInput?.(input);
-    const assetId = `chapter_asset_uploaded_${String(scenePackage.chapter_assets.length + 1).padStart(3, "0")}`;
-    const nextScenePackage = {
-      ...scenePackage,
-      chapter_assets: [
-        ...scenePackage.chapter_assets,
-        sceneAsset(assetId, file.name.replace(/\.[^.]+$/, ""), file.name, {
-          linkedTargetObjectId: input.linkedTargetObjectId ?? null,
-        }),
-      ],
-    };
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  async function handleDuplicateChapterAsset(assetId: string) {
-    const sourceAsset = scenePackage.chapter_assets.find((asset) => asset.id === assetId);
-    if (!sourceAsset) {
-      return null;
-    }
-    const duplicateId = `${assetId}_copy_${String(scenePackage.chapter_assets.length + 1).padStart(2, "0")}`;
-    const nextScenePackage = {
-      ...scenePackage,
-      chapter_assets: [
-        ...scenePackage.chapter_assets,
-        {
-          ...sourceAsset,
-          id: duplicateId,
-          created_at: "2026-07-03T12:10:00Z",
-        },
-      ],
-    };
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  async function handleDeleteChapterAsset(assetId: string) {
-    const nextScenePackage = deleteChapterAssetFromHarness(scenePackage, assetId);
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  async function handleDeleteCompleteSceneImage(completeImageId: string) {
-    const nextScenePackage = {
-      ...scenePackage,
-      complete_images: scenePackage.complete_images.map((image) => (
-        image.id === completeImageId
-          ? { ...image, status: "deleted" as const }
-          : image
-      )),
-    };
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  async function handleSelectEmptySceneImage(imageId: string) {
-    await Promise.resolve();
-    const nextScenePackage = selectEmptySceneImageBehavior
-      ? await selectEmptySceneImageBehavior(imageId, scenePackage)
-      : {
-          ...scenePackage,
-          current_empty_scene_image_id: imageId,
-        };
-    if (!nextScenePackage) {
-      return null;
-    }
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  async function handleLockFinal(file: File) {
-    lockAttemptRef.current += 1;
-    await Promise.resolve();
-    const nextScenePackage = lockFinalBehavior
-      ? await lockFinalBehavior(file, scenePackage, lockAttemptRef.current)
-      : {
-          ...scenePackage,
-          final_scene: buildLockedFinalScene(scenePackage, file.name),
-        };
-    if (!nextScenePackage) {
-      return null;
-    }
-    setScenePackage(nextScenePackage);
-    return nextScenePackage;
-  }
-
-  useEffect(() => {
-    onHarnessReady?.({
-      pushScenePackage: setScenePackage,
-    });
-  }, [onHarnessReady]);
-
-  return (
-    <ChapterSceneStudio
-      asyncStatus={asyncStatus}
-      chapter={chapter}
-      characterIps={characterIps}
-      referenceImages={referenceImages}
-      onAssignCharacterIp={async () => null}
-      onDeleteChapterAsset={handleDeleteChapterAsset}
-      onDeleteCompleteSceneImage={handleDeleteCompleteSceneImage}
-      onDuplicateChapterAsset={handleDuplicateChapterAsset}
-      onImportCompleteImage={async () => null}
-      onLockFinal={handleLockFinal}
-      onSaveAssembly={handleSaveAssembly}
-      onSelectEmptySceneImage={handleSelectEmptySceneImage}
-      onSelectReferenceImage={async () => null}
-      onUpdatePrompt={async () => null}
-      onUploadCompleteSceneImage={async () => null}
-      onUploadDirectAsset={handleUploadDirectAsset}
-      onUploadEmptySceneImage={async () => null}
-      onUploadReferenceImage={async () => null}
-      scenePack={scenePack}
-      scenePackage={scenePackage}
-    />
-  );
-}
+export {
+  AssemblyEditorHarness,
+  buildLockedFinalScene,
+  type AssemblyEditorHarnessControls,
+  type AssemblyEditorHarnessProps,
+} from "./assemblyEditorHarnessComponent";
+export { ASSEMBLY_AUTOSAVE_DEBOUNCE_MS };
 
 export function emptyAssemblyManifest(): ChapterSceneAssemblyManifest {
   return {
@@ -232,28 +26,6 @@ export function emptyAssemblyManifest(): ChapterSceneAssemblyManifest {
     groups: [],
     layer_order: [],
     updated_at: null,
-  };
-}
-
-export function buildLockedFinalScene(
-  current: ChapterScenePackage,
-  originalFilename = "chapter-scene-final.png",
-) {
-  return {
-    id: "final_scene_001",
-    original_filename: originalFilename,
-    storage_path: "scene_package/final_scene_001.png",
-    media_type: "image/png" as const,
-    width: 1024,
-    height: 1024,
-    empty_scene_image_id: current.current_empty_scene_image_id ?? "empty_scene_001",
-    assembly_snapshot: current.assembly,
-    prompt_snapshot: current.prompt.prompt_text,
-    reference_snapshot: snapshot(
-      current.reference_selections.map((selection) => selection.reference_image_id),
-      current.current_empty_scene_image_id,
-    ),
-    created_at: "2026-07-04T08:11:00Z",
   };
 }
 
@@ -298,13 +70,6 @@ export function mockScenePackageImages() {
   }
 
   vi.stubGlobal("Image", MockImage as unknown as typeof Image);
-}
-
-export function buildSnapshot(scenePackage: ChapterScenePackage) {
-  return buildTldrawAssemblySnapshot({
-    draft: scenePackage.assembly,
-    scenePackage,
-  });
 }
 
 export function scenePackageWithTwoPlacements() {
@@ -426,43 +191,5 @@ export function scenePackageWithReplacementCandidate() {
         height: 1024,
       },
     ],
-  };
-}
-
-function deleteChapterAssetFromHarness(
-  current: ChapterScenePackage,
-  assetId: string,
-): ChapterScenePackage {
-  const removedPlacementIds = new Set(
-    current.assembly.placements
-      .filter((placement) => placement.asset_id === assetId)
-      .map((placement) => placement.id),
-  );
-  const remainingPlacements = current.assembly.placements
-    .filter((placement) => placement.asset_id !== assetId)
-    .map((placement) => ({
-      ...placement,
-      requires_placed: placement.requires_placed.filter((requiredId) => !removedPlacementIds.has(requiredId)),
-    }));
-  const remainingGroups = current.assembly.groups
-    .map((group) => ({
-      ...group,
-      placement_ids: group.placement_ids.filter((placementId) => !removedPlacementIds.has(placementId)),
-    }))
-    .filter((group) => group.placement_ids.length >= 2);
-  const validGroupIds = new Set(remainingGroups.map((group) => group.id));
-
-  return {
-    ...current,
-    chapter_assets: current.chapter_assets.filter((asset) => asset.id !== assetId),
-    assembly: {
-      ...current.assembly,
-      placements: remainingPlacements.map((placement) => ({
-        ...placement,
-        group_id: placement.group_id && validGroupIds.has(placement.group_id) ? placement.group_id : null,
-      })),
-      groups: remainingGroups,
-      layer_order: current.assembly.layer_order.filter((placementId) => !removedPlacementIds.has(placementId)),
-    },
   };
 }

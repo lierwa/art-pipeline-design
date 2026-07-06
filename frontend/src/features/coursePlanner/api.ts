@@ -28,6 +28,8 @@ export type {
   CompleteImageImportResult,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
+  GeneratedChapterAssetMaterializeInput,
+  GeneratedChapterAssetMaterializeResult,
   ReferenceLibraryImageUploadInput,
 } from "./scenePackageApi";
 export {
@@ -37,9 +39,11 @@ export {
   duplicateChapterAsset,
   fetchChapterScenePackage,
   importCompleteSceneImageToPipeline,
+  listGeneratedChapterAssets,
   listCharacterIps,
   listReferenceLibraryImages,
   lockFinalChapterScene,
+  materializeGeneratedChapterAsset,
   saveChapterSceneAssembly,
   selectEmptySceneImage,
   selectChapterReferenceImage,

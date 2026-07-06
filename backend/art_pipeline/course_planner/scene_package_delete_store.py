@@ -128,8 +128,8 @@ class CoursePlannerScenePackageDeleteStoreMixin:
         complete_image_id: str,
     ) -> bool:
         return any(
-            getattr(asset.lineage, "source_complete_image_id", None)
-            == complete_image_id
+            asset.lineage.source_kind == "generated_asset"
+            and asset.lineage.complete_scene_image_id == complete_image_id
             and asset.status == "available"
             for asset in package.chapter_assets
         )

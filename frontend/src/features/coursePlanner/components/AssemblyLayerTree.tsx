@@ -1,16 +1,46 @@
-import { useMemo, type CSSProperties, type MouseEvent } from "react";
-import { Layers3 } from "lucide-react";
-import { Tree } from "react-arborist";
-
 import {
-  groupPlacements,
-  movePlacementLayer,
-  ungroupPlacementGroup,
-  type AssemblyManifestDraft,
-} from "../assembly/assemblyManifestDraft";
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type MouseEvent,
+  type SetStateAction,
+  type KeyboardEvent,
+} from "react";
+import { ChevronDown, GripVertical, Layers3, Trash2 } from "lucide-react";
+import {
+  Tree,
+  type NodeRendererProps,
+  type TreeApi,
+} from "react-arborist";
+
+import { type AssemblyManifestDraft } from "../assembly/assemblyManifestDraft";
+import { scenePackageMediaUrl } from "../scenePackageMedia";
+import type { ChapterScenePackage } from "../types";
+import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
+import {
+  buildLayerTreeData,
+  countTreeRows,
+  applyCollapsedGroups,
+  createDeletedLayerNodeDraft,
+  createGroupedSelectionDraft,
+  createMovedLayerSelectionDraft,
+  createSelectedLayerNodeState,
+  createUngroupedSelectionDraft,
+  flattenNodePlacementIds,
+  flattenVisibleNodeIds,
+  indexLayerNodes,
+  isLayerNodeSelected,
+  resolveGroupActionState,
+  sameStringSet,
+  type AssemblyLayerTreeNode,
+} from "./assemblyLayerTreeModel";
 
 type AssemblyLayerTreeProps = {
   draft: AssemblyManifestDraft;
+  scenePackage: ChapterScenePackage;
   selectedNodeIds: string[];
   selectedPlacementId: string | null;
   onDraftChange: (draft: AssemblyManifestDraft) => void;
@@ -18,394 +48,487 @@ type AssemblyLayerTreeProps = {
   onSelectPlacement: (placementId: string | null) => void;
 };
 
-type AssemblyLayerTreeNode = {
-  id: string;
-  kind: "group" | "placement";
-  name: string;
-  groupId: string | null;
-  placementId: string | null;
-  runtimeRole: string | null;
-  children?: AssemblyLayerTreeNode[];
+type PlacementSelectionEvent = {
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
 };
 
-type ArboristMoveArgs = {
-  dragIds: string[];
-  parentId: string | null;
-  index: number;
-};
+const ASSEMBLY_LAYER_ROW_HEIGHT = 64;
 
-type ArboristNodeRendererProps = {
-  node: {
-    data: AssemblyLayerTreeNode;
-    isInternal: boolean;
-    isOpen: boolean;
-    isLeaf: boolean;
-    toggle: () => void;
-  };
-  style: CSSProperties;
-  dragHandle?: (element: HTMLDivElement | null) => void;
-};
-
-// WHY: layer tree 是 authoring 边界，负责把扁平 manifest 的 layer_order/group metadata 投影成
-// “可选、可分组、可拖拽”的树形交互；真正持久化仍只回写 placements/groups/layer_order 三份事实源，
-// 不给 canvas 或 save 协议引入第二套 group transform 语义。
 export function AssemblyLayerTree({
+  draft,
+  onDraftChange,
+  onSelectNodeIds,
+  onSelectPlacement,
+  scenePackage,
+  selectedNodeIds,
+  selectedPlacementId,
+}: AssemblyLayerTreeProps) {
+  const state = useAssemblyLayerTreeState(draft, selectedNodeIds, selectedPlacementId);
+  const handlers = createAssemblyLayerTreeHandlers({
+    draft,
+    onDraftChange,
+    onSelectNodeIds,
+    onSelectPlacement,
+    selectedNodeIds,
+    selectedPlacementId,
+    state,
+  });
+
+  return (
+    <section className="chapter-studio-panel chapter-studio-panel-stack asset-tree-panel assembly-placement-list-panel" aria-label="Placement layers">
+      <div className="chapter-studio-panel-heading assembly-layer-panel-heading">
+        <div>
+          <h2>Placement layers</h2>
+          <p>Front to back</p>
+        </div>
+        <LayerGroupAction groupAction={state.groupAction} onAction={handlers.handleGroupAction} />
+      </div>
+      <div className="asset-tree-body assembly-layer-tree-body" ref={state.panelBodyRef}>
+        <div className="asset-tree assembly-layer-list" role="tree" aria-label="Placement layer order">
+          {state.tree.length > 0 ? (
+            <Tree
+              ref={state.treeRef}
+              className="asset-tree-arborist"
+              data={state.visibleTree}
+              height={state.treeViewportHeight}
+              indent={0}
+              rowHeight={ASSEMBLY_LAYER_ROW_HEIGHT}
+              selection={selectedPlacementId ?? undefined}
+              width="100%"
+              childrenAccessor={(node) => node.children ?? null}
+              disableDrop={({ dragNodes, parentNode }) => {
+                if (!parentNode?.data) {
+                  return false;
+                }
+                return !(parentNode.data.kind === "group" && dragNodes[0]?.data.kind === "placement");
+              }}
+              idAccessor={(node) => node.id}
+              onMove={handlers.handleLayerTreeMove}
+              openByDefault
+            >
+              {(props) => (
+                <PlacementLayerListRow
+                  {...props}
+                  collapsed={state.collapsedGroupIds.has(props.node.data.id)}
+                  onDelete={handlers.handleDeleteLayerNode}
+                  onSelect={handlers.handleRowSelection}
+                  onToggleGroup={handlers.handleToggleGroup}
+                  scenePackage={scenePackage}
+                  selected={isLayerNodeSelected(props.node.data, state.selectedIdSet, selectedNodeIds, selectedPlacementId)}
+                />
+              )}
+            </Tree>
+          ) : <PlacementLayerEmptyState />}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function useAssemblyLayerTreeState(
+  draft: AssemblyManifestDraft,
+  selectedNodeIds: string[],
+  selectedPlacementId: string | null,
+) {
+  const tree = useMemo(() => buildLayerTreeData(draft), [draft]);
+  const treeRef = useRef<TreeApi<AssemblyLayerTreeNode>>(null);
+  const panelBodyRef = useRef<HTMLDivElement>(null);
+  const selectedIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
+  const visibleTree = useMemo(() => applyCollapsedGroups(tree, collapsedGroupIds), [collapsedGroupIds, tree]);
+  const visibleNodeIds = useMemo(() => flattenVisibleNodeIds(visibleTree), [visibleTree]);
+  const nodesById = useMemo(() => indexLayerNodes(tree), [tree]);
+  const groupAction = useMemo(() => resolveGroupActionState(draft, selectedNodeIds), [draft, selectedNodeIds]);
+  const treeFallbackHeight = Math.max(ASSEMBLY_LAYER_ROW_HEIGHT, countTreeRows(visibleTree) * ASSEMBLY_LAYER_ROW_HEIGHT);
+  const [treeViewportHeight, setTreeViewportHeight] = useState(treeFallbackHeight);
+
+  useEffect(() => {
+    if (selectedPlacementId) {
+      treeRef.current?.scrollTo(selectedPlacementId);
+    }
+  }, [selectedPlacementId, tree]);
+  useEffect(() => pruneCollapsedGroupIds(draft, setCollapsedGroupIds), [draft.groups]);
+  useEffect(() => syncLayerTreeHeight(panelBodyRef.current, treeFallbackHeight, setTreeViewportHeight), [treeFallbackHeight]);
+
+  return {
+    collapsedGroupIds,
+    groupAction,
+    nodesById,
+    panelBodyRef,
+    selectedIdSet,
+    setCollapsedGroupIds,
+    tree,
+    treeRef,
+    treeViewportHeight,
+    visibleNodeIds,
+    visibleTree,
+  };
+}
+
+function createAssemblyLayerTreeHandlers({
   draft,
   onDraftChange,
   onSelectNodeIds,
   onSelectPlacement,
   selectedNodeIds,
   selectedPlacementId,
-}: AssemblyLayerTreeProps) {
-  const treeData = useMemo(() => buildLayerTreeData(draft), [draft]);
-  const groupAction = useMemo(() => resolveGroupActionState(draft, selectedNodeIds), [draft, selectedNodeIds]);
-  const selectedIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
-  const rowCount = useMemo(() => countTreeRows(treeData), [treeData]);
-
-  function handleRowSelection(node: AssemblyLayerTreeNode, event: MouseEvent<HTMLButtonElement>) {
-    const isMultiSelect = event.metaKey || event.ctrlKey;
-    let nextSelectedIds: string[];
-
-    if (isMultiSelect) {
-      nextSelectedIds = selectedIdSet.has(node.id)
-        ? selectedNodeIds.filter((id) => id !== node.id)
-        : [...selectedNodeIds, node.id];
-    } else {
-      nextSelectedIds = [node.id];
-    }
-
-    onSelectNodeIds(nextSelectedIds);
-    onSelectPlacement(node.kind === "placement" ? node.placementId : null);
-  }
-
-  function handleGroupSelected() {
-    if (groupAction.kind !== "group") {
-      return;
-    }
-
-    const nextGroupName = `Group ${draft.groups.length + 1}`;
-    const groupedDraft = groupPlacements(draft, groupAction.placementIds, nextGroupName);
-    if (groupedDraft === draft) {
-      return;
-    }
-
-    const nextGroupId = groupedDraft.groups[groupedDraft.groups.length - 1]?.id ?? null;
-    onDraftChange(groupedDraft);
-    onSelectNodeIds(nextGroupId ? [nextGroupId] : []);
-    onSelectPlacement(null);
-  }
-
-  function handleUngroupSelected() {
-    if (groupAction.kind !== "ungroup") {
-      return;
-    }
-
-    const nextDraft = ungroupPlacementGroup(draft, groupAction.groupId);
-    if (nextDraft === draft) {
-      return;
-    }
-
-    onDraftChange(nextDraft);
-    onSelectNodeIds(groupAction.placementIds);
-    onSelectPlacement(groupAction.placementIds[0] ?? null);
-  }
-
-  function handleMove({ dragIds, parentId, index }: ArboristMoveArgs) {
-    const draggedId = dragIds[0] ?? null;
-    if (!draggedId) {
-      return;
-    }
-
-    const nextLayerOrder = computeMovedLayerOrder(treeData, draft.layer_order, draggedId, parentId, index);
-    if (!nextLayerOrder || sameStringArray(nextLayerOrder, draft.layer_order)) {
-      return;
-    }
-
-    const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
-    let nextDraft = draft;
-    nextLayerOrder.forEach((placementId, placementIndex) => {
-      const currentIndex = nextDraft.layer_order.indexOf(placementId);
-      if (currentIndex !== placementIndex && placementsById.has(placementId)) {
-        nextDraft = movePlacementLayer(nextDraft, placementId, placementIndex);
-      }
-    });
-    onDraftChange(nextDraft);
-  }
-
-  return (
-    <section className="chapter-studio-panel chapter-studio-panel-stack" aria-label="Assembly layers">
-      <div className="chapter-studio-panel-heading">
-        <div>
-          <h2>Layers</h2>
-          <p>Front to back</p>
-        </div>
-        <div className="assembly-layer-toolbar">
-          <button
-            type="button"
-            className="course-planner-secondary-action chapter-studio-icon-action"
-            disabled={groupAction.kind !== "group"}
-            onClick={handleGroupSelected}
-          >
-            Group selected layers
-          </button>
-          <button
-            type="button"
-            className="course-planner-secondary-action chapter-studio-icon-action"
-            disabled={groupAction.kind !== "ungroup"}
-            onClick={handleUngroupSelected}
-          >
-            Ungroup selected layer
-          </button>
-          <span className="course-planner-status-badge course-planner-status-badge-neutral">
-            <Layers3 size={14} aria-hidden="true" />
-          </span>
-        </div>
-      </div>
-
-      <div className="assembly-layer-tree-shell">
-        <Tree
-          data={treeData}
-          height={Math.max(160, rowCount * 40)}
-          width="100%"
-          rowHeight={40}
-          indent={18}
-          openByDefault
-          onMove={handleMove}
-        >
-          {({ node, style, dragHandle }: ArboristNodeRendererProps) => {
-            const data = node.data;
-            const isSelected = selectedIdSet.has(data.id) || (
-              data.kind === "placement" &&
-              data.placementId !== null &&
-              data.placementId === selectedPlacementId &&
-              selectedNodeIds.length <= 1
-            );
-
-            return (
-              <div style={style} ref={dragHandle} className="assembly-layer-tree-row">
-                <button
-                  type="button"
-                  className={`assembly-layer-row${isSelected ? " assembly-layer-row-selected" : ""}`}
-                  aria-pressed={isSelected}
-                  onClick={(event) => handleRowSelection(data, event)}
-                >
-                  <span className="assembly-layer-row-label">
-                    {node.isInternal ? (
-                      <span
-                        className="assembly-layer-expander"
-                        aria-hidden="true"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          node.toggle();
-                        }}
-                      >
-                        {node.isOpen ? "▾" : "▸"}
-                      </span>
-                    ) : (
-                      <span className="assembly-layer-expander assembly-layer-expander-placeholder" aria-hidden="true">
-                        ·
-                      </span>
-                    )}
-                    <span>{data.name}</span>
-                  </span>
-                  {data.kind === "placement" && data.runtimeRole ? <small>{data.runtimeRole}</small> : null}
-                </button>
-              </div>
-            );
-          }}
-        </Tree>
-      </div>
-    </section>
-  );
-}
-
-function buildLayerTreeData(draft: AssemblyManifestDraft): AssemblyLayerTreeNode[] {
-  const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
-  const groupsById = new Map(draft.groups.map((group) => [group.id, group]));
-  const emittedGroupIds = new Set<string>();
-
-  return normalizePlacementOrder(draft).flatMap((placementId) => {
-    const placement = placementsById.get(placementId);
-    if (!placement) {
-      return [];
-    }
-
-    if (!placement.group_id) {
-      return [placementNodeFromDraft(placement)];
-    }
-
-    if (emittedGroupIds.has(placement.group_id)) {
-      return [];
-    }
-    emittedGroupIds.add(placement.group_id);
-
-    const group = groupsById.get(placement.group_id);
-    if (!group) {
-      return [placementNodeFromDraft(placement)];
-    }
-
-    const childNodes = normalizePlacementOrder(draft)
-      .map((id) => placementsById.get(id))
-      .filter((childPlacement): childPlacement is AssemblyManifestDraft["placements"][number] => (
-        childPlacement !== undefined && childPlacement.group_id === group.id
-      ))
-      .map(placementNodeFromDraft);
-
-    return [{
-      id: group.id,
-      kind: "group",
-      name: group.display_name,
-      groupId: group.id,
-      placementId: null,
-      runtimeRole: null,
-      children: childNodes,
-    }];
-  });
-}
-
-function placementNodeFromDraft(placement: AssemblyManifestDraft["placements"][number]): AssemblyLayerTreeNode {
+  state,
+}: {
+  draft: AssemblyManifestDraft;
+  onDraftChange: (draft: AssemblyManifestDraft) => void;
+  onSelectNodeIds: (nodeIds: string[]) => void;
+  onSelectPlacement: (placementId: string | null) => void;
+  selectedNodeIds: string[];
+  selectedPlacementId: string | null;
+  state: ReturnType<typeof useAssemblyLayerTreeState>;
+}) {
   return {
-    id: placement.id,
-    kind: "placement",
-    name: placement.display_name,
-    groupId: placement.group_id,
-    placementId: placement.id,
-    runtimeRole: placement.runtime_role,
+    handleDeleteLayerNode: (node: AssemblyLayerTreeNode) => {
+      deleteLayerNode({ draft, node, onDraftChange, onSelectNodeIds, onSelectPlacement, selectedNodeIds, selectedPlacementId });
+    },
+    handleGroupAction: () => {
+      applyGroupAction({ draft, groupAction: state.groupAction, onDraftChange, onSelectNodeIds, onSelectPlacement });
+    },
+    handleLayerTreeMove: (move: { dragIds: string[]; index: number; parentId: unknown }) => {
+      const result = createMovedLayerSelectionDraft(
+        draft,
+        state.tree,
+        {
+          dragIds: move.dragIds,
+          index: move.index,
+          parentId: typeof move.parentId === "string" ? move.parentId : null,
+        },
+        state.selectedIdSet,
+        selectedNodeIds,
+        state.nodesById,
+      );
+      if (result) {
+        onDraftChange(result.draft);
+        onSelectNodeIds(result.selectedNodeIds);
+        onSelectPlacement(result.selectedPlacementId);
+      }
+    },
+    handleRowSelection: (node: AssemblyLayerTreeNode, event: PlacementSelectionEvent) => {
+      const result = createSelectedLayerNodeState(node, selectedNodeIds, state.selectedIdSet, {
+        isMultiSelect: event.metaKey || event.ctrlKey,
+        isRangeSelect: event.shiftKey,
+        nodesById: state.nodesById,
+        orderedIds: state.visibleNodeIds,
+      });
+      onSelectNodeIds(result.selectedNodeIds);
+      onSelectPlacement(result.selectedPlacementId);
+    },
+    handleToggleGroup: (groupId: string) => toggleCollapsedGroup(groupId, state.setCollapsedGroupIds),
   };
 }
 
-function normalizePlacementOrder(draft: AssemblyManifestDraft): string[] {
-  const placementIds = draft.placements.map((placement) => placement.id);
-  const orderedIds = draft.layer_order.filter((placementId) => placementIds.includes(placementId));
-  return [...orderedIds, ...placementIds.filter((placementId) => !orderedIds.includes(placementId))];
+function pruneCollapsedGroupIds(
+  draft: AssemblyManifestDraft,
+  setCollapsedGroupIds: Dispatch<SetStateAction<Set<string>>>,
+) {
+  const groupIds = new Set(draft.groups.map((group) => group.id));
+  setCollapsedGroupIds((current) => {
+    const next = new Set([...current].filter((groupId) => groupIds.has(groupId)));
+    return sameStringSet(next, current) ? current : next;
+  });
 }
 
-function resolveGroupActionState(draft: AssemblyManifestDraft, selectedNodeIds: string[]) {
-  const selectedIdSet = new Set(selectedNodeIds);
-  const selectedGroups = draft.groups.filter((group) => selectedIdSet.has(group.id));
-  const selectedPlacements = normalizePlacementOrder(draft)
-    .map((placementId) => draft.placements.find((placement) => placement.id === placementId))
-    .filter((placement): placement is AssemblyManifestDraft["placements"][number] => (
-      placement !== undefined && selectedIdSet.has(placement.id)
-    ));
-
-  const selectedGroup = selectedGroups[0];
-  if (selectedGroup && selectedGroups.length === 1 && selectedNodeIds.length === 1) {
-    return {
-      kind: "ungroup" as const,
-      groupId: selectedGroup.id,
-      placementIds: selectedGroup.placement_ids,
-    };
+function syncLayerTreeHeight(
+  body: HTMLDivElement | null,
+  treeFallbackHeight: number,
+  setTreeViewportHeight: Dispatch<SetStateAction<number>>,
+) {
+  if (!body) {
+    setTreeViewportHeight(treeFallbackHeight);
+    return;
   }
 
-  const sharedGroupId = selectedPlacements[0]?.group_id ?? null;
-  if (
-    selectedGroups.length === 0 &&
-    sharedGroupId &&
-    selectedPlacements.length >= 1 &&
-    selectedPlacements.every((placement) => placement.group_id === sharedGroupId)
-  ) {
-    const sourceGroup = draft.groups.find((group) => group.id === sharedGroupId);
-    if (sourceGroup) {
-      return {
-        kind: "ungroup" as const,
-        groupId: sourceGroup.id,
-        placementIds: sourceGroup.placement_ids,
-      };
-    }
+  function syncTreeHeight() {
+    const measuredHeight = body?.clientHeight ?? 0;
+    setTreeViewportHeight(
+      measuredHeight > 0
+        ? Math.max(ASSEMBLY_LAYER_ROW_HEIGHT, measuredHeight)
+        : treeFallbackHeight,
+    );
   }
 
-  if (
-    selectedGroups.length === 0 &&
-    selectedPlacements.length >= 2 &&
-    selectedPlacements.every((placement) => placement.group_id === null)
-  ) {
-    return {
-      kind: "group" as const,
-      placementIds: selectedPlacements.map((placement) => placement.id),
-    };
+  syncTreeHeight();
+  if (typeof ResizeObserver === "undefined") {
+    return;
   }
 
-  return { kind: "idle" as const };
+  const observer = new ResizeObserver(syncTreeHeight);
+  observer.observe(body);
+  return () => observer.disconnect();
 }
 
-function countTreeRows(nodes: AssemblyLayerTreeNode[]): number {
-  return nodes.reduce((total, node) => total + 1 + countTreeRows(node.children ?? []), 0);
+function applyGroupAction({
+  draft,
+  groupAction,
+  onDraftChange,
+  onSelectNodeIds,
+  onSelectPlacement,
+}: {
+  draft: AssemblyManifestDraft;
+  groupAction: ReturnType<typeof resolveGroupActionState>;
+  onDraftChange: (draft: AssemblyManifestDraft) => void;
+  onSelectNodeIds: (nodeIds: string[]) => void;
+  onSelectPlacement: (placementId: string | null) => void;
+}) {
+  const result = groupAction.kind === "group"
+    ? createGroupedSelectionDraft(draft, groupAction)
+    : createUngroupedSelectionDraft(draft, groupAction);
+  if (!result) {
+    return;
+  }
+  onDraftChange(result.draft);
+  onSelectNodeIds(result.selectedNodeIds);
+  onSelectPlacement(
+    "selectedPlacementId" in result && typeof result.selectedPlacementId === "string"
+      ? result.selectedPlacementId
+      : null,
+  );
 }
 
-function computeMovedLayerOrder(
-  treeData: AssemblyLayerTreeNode[],
-  currentLayerOrder: string[],
-  draggedId: string,
-  parentId: string | null,
-  index: number,
-): string[] | null {
-  const rootNode = treeData.find((node) => node.id === draggedId) ?? null;
-  if (rootNode) {
-    if (parentId !== null) {
-      return null;
-    }
-    const rootBlocks = treeData.map((node) => flattenNodePlacementIds(node));
-    const dragIndex = treeData.findIndex((node) => node.id === draggedId);
-    if (dragIndex === -1) {
-      return null;
-    }
-    const nextBlocks = [...rootBlocks];
-    const [dragBlock] = nextBlocks.splice(dragIndex, 1);
-    nextBlocks.splice(clampIndex(index, nextBlocks.length), 0, dragBlock);
-    return nextBlocks.flat();
+function deleteLayerNode({
+  draft,
+  node,
+  onDraftChange,
+  onSelectNodeIds,
+  onSelectPlacement,
+  selectedNodeIds,
+  selectedPlacementId,
+}: {
+  draft: AssemblyManifestDraft;
+  node: AssemblyLayerTreeNode;
+  onDraftChange: (draft: AssemblyManifestDraft) => void;
+  onSelectNodeIds: (nodeIds: string[]) => void;
+  onSelectPlacement: (placementId: string | null) => void;
+  selectedNodeIds: string[];
+  selectedPlacementId: string | null;
+}) {
+  const result = createDeletedLayerNodeDraft(draft, node, selectedNodeIds, selectedPlacementId);
+  if (!result) {
+    return;
   }
+  onDraftChange(result.draft);
+  onSelectNodeIds(result.selectedNodeIds);
+  onSelectPlacement(result.selectedPlacementId);
+}
 
-  const parentGroup = treeData.find((node) => node.id === parentId && node.kind === "group") ?? null;
-  if (!parentGroup || !parentGroup.children?.some((child) => child.id === draggedId)) {
+function toggleCollapsedGroup(
+  groupId: string,
+  setCollapsedGroupIds: Dispatch<SetStateAction<Set<string>>>,
+) {
+  setCollapsedGroupIds((current) => {
+    const next = new Set(current);
+    if (next.has(groupId)) {
+      next.delete(groupId);
+    } else {
+      next.add(groupId);
+    }
+    return next;
+  });
+}
+
+function LayerGroupAction({
+  groupAction,
+  onAction,
+}: {
+  groupAction: ReturnType<typeof resolveGroupActionState>;
+  onAction: () => void;
+}) {
+  if (groupAction.kind === "idle") {
     return null;
   }
 
-  const reorderedChildren = [...parentGroup.children];
-  const dragIndex = reorderedChildren.findIndex((child) => child.id === draggedId);
-  const [dragChild] = reorderedChildren.splice(dragIndex, 1);
-  reorderedChildren.splice(clampIndex(index, reorderedChildren.length), 0, dragChild);
-
-  const nextGroupOrder = reorderedChildren.map((child) => child.id);
-  return replaceGroupPlacementsInLayerOrder(currentLayerOrder, parentGroup.id, nextGroupOrder, treeData);
+  const label = groupAction.kind === "group" ? "Group selected layers" : "Ungroup selected layer";
+  return (
+    <div className="assembly-layer-panel-actions" role="toolbar" aria-label="Layer actions">
+      <button
+        type="button"
+        className="course-planner-secondary-action assembly-layer-command"
+        aria-label={label}
+        title={label}
+        onClick={onAction}
+      >
+        <Layers3 size={15} aria-hidden="true" />
+        <span>{groupAction.kind === "group" ? "Group" : "Ungroup"}</span>
+      </button>
+    </div>
+  );
 }
 
-function replaceGroupPlacementsInLayerOrder(
-  layerOrder: string[],
-  groupId: string,
-  nextGroupOrder: string[],
-  treeData: AssemblyLayerTreeNode[],
-): string[] {
-  const sourceGroup = treeData.find((node) => node.id === groupId && node.kind === "group");
-  const currentGroupIds = new Set((sourceGroup?.children ?? []).map((child) => child.id));
-  const nextLayerOrder: string[] = [];
-  let inserted = false;
+function PlacementLayerListRow({
+  collapsed,
+  dragHandle,
+  node,
+  onDelete,
+  onSelect,
+  onToggleGroup,
+  scenePackage,
+  selected,
+  style,
+}: {
+  collapsed: boolean;
+  onDelete: (node: AssemblyLayerTreeNode) => void;
+  onSelect: (node: AssemblyLayerTreeNode, event: PlacementSelectionEvent) => void;
+  onToggleGroup: (groupId: string) => void;
+  scenePackage: ChapterScenePackage;
+  selected: boolean;
+} & NodeRendererProps<AssemblyLayerTreeNode>) {
+  const row = node.data;
+  const rowAriaLabel = `${row.name} ${row.kind === "placement" ? row.runtimeRole : row.typeLabel ?? ""}`.trim();
 
-  for (const placementId of layerOrder) {
-    if (currentGroupIds.has(placementId)) {
-      if (!inserted) {
-        nextLayerOrder.push(...nextGroupOrder);
-        inserted = true;
-      }
-      continue;
+  function handleSelectKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
     }
-    nextLayerOrder.push(placementId);
+    event.preventDefault();
+    event.stopPropagation();
+    onSelect(row, event);
   }
 
-  return inserted ? nextLayerOrder : layerOrder;
-}
-
-function flattenNodePlacementIds(node: AssemblyLayerTreeNode): string[] {
-  if (node.kind === "placement" && node.placementId) {
-    return [node.placementId];
+  function handleToggleClick(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (row.kind === "group" && row.groupId) {
+      onToggleGroup(row.groupId);
+    }
   }
-  return (node.children ?? []).flatMap((child) => flattenNodePlacementIds(child));
+
+  return (
+    <div
+      style={style}
+      className={[
+        "asset-tree-item",
+        "assembly-layer-item",
+        selected ? "is-selected is-focused" : "",
+        node.isDragging ? "is-dragging" : "",
+        node.willReceiveDrop ? "is-drop-target" : "",
+      ].filter(Boolean).join(" ")}
+      role="treeitem"
+      aria-selected={selected}
+    >
+      <div ref={dragHandle} className="asset-tree-row assembly-layer-row">
+        <div className="asset-tree-row-depth" style={{ "--asset-depth": node.level } as CSSProperties}>
+          {row.kind === "group" ? (
+            <LayerCollapseToggle collapsed={collapsed} groupName={row.name} onClick={handleToggleClick} />
+          ) : (
+            <span className="asset-generate-toggle-spacer" aria-hidden="true" />
+          )}
+          <div
+            className="asset-tree-select assembly-layer-row-select"
+            role="button"
+            tabIndex={0}
+            aria-label={rowAriaLabel}
+            aria-pressed={selected}
+            onClick={(event) => onSelect(row, event)}
+            onKeyDown={handleSelectKeyDown}
+          >
+            {row.assetId ? (
+              <img
+                className="asset-tree-thumb assembly-layer-thumb"
+                alt=""
+                src={scenePackageMediaUrl(scenePackage.chapter_id, "chapter_assets", row.assetId)}
+              />
+            ) : (
+              <span className="asset-tree-thumb assembly-layer-thumb assembly-layer-thumb-group" aria-hidden="true">
+                <Layers3 size={16} />
+              </span>
+            )}
+            <span className="asset-tree-copy">
+              <strong>{row.name}</strong>
+              {row.typeLabel ? <span>{row.typeLabel}</span> : null}
+            </span>
+          </div>
+        </div>
+        <span
+          className="asset-tree-actions assembly-layer-row-actions"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
+          <span className="assembly-layer-drag-affordance" title="Drag to reorder layers">
+            <GripVertical size={16} strokeWidth={2.2} />
+          </span>
+          <LayerDeleteAction node={row} onDelete={onDelete} />
+        </span>
+      </div>
+    </div>
+  );
 }
 
-function clampIndex(value: number, max: number): number {
-  return Math.min(Math.max(value, 0), max);
+function LayerCollapseToggle({
+  collapsed,
+  groupName,
+  onClick,
+}: {
+  collapsed: boolean;
+  groupName: string;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  const action = collapsed ? "Expand" : "Collapse";
+  return (
+    <button
+      type="button"
+      className="assembly-layer-collapse-button"
+      aria-label={`${action} ${groupName} group`}
+      aria-expanded={!collapsed}
+      title={`${action} ${groupName} group`}
+      onClick={onClick}
+    >
+      <ChevronDown
+        size={14}
+        aria-hidden="true"
+        className={collapsed ? "assembly-layer-collapse-icon is-collapsed" : "assembly-layer-collapse-icon"}
+      />
+    </button>
+  );
 }
 
-function sameStringArray(left: string[], right: string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+function LayerDeleteAction({
+  node,
+  onDelete,
+}: {
+  node: AssemblyLayerTreeNode;
+  onDelete: (node: AssemblyLayerTreeNode) => void;
+}) {
+  const isGroup = node.kind === "group";
+  const childCount = flattenNodePlacementIds(node).length;
+  const deleteLabel = `Delete ${node.name} ${isGroup ? "group" : "placement"}`;
+  return (
+    <ConfirmActionDialog
+      trigger={(
+        <button
+          type="button"
+          className="course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-delete-button"
+          aria-label={deleteLabel}
+          title={deleteLabel}
+        >
+          <Trash2 size={15} aria-hidden="true" />
+        </button>
+      )}
+      title={`Delete ${node.name}?`}
+      description={isGroup
+        ? `This deletes the group and its ${childCount} child ${childCount === 1 ? "placement" : "placements"}.`
+        : "This removes the placement from layer order, groups, and dependency lists."}
+      confirmLabel={isGroup ? "Confirm delete group" : "Confirm delete placement"}
+      onConfirm={() => onDelete(node)}
+    />
+  );
 }
+
+function PlacementLayerEmptyState() {
+  return (
+    <div className="assembly-editor-empty-state assembly-editor-empty-state-compact">
+      <Layers3 size={16} aria-hidden="true" />
+      <div>
+        <strong>No placements yet.</strong>
+        <p>Add an available asset to create the first layer.</p>
+      </div>
+    </div>
+  );
+}
+

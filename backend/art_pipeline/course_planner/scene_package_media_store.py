@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from uuid import uuid4
 
 from art_pipeline.course_planner.scene_package_errors import (
     ScenePackageChildNotFoundError,
@@ -202,6 +204,44 @@ class CoursePlannerScenePackageMediaStoreMixin:
             validate_assembly=False,
         )
 
+    def add_generated_chapter_asset(
+        self,
+        chapter_id: str,
+        *,
+        image_bytes: bytes,
+        original_filename: str,
+        display_name: str,
+        lineage: ChapterAssetLineage,
+    ) -> ChapterScenePackage:
+        current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
+        validate_scene_package_png_bytes(image_bytes, "Generated scene asset image")
+        asset_id, storage_path = next_scene_package_media_slot(
+            current.chapter_assets,
+            kind="assets",
+            prefix="chapter_asset",
+        )
+        asset = ChapterAsset(
+            id=asset_id,
+            display_name=display_name,
+            original_filename=sanitize_original_filename(original_filename),
+            storage_path=storage_path,
+            media_type="image/png",
+            lineage=lineage,
+            created_at=utc_now(),
+        )
+        self._write_scene_package_media_file(
+            scene_pack_id,
+            current.chapter_id,
+            asset.storage_path,
+            image_bytes,
+        )
+        return self.write_chapter_scene_package(
+            current.model_copy(
+                update={"chapter_assets": [*current.chapter_assets, asset]}
+            ),
+            validate_assembly=False,
+        )
+
     def duplicate_chapter_asset(
         self,
         chapter_id: str,
@@ -265,10 +305,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
         if not current.current_empty_scene_image_id:
             raise ScenePackagePreconditionError(
                 "Lock Final requires a selected Empty Scene Image."
-            )
-        if not current.assembly.placements:
-            raise ScenePackagePreconditionError(
-                "Lock Final requires at least one placed Scene Asset."
             )
         assembly_errors = validate_assembly_manifest(current)
         if assembly_errors:
@@ -378,10 +414,13 @@ class CoursePlannerScenePackageMediaStoreMixin:
         storage_path: str,
         image_bytes: bytes,
     ) -> None:
-        self._write_bytes(
-            self._scene_package_media_path(scene_pack_id, chapter_id, storage_path),
-            image_bytes,
-        )
+        path = self._scene_package_media_path(scene_pack_id, chapter_id, storage_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # WHY: pytest/Windows 临时目录很深；通用 _write_bytes 的长 UUID 后缀会把
+        # media 文件推过 MAX_PATH。这里用短临时名保留原子替换，同时避免平台路径上限。
+        temp_path = path.with_name(f"{path.stem}.{uuid4().hex[:8]}.tmp")
+        temp_path.write_bytes(image_bytes)
+        os.replace(temp_path, path)
 
     def _resolve_empty_scene_prompt_snapshot(
         self,

@@ -156,9 +156,16 @@ export type CompleteSceneImage = {
   created_at: string;
 };
 
-export type ChapterAssetLineage = {
-  source_kind: "direct_upload";
-};
+export type ChapterAssetLineage =
+  | {
+    source_kind: "direct_upload";
+  }
+  | {
+    source_kind: "generated_asset";
+    complete_scene_image_id: string;
+    pipeline_run_id: string;
+    run_asset_id: string;
+  };
 
 export type ChapterAsset = {
   id: string;
@@ -166,6 +173,8 @@ export type ChapterAsset = {
   original_filename: string;
   storage_path: string;
   media_type: "image/png";
+  width: number;
+  height: number;
   lineage: ChapterAssetLineage;
   linked_target_object_id: string | null;
   status: "available" | "removed";
@@ -228,6 +237,20 @@ export type WorkspaceRunImportSummary = {
   updatedAt: string;
   status: string;
   elementCount: number;
+};
+
+export type GeneratedChapterAssetState = "available" | "unavailable" | "added";
+
+export type GeneratedChapterAsset = {
+  complete_scene_image_id: string;
+  pipeline_run_id: string;
+  run_asset_id: string;
+  display_name: string;
+  state: GeneratedChapterAssetState;
+  width: number | null;
+  height: number | null;
+  unavailable_reason: string | null;
+  chapter_asset_id: string | null;
 };
 
 export type ChapterScenePackage = {

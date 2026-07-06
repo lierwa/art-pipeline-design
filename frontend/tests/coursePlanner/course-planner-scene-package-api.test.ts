@@ -9,7 +9,9 @@ import {
   deleteChapterAsset,
   duplicateChapterAsset,
   fetchChapterScenePackage,
+  listGeneratedChapterAssets,
   lockFinalChapterScene,
+  materializeGeneratedChapterAsset,
   saveChapterSceneAssembly,
   selectEmptySceneImage,
   updateChapterScenePrompt,
@@ -124,6 +126,51 @@ describe("course planner scene package API client", () => {
       ["/api/course-planner/chapters/chapter_001/scene-package/chapter-assets/chapter_asset_001/duplicate", "POST", null],
       ["/api/course-planner/chapters/chapter_001/scene-package/chapter-assets/chapter_asset_001", "DELETE", null],
     ]);
+  });
+
+  it("lists and materializes generated Chapter Assets through the scene-package contract", async () => {
+    const fetcher = scenePackageFetcher();
+
+    const generatedAssets = await listGeneratedChapterAssets("chapter_001", fetcher);
+    const materialized = await materializeGeneratedChapterAsset(
+      "chapter_001",
+      {
+        completeSceneImageId: "complete_scene_001",
+        pipelineRunId: "run_current",
+        runAssetId: "element_good",
+      },
+      fetcher,
+    );
+
+    expect(fetcher.calls.map(([input, init]) => [input, init?.method ?? "GET"])).toEqual([
+      ["/api/course-planner/chapters/chapter_001/scene-package/generated-assets", "GET"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/generated-assets/materialize", "POST"],
+    ]);
+    expect(JSON.parse(String(fetcher.calls[1][1]?.body))).toEqual({
+      completeSceneImageId: "complete_scene_001",
+      pipelineRunId: "run_current",
+      runAssetId: "element_good",
+    });
+    expect(generatedAssets).toEqual([
+      expect.objectContaining({
+        run_asset_id: "element_good",
+        state: "available",
+        width: 18,
+        height: 14,
+      }),
+      expect.objectContaining({
+        run_asset_id: "element_missing_file",
+        state: "unavailable",
+        unavailable_reason: "Generated asset image file is missing.",
+      }),
+      expect.objectContaining({
+        run_asset_id: "element_added",
+        state: "added",
+        chapter_asset_id: "chapter_asset_generated_001",
+      }),
+    ]);
+    expect(materialized.chapterAsset.lineage.source_kind).toBe("generated_asset");
+    expect(materialized.scenePackage.chapter_assets[0].lineage.source_kind).toBe("generated_asset");
   });
 
   it("uploads direct Scene Assets without run lineage fields", async () => {
@@ -294,6 +341,18 @@ function scenePackageResponseFor(input: string, init?: RequestInit): unknown {
   if (input.endsWith("/scene-package/chapter-assets/chapter_asset_001") && init?.method === "DELETE") {
     return { scenePackage: scenePackageFixture() };
   }
+  if (input.endsWith("/scene-package/generated-assets") && (!init || init.method === "GET")) {
+    return { generatedAssets: generatedAssetFixtures() };
+  }
+  if (input.endsWith("/scene-package/generated-assets/materialize") && init?.method === "POST") {
+    return {
+      chapterAsset: generatedChapterAssetFixture(),
+      scenePackage: {
+        ...scenePackageFixture(),
+        chapter_assets: [generatedChapterAssetFixture()],
+      },
+    };
+  }
   if (input.endsWith("/scene-package/assembly") && init?.method === "PUT") {
     return { scenePackage: scenePackageFixture() };
   }
@@ -442,6 +501,63 @@ function chapterAssetFixtures() {
       created_at: "2026-07-03T08:25:00Z",
     },
   ];
+}
+
+function generatedAssetFixtures() {
+  return [
+    {
+      complete_scene_image_id: "complete_scene_001",
+      pipeline_run_id: "run_current",
+      run_asset_id: "element_good",
+      display_name: "book",
+      state: "available",
+      width: 18,
+      height: 14,
+      unavailable_reason: null,
+      chapter_asset_id: null,
+    },
+    {
+      complete_scene_image_id: "complete_scene_001",
+      pipeline_run_id: "run_current",
+      run_asset_id: "element_missing_file",
+      display_name: "lamp",
+      state: "unavailable",
+      width: null,
+      height: null,
+      unavailable_reason: "Generated asset image file is missing.",
+      chapter_asset_id: null,
+    },
+    {
+      complete_scene_image_id: "complete_scene_001",
+      pipeline_run_id: "run_current",
+      run_asset_id: "element_added",
+      display_name: "pillow",
+      state: "added",
+      width: 18,
+      height: 14,
+      unavailable_reason: null,
+      chapter_asset_id: "chapter_asset_generated_001",
+    },
+  ];
+}
+
+function generatedChapterAssetFixture() {
+  return {
+    id: "chapter_asset_generated_001",
+    display_name: "book",
+    original_filename: "element_good.png",
+    storage_path: "chapter_assets/chapter_asset_generated_001.png",
+    media_type: "image/png",
+    lineage: {
+      source_kind: "generated_asset",
+      complete_scene_image_id: "complete_scene_001",
+      pipeline_run_id: "run_current",
+      run_asset_id: "element_good",
+    },
+    linked_target_object_id: null,
+    status: "available",
+    created_at: "2026-07-03T08:26:00Z",
+  };
 }
 
 function finalSceneFixture() {

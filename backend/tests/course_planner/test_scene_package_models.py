@@ -60,12 +60,97 @@ def test_complete_image_does_not_require_empty_scene_image_id() -> None:
     assert image.status == "active"
 
 
-def test_asset_lineage_only_accepts_direct_upload() -> None:
+def test_asset_lineage_accepts_direct_upload() -> None:
     direct = ChapterAssetLineage(source_kind="direct_upload")
 
     assert direct.source_kind == "direct_upload"
+
+
+def test_asset_lineage_accepts_generated_asset_source() -> None:
+    lineage = ChapterAssetLineage(
+        source_kind="generated_asset",
+        complete_scene_image_id="complete_scene_001",
+        pipeline_run_id="run_202607060001",
+        run_asset_id="element_001",
+    )
+
+    assert lineage.source_kind == "generated_asset"
+    assert lineage.complete_scene_image_id == "complete_scene_001"
+    assert lineage.pipeline_run_id == "run_202607060001"
+    assert lineage.run_asset_id == "element_001"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "source_kind": "generated_asset",
+            "pipeline_run_id": "run_202607060001",
+            "run_asset_id": "element_001",
+        },
+        {
+            "source_kind": "generated_asset",
+            "complete_scene_image_id": "complete_scene_001",
+            "run_asset_id": "element_001",
+        },
+        {
+            "source_kind": "generated_asset",
+            "complete_scene_image_id": "complete_scene_001",
+            "pipeline_run_id": "run_202607060001",
+        },
+    ],
+)
+def test_asset_lineage_rejects_incomplete_generated_asset_source(
+    payload: dict[str, str],
+) -> None:
     with pytest.raises(ValidationError):
-        ChapterAssetLineage(source_kind="_".join(("pipeline", "run", "asset")))
+        ChapterAssetLineage.model_validate(payload)
+
+
+def test_generated_asset_lineage_round_trips_through_scene_package() -> None:
+    package = ChapterScenePackage.model_validate(
+        {
+            "chapter_id": "chapter_001",
+            "complete_images": [
+                {
+                    "id": "complete_scene_001",
+                    "original_filename": "complete.png",
+                    "storage_path": "complete_images/complete_scene_001.png",
+                    "media_type": "image/png",
+                    "width": 120,
+                    "height": 80,
+                    "prompt_snapshot": "Complete scene prompt.",
+                    "pipeline_run_id": "run_202607060001",
+                    "created_at": "2026-07-03T10:00:00Z",
+                }
+            ],
+            "chapter_assets": [
+                {
+                    "id": "chapter_asset_001",
+                    "display_name": "book",
+                    "original_filename": "book.png",
+                    "storage_path": "assets/chapter_asset_001.png",
+                    "media_type": "image/png",
+                    "lineage": {
+                        "source_kind": "generated_asset",
+                        "complete_scene_image_id": "complete_scene_001",
+                        "pipeline_run_id": "run_202607060001",
+                        "run_asset_id": "element_001",
+                    },
+                    "created_at": "2026-07-03T10:00:00Z",
+                }
+            ],
+        }
+    )
+
+    round_tripped = ChapterScenePackage.model_validate(package.model_dump(mode="json"))
+
+    assert round_tripped.chapter_assets[0].lineage == ChapterAssetLineage(
+        source_kind="generated_asset",
+        complete_scene_image_id="complete_scene_001",
+        pipeline_run_id="run_202607060001",
+        run_asset_id="element_001",
+    )
 
 
 def test_target_object_references_prune_stale_exemptions_and_asset_links() -> None:

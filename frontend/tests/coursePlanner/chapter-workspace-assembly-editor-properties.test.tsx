@@ -21,15 +21,6 @@ import {
   isAssemblyReady,
 } from "../../src/features/coursePlanner/assembly/assemblyReadiness";
 import { exportAssemblyPreviewFile } from "../../src/features/coursePlanner/assembly/assemblyExport";
-import { buildTldrawAssemblySnapshot } from "../../src/features/coursePlanner/assembly/tldrawAssemblyAdapter";
-import {
-  applySnapshotToEditor,
-  createAssemblyCameraFitState,
-  readPlacementSelectionState,
-  syncSelectionToEditor,
-  type AssemblyEditorShapeLike,
-} from "../../src/features/coursePlanner/components/AssemblyEditorCanvas";
-import { ChapterSceneStudio } from "../../src/features/coursePlanner/components/ChapterSceneStudio";
 import { studioStatusLabel } from "../../src/features/coursePlanner/pages/ChapterWorkspacePage";
 import type {
   AsyncStatusMap,
@@ -53,7 +44,7 @@ import {
   advanceAutosaveCycle,
   advanceAutosaveTime,
   buildLockedFinalScene,
-  buildSnapshot,
+  emptyAssemblyManifest,
   flushAsyncScenePackage,
   mockCanvasBlob,
   mockScenePackageImages,
@@ -63,7 +54,7 @@ import {
   scenePackageWithTwoPlacements,
   scenePackageWithTwoPlacementsConfig,
 } from "./assemblyEditorHarness";
-import { createMockAssemblyEditor, layerLabels } from "./assemblyEditorTestUtils";
+import { layerLabels } from "./assemblyEditorTestUtils";
 
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -81,8 +72,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function scenePackageWithPixelGeometry(input?: {
+  transform?: Partial<ChapterSceneAssemblyManifest["placements"][number]["transform"]>;
+}) {
+  const baseScenePackage = scenePackageWithTwoPlacementsConfig({
+    placementOverrides: {
+      placement_bowl: {
+        transform: {
+          cx: 0.54,
+          cy: 0.4,
+          w: 0.18,
+          h: 0.2,
+          rotation_deg: 12,
+          ...(input?.transform ?? {}),
+        },
+      },
+    },
+  });
+  return {
+    ...baseScenePackage,
+    empty_scene_images: [
+      {
+        ...baseScenePackage.empty_scene_images[0],
+        width: 900,
+        height: 600,
+      },
+    ],
+    assembly: {
+      ...baseScenePackage.assembly,
+      empty_scene_size: { width: 900, height: 600 },
+    },
+  };
+}
 
-describe("Chapter Scene Studio assembly properties and asset actions", () => {
+
+describe("Assembly editor properties and asset actions", () => {
   it("batch-updates runtime role for multi-selected placements from the properties panel", async () => {
     mockScenePackageImages();
     const user = userEvent.setup();
@@ -94,14 +118,15 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
       />,
     );
 
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
     await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
     await user.keyboard("{Control>}");
     await user.click(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ }));
     await user.keyboard("{/Control}");
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
-    expect(within(properties).getAllByText("2 placements selected")).toHaveLength(2);
+    expect(within(properties).getByText("2 selected")).toBeInTheDocument();
+    expect(within(properties).getByText("2 placements selected")).toBeInTheDocument();
 
     await user.click(within(properties).getByRole("button", { name: "Initial" }));
 
@@ -120,25 +145,241 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
     });
   });
 
-  it("disables self and cycle-causing dependency options in the placement properties panel", async () => {
+  it("shows compact high-frequency placement fields without internal transform names", async () => {
     mockScenePackageImages();
     const user = userEvent.setup();
-    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
+    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithPixelGeometry()} />);
 
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
     await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
-    const clothDependency = within(properties).getByRole("checkbox", { name: /placement_cloth/i });
-    await user.click(clothDependency);
-    expect(clothDependency).toBeChecked();
+    expect(within(properties).getByRole("heading", { name: "Placement" })).toBeInTheDocument();
+    expect(within(properties).getByLabelText("Name")).toHaveDisplayValue("Breakfast bowl");
+    expect(within(properties).getByRole("button", { name: "Target" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(properties).getByRole("button", { name: "Initial" })).toHaveAttribute("aria-pressed", "false");
+    expect(within(properties).getByLabelText("Position X")).toHaveDisplayValue("486");
+    expect(within(properties).getByLabelText("Position Y")).toHaveDisplayValue("240");
+    expect(within(properties).getByLabelText("Width")).toHaveDisplayValue("162");
+    expect(within(properties).getByLabelText("Height")).toHaveDisplayValue("120");
+    expect(within(properties).getByLabelText("Rotation")).toHaveDisplayValue("12");
+    expect(properties).toHaveTextContent("px");
+    expect(properties).toHaveTextContent("degrees");
+    expect(properties).not.toHaveTextContent("Dependencies");
+    expect(within(properties).queryByText("rotation_deg")).not.toBeInTheDocument();
+    expect(within(properties).queryByText("cx")).not.toBeInTheDocument();
+    expect(within(properties).queryByText("cy")).not.toBeInTheDocument();
+    expect(within(properties).queryByText("w")).not.toBeInTheDocument();
+    expect(within(properties).queryByText("h")).not.toBeInTheDocument();
+    expect(properties).not.toHaveTextContent("Target object");
+    expect(properties).not.toHaveTextContent("target_object_bowl");
+  });
 
+  it("rejects non-positive pixel sizes without mutating the placement draft", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithPixelGeometry()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    const width = within(properties).getByLabelText("Width");
+    const height = within(properties).getByLabelText("Height");
+    expect(width).toHaveDisplayValue("162");
+    expect(height).toHaveDisplayValue("120");
+
+    fireEvent.change(width, { target: { value: "0" } });
+    fireEvent.change(height, { target: { value: "-5" } });
+
+    expect(width).toHaveDisplayValue("162");
+    expect(height).toHaveDisplayValue("120");
+    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeDisabled();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("writes pixel placement edits back to normalized manifest transform values", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithPixelGeometry()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    fireEvent.change(within(properties).getByLabelText("Position X"), { target: { value: "450" } });
+    fireEvent.change(within(properties).getByLabelText("Position Y"), { target: { value: "0" } });
+    fireEvent.change(within(properties).getByLabelText("Width"), { target: { value: "180" } });
+    fireEvent.change(within(properties).getByLabelText("Rotation"), { target: { value: "-15" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        placements: expect.arrayContaining([
+          expect.objectContaining({
+            id: "placement_bowl",
+            transform: expect.objectContaining({
+              cx: 0.5,
+              cy: 0,
+              w: 0.2,
+              rotation_deg: -15,
+            }),
+          }),
+        ]),
+      }));
+    });
+  });
+
+  it("shows mixed batch geometry and applies entered pixel values to all selected placements", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithPixelGeometry({
+          transform: { cx: 0.54, w: 0.18 },
+        })}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+    await user.keyboard("{Control>}");
     await user.click(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ }));
+    await user.keyboard("{/Control}");
 
-    const selfDependency = within(properties).getByRole("checkbox", { name: /placement_cloth/i });
-    const cycleDependency = within(properties).getByRole("checkbox", { name: /placement_bowl/i });
-    expect(selfDependency).toBeDisabled();
-    expect(cycleDependency).toBeDisabled();
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    expect(within(properties).getByText("2 selected")).toBeInTheDocument();
+    expect(within(properties).getByLabelText("Position X")).toHaveDisplayValue("");
+    expect(within(properties).getByLabelText("Position X")).toHaveAttribute("placeholder", "Mixed");
+    expect(within(properties).getByLabelText("Width")).toHaveDisplayValue("");
+    expect(within(properties).getByLabelText("Width")).toHaveAttribute("placeholder", "Mixed");
+
+    fireEvent.change(within(properties).getByLabelText("Position X"), { target: { value: "450" } });
+    fireEvent.change(within(properties).getByLabelText("Width"), { target: { value: "180" } });
+
+    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        placements: expect.arrayContaining([
+          expect.objectContaining({
+            id: "placement_bowl",
+            transform: expect.objectContaining({ cx: 0.5, w: 0.2 }),
+          }),
+          expect.objectContaining({
+            id: "placement_cloth",
+            transform: expect.objectContaining({ cx: 0.5, w: 0.2 }),
+          }),
+        ]),
+      }));
+    });
+  });
+
+  it("renames only the selected placement and keeps the source Chapter Asset name unchanged", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithPixelGeometry()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    fireEvent.change(within(properties).getByLabelText("Name"), {
+      target: { value: "Hero bowl placement" },
+    });
+
+    await waitFor(() => {
+      expect(within(layerTree).getByRole("button", { name: /Hero bowl placement target/ })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("heading", { name: "Breakfast bowl" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        placements: expect.arrayContaining([
+          expect.objectContaining({
+            id: "placement_bowl",
+            asset_id: "chapter_asset_bowl",
+            display_name: "Hero bowl placement",
+          }),
+        ]),
+      }));
+    });
+  });
+
+  it("confirms batch placement removal and deletes all selected placement facts", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithTwoPlacements()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+    await user.keyboard("{Control>}");
+    await user.click(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ }));
+    await user.keyboard("{/Control}");
+
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    expect(within(layerTree).getByRole("button", { name: "Group selected layers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Align left" })).toBeEnabled();
+    await user.click(within(properties).getByRole("button", { name: "Remove selected placements" }));
+
+    expect(await screen.findByText("Remove 2 placements?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm removal" }));
+
+    expect(within(layerTree).queryByRole("button", { name: /Breakfast bowl/ })).not.toBeInTheDocument();
+    expect(within(layerTree).queryByRole("button", { name: /Cleanup cloth/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        placements: [],
+        groups: [],
+        layer_order: [],
+      }));
+    });
+  });
+
+  it("hides dependency controls from the primary placement properties panel", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithDependentPlacements()} />);
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    expect(within(properties).queryByText("Dependencies")).not.toBeInTheDocument();
+    expect(within(properties).queryByText("Advanced dependencies")).not.toBeInTheDocument();
+    expect(within(properties).queryByRole("checkbox", { name: /Cleanup cloth/i })).not.toBeInTheDocument();
   });
 
   it("confirms placement removal and clears dependency references from remaining placements", async () => {
@@ -152,7 +393,7 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
       />,
     );
 
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
     await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
@@ -187,7 +428,7 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
       />,
     );
 
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
     await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
@@ -205,20 +446,20 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
     vi.useFakeTimers();
     mockScenePackageImages();
     const saveSpy = vi.fn();
+    const controlsRef = { current: null as AssemblyEditorHarnessControls | null };
     render(
       <AssemblyEditorHarness
         initialScenePackage={scenePackageWithReplacementCandidate()}
+        onHarnessReady={(controls) => {
+          controlsRef.current = controls;
+        }}
         onSaveAssemblyManifest={saveSpy}
       />,
     );
 
-    const emptyScenePanel = screen.getByRole("region", { name: "Empty scene images" });
-    const selectButtons = within(emptyScenePanel).getAllByRole("button", { name: "Select as Empty Scene" });
-    fireEvent.click(selectButtons[1]);
-    expect(screen.getByRole("button", { name: "Replace Empty Scene" })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Replace Empty Scene" }));
-    await flushAsyncScenePackage();
+    await act(async () => {
+      await controlsRef.current?.selectEmptySceneImage("empty_scene_002");
+    });
 
     expect(screen.getByText("2 placements need alignment review.")).toBeInTheDocument();
     expect(screen.getAllByText("Alignment risk").length).toBeGreaterThan(0);
@@ -241,23 +482,25 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
     vi.useFakeTimers();
     mockScenePackageImages();
     const saveSpy = vi.fn();
+    const controlsRef = { current: null as AssemblyEditorHarnessControls | null };
     render(
       <AssemblyEditorHarness
         initialScenePackage={scenePackageWithReplacementCandidate()}
+        onHarnessReady={(controls) => {
+          controlsRef.current = controls;
+        }}
         onSaveAssemblyManifest={saveSpy}
       />,
     );
 
-    const emptyScenePanel = screen.getByRole("region", { name: "Empty scene images" });
-    const selectButtons = within(emptyScenePanel).getAllByRole("button", { name: "Select as Empty Scene" });
-    fireEvent.click(selectButtons[1]);
-    fireEvent.click(screen.getByRole("button", { name: "Replace Empty Scene" }));
-    await flushAsyncScenePackage();
+    await act(async () => {
+      await controlsRef.current?.selectEmptySceneImage("empty_scene_002");
+    });
 
     expect(screen.getByText("2 placements need alignment review.")).toBeInTheDocument();
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
-    fireEvent.change(within(properties).getByLabelText("cx"), { target: { value: "0.5" } });
+    fireEvent.change(within(properties).getByLabelText("Position X"), { target: { value: "768" } });
 
     expect(screen.getByText("1 placements need alignment review.")).toBeInTheDocument();
 
@@ -271,17 +514,20 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
     mockScenePackageImages();
     const user = userEvent.setup();
     const saveSpy = vi.fn();
+    const controlsRef = { current: null as AssemblyEditorHarnessControls | null };
     render(
       <AssemblyEditorHarness
         initialScenePackage={scenePackageWithReplacementCandidate()}
+        onHarnessReady={(controls) => {
+          controlsRef.current = controls;
+        }}
         onSaveAssemblyManifest={saveSpy}
       />,
     );
 
-    const emptyScenePanel = screen.getByRole("region", { name: "Empty scene images" });
-    const selectButtons = within(emptyScenePanel).getAllByRole("button", { name: "Select as Empty Scene" });
-    await user.click(selectButtons[1]);
-    await user.click(await screen.findByRole("button", { name: "Replace Empty Scene" }));
+    await act(async () => {
+      await controlsRef.current?.selectEmptySceneImage("empty_scene_002");
+    });
 
     await user.click(screen.getByRole("button", { name: "Clear placements" }));
     expect(await screen.findByText("Clear placements for the new Empty Scene?")).toBeInTheDocument();
@@ -299,118 +545,4 @@ describe("Chapter Scene Studio assembly properties and asset actions", () => {
     });
   });
 
-  it("confirms used Chapter Asset deletion and removes placement plus dependency references", async () => {
-    mockScenePackageImages();
-    const user = userEvent.setup();
-    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithDependentPlacements()} />);
-
-    const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
-    const assetRows = within(assetPool).getAllByRole("article");
-    await user.click(within(assetRows[0] ?? document.body).getByRole("button", { name: "Delete Asset" }));
-    expect(await screen.findByText("Delete Breakfast bowl?")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Confirm delete asset" }));
-
-    expect(within(assetPool).queryByText("Breakfast bowl")).not.toBeInTheDocument();
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
-    expect(within(layerTree).queryByRole("button", { name: /Breakfast bowl/ })).not.toBeInTheDocument();
-    await user.click(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ }));
-    const properties = screen.getByRole("region", { name: "Placement properties" });
-    expect(within(properties).queryByRole("checkbox", { name: /placement_bowl/i })).not.toBeInTheDocument();
-  });
-
-  it("confirms Complete Scene deletion without touching Chapter Assets or the locked Final snapshot", async () => {
-    mockScenePackageImages();
-    const user = userEvent.setup();
-    render(
-      <AssemblyEditorHarness
-        initialScenePackage={{
-          ...scenePackageWithTwoPlacements(),
-          final_scene: buildLockedFinalScene(scenePackageWithTwoPlacements()),
-        }}
-      />,
-    );
-
-    const completeImagesPanel = screen.getByRole("region", { name: "Complete scene images" });
-    await user.click(within(completeImagesPanel).getByRole("button", { name: "Delete Image" }));
-    expect(await screen.findByText("Delete complete-scene.png?")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Confirm delete image" }));
-
-    expect(within(completeImagesPanel).queryByText("complete-scene.png")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Assembly asset pool" })).toHaveTextContent("Breakfast bowl");
-    expect(screen.getByRole("region", { name: "Final scene" })).toHaveTextContent("Locked");
-  });
-
-  it("keeps placement metadata read-only and does not surface out-of-scope custom gameplay fields", async () => {
-    mockScenePackageImages();
-    const user = userEvent.setup();
-    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
-
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
-    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
-
-    const properties = screen.getByRole("region", { name: "Placement properties" });
-    expect(within(properties).getByText("chapter_asset_bowl")).toBeInTheDocument();
-    expect(within(properties).queryByLabelText(/display name/i)).not.toBeInTheDocument();
-    expect(within(properties).queryByLabelText(/asset id/i)).not.toBeInTheDocument();
-    expect(properties).not.toHaveTextContent("Blocked toast");
-    expect(properties).not.toHaveTextContent("Target area");
-    expect(properties).not.toHaveTextContent("Tolerance");
-    expect(properties).not.toHaveTextContent("Gameplay step");
-  });
-
-  it("ungroups a first-level group and keeps placements in layer_order", async () => {
-    mockScenePackageImages();
-    const user = userEvent.setup();
-    const saveSpy = vi.fn();
-    render(
-      <AssemblyEditorHarness
-        initialScenePackage={scenePackageWithGroupedPlacements()}
-        onSaveAssemblyManifest={saveSpy}
-      />,
-    );
-
-    const layerTree = screen.getByRole("region", { name: "Assembly layers" });
-    await user.click(within(layerTree).getByRole("button", { name: "Breakfast props" }));
-    await user.click(within(layerTree).getByRole("button", { name: "Ungroup selected layer" }));
-
-    expect(within(layerTree).queryByRole("button", { name: "Breakfast props" })).not.toBeInTheDocument();
-    expect(layerLabels(layerTree)).toEqual(["Breakfast bowl", "Cleanup cloth"]);
-
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
-
-    await waitFor(() => {
-      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-        groups: [],
-        layer_order: ["placement_bowl", "placement_cloth"],
-      }));
-    });
-  });
-
-  it("uploads a direct scene asset into the same connected pool", async () => {
-    mockScenePackageImages();
-    const user = userEvent.setup();
-    const uploadInputSpy = vi.fn();
-    render(
-      <AssemblyEditorHarness
-        initialScenePackage={studioScenePackageFixture()}
-        onDirectAssetUploadInput={uploadInputSpy}
-      />,
-    );
-
-    const input = screen.getByLabelText("Upload Scene Asset", { selector: 'input[type="file"]' });
-    await user.selectOptions(screen.getByLabelText("Upload target object"), "target_object_cloth");
-
-    await user.upload(input, new File(["asset"], "cloth.png", { type: "image/png" }));
-
-    expect(uploadInputSpy).toHaveBeenCalledWith({
-      displayName: "cloth",
-      linkedTargetObjectId: "target_object_cloth",
-    });
-    const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
-    expect(await within(assetPool).findByRole("heading", { name: "cloth" })).toBeInTheDocument();
-    expect(within(assetPool).getAllByText("cloth").length).toBeGreaterThanOrEqual(2);
-    expect(within(assetPool).getByRole("button", { name: "Upload Scene Asset" })).toBeInTheDocument();
-  });
 });

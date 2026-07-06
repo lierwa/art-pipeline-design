@@ -31,7 +31,14 @@ export function SceneCategoryList({
           <h2>Scene Packs</h2>
           <p>{scenePacks.length > 0 ? "选择一个 Scene Pack 来生成和整理 Chapter。" : "先创建 Scene Pack。"}</p>
         </div>
-        <button type="button" aria-label="Add Scene Pack" disabled={isBusy} onClick={onCreateScenePack}>
+        <button
+          type="button"
+          className="course-planner-icon-button course-planner-compact-icon-action"
+          aria-label="Add Scene Pack"
+          title="Add Scene Pack"
+          disabled={isBusy}
+          onClick={onCreateScenePack}
+        >
           <Plus size={16} aria-hidden="true" />
         </button>
       </div>
@@ -67,22 +74,24 @@ export function SceneCategoryList({
                 >
                   <button
                     type="button"
+                    className="course-planner-icon-button course-planner-compact-icon-action"
                     aria-label={`Edit Scene Pack ${scenePack.title}`}
+                    title={`Edit Scene Pack ${scenePack.title}`}
                     disabled={!canMutate}
                     onClick={() => onEditScenePack(scenePack)}
                   >
                     <Pencil size={14} aria-hidden="true" />
-                    Edit
                   </button>
                   <ConfirmActionDialog
                     trigger={(
                       <button
                         type="button"
+                        className="course-planner-icon-button course-planner-compact-icon-action"
                         aria-label={`Archive Scene Pack ${scenePack.title}`}
+                        title={`Archive Scene Pack ${scenePack.title}`}
                         disabled={archiveDisabled}
                       >
                         <Archive size={14} aria-hidden="true" />
-                        Archive
                       </button>
                     )}
                     title="Archive Scene Pack"
@@ -95,11 +104,11 @@ export function SceneCategoryList({
                       <button
                         type="button"
                         aria-label={`Delete Scene Pack ${scenePack.title}`}
-                        className="course-planner-inline-action is-destructive"
+                        title={`Delete Scene Pack ${scenePack.title}`}
+                        className="course-planner-icon-button course-planner-compact-icon-action course-planner-inline-action is-destructive"
                         disabled={!canMutate}
                       >
                         <Trash2 size={14} aria-hidden="true" />
-                        Delete
                       </button>
                     )}
                     title="Delete Scene Pack"

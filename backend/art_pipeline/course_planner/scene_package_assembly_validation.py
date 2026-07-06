@@ -52,6 +52,16 @@ def validate_assembly_manifest(package: ChapterScenePackage) -> list[str]:
 
 
 def _empty_scene_reference_errors(package: ChapterScenePackage) -> list[str]:
+    if not package.assembly.empty_scene_image_id:
+        return ["Assembly manifest must reference an Empty Scene image."]
+    available_empty_scene_ids = {
+        image.id for image in package.empty_scene_images if image.status == "available"
+    }
+    if package.assembly.empty_scene_image_id not in available_empty_scene_ids:
+        return [
+            "Assembly manifest empty_scene_image_id references unknown or unavailable Empty Scene image: "
+            + package.assembly.empty_scene_image_id
+        ]
     if not package.assembly.placements:
         return []
     current_id = package.current_empty_scene_image_id
@@ -98,7 +108,7 @@ def _target_object_coverage_errors(package: ChapterScenePackage) -> list[str]:
     missing_targets = [
         target
         for target in package.target_objects
-        if target.id not in covered_target_ids
+        if _is_required_target(target) and target.id not in covered_target_ids
     ]
     if not missing_targets:
         return []
@@ -111,6 +121,10 @@ def _target_object_coverage_errors(package: ChapterScenePackage) -> list[str]:
         "Assembly manifest is missing required target object coverage: "
         + missing_target_summary
     ]
+
+
+def _is_required_target(target: TargetObjectItem) -> bool:
+    return target.priority in {"core", "required"}
 
 
 def _layer_order_errors(
