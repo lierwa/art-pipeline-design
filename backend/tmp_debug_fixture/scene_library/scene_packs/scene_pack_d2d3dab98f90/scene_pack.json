@@ -1,0 +1,11 @@
+{
+  "id": "scene_pack_d2d3dab98f90",
+  "title": "室内家庭篇",
+  "intent": "围绕家庭空间生成日常记忆场景。",
+  "notes": "保持儿童绘本风格。",
+  "status": "draft",
+  "chapter_ids": [
+    "chapter_f09147abef6d"
+  ],
+  "chapter_list_locked": false
+}

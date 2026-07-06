@@ -1,0 +1,17 @@
+
+> art-pipeline-v2-demo@0.1.0 dev:demo
+> node scripts/dev.mjs --demo
+
+[backend] py -3 -m uvicorn art_pipeline.api:app --reload --app-dir backend --host 127.0.0.1 --port 8766
+[frontend] C:\Program Files\nodejs\node.exe C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js --prefix frontend run dev -- --host 127.0.0.1 --port 5176
+[frontend] 
+[frontend] > art-pipeline-workbench-frontend@0.1.0 dev
+[frontend] > vite --host 127.0.0.1 --port 5176
+[frontend] 
+[frontend] Port 5176 is in use, trying another one...
+[frontend] 
+[frontend]   [32m[1mVITE[22m v5.4.21[39m  [2mready in [0m[1m467[22m[2m[0m ms[22m
+[frontend] 
+[frontend]   [32m➜[39m  [1mLocal[22m:   [36mhttp://127.0.0.1:[1m5177[22m/[39m
+[frontend] [2m16:33:38[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/features/coursePlanner/components/AssemblyTargetCoveragePanel.tsx[22m
+[frontend] [2m16:33:45[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/features/coursePlanner/components/assemblyEditorShell.css[22m

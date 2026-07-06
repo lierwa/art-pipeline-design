@@ -1,0 +1,155 @@
+{
+  "chapter_id": "chapter_96eb047029b6",
+  "current_empty_scene_image_id": "empty_scene_001",
+  "prompt": {
+    "prompt_text": "",
+    "scene_spatial_contract": "",
+    "updated_at": null
+  },
+  "prompt_confirmations": {
+    "avoid_objects_reviewed": false,
+    "style_reference_mode": "unreviewed"
+  },
+  "cast_assignments": [],
+  "reference_selections": [],
+  "target_objects": [],
+  "target_object_exemptions": [],
+  "avoid_objects": [],
+  "assembly": {
+    "schema_version": 1,
+    "empty_scene_image_id": "empty_scene_001",
+    "empty_scene_size": {
+      "width": 1254,
+      "height": 1254
+    },
+    "placements": [
+      {
+        "id": "placement_chapter_asset_001",
+        "asset_id": "chapter_asset_001",
+        "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+        "runtime_role": "target",
+        "transform": {
+          "cx": 0.2894736842105263,
+          "cy": 0.2914673046251994,
+          "w": 0.23444976076555024,
+          "h": 0.29106858054226475,
+          "rotation_deg": 0.0
+        },
+        "group_id": null,
+        "requires_placed": []
+      },
+      {
+        "id": "placement_chapter_asset_002",
+        "asset_id": "chapter_asset_002",
+        "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+        "runtime_role": "target",
+        "transform": {
+          "cx": 0.6236044657097288,
+          "cy": 0.363237639553429,
+          "w": 0.2966507177033493,
+          "h": 0.42822966507177035,
+          "rotation_deg": 0.0
+        },
+        "group_id": null,
+        "requires_placed": []
+      }
+    ],
+    "groups": [],
+    "layer_order": [
+      "placement_chapter_asset_002",
+      "placement_chapter_asset_001"
+    ],
+    "updated_at": "2026-07-06T16:11:40.321605+00:00"
+  },
+  "empty_scene_images": [
+    {
+      "original_filename": "c6d9f00b-308f-4d6e-ab3c-a3d4d626d424.png",
+      "storage_path": "empty_scene_images/empty_scene_001.png",
+      "media_type": "image/png",
+      "id": "empty_scene_001",
+      "width": 1254,
+      "height": 1254,
+      "status": "available",
+      "prompt_snapshot": "",
+      "reference_snapshot": {
+        "reference_image_ids": [],
+        "current_empty_scene_image_id": null,
+        "notes": ""
+      },
+      "created_at": "2026-07-04T16:31:31.747622+00:00"
+    }
+  ],
+  "complete_images": [
+    {
+      "original_filename": "cbb3ef37-a5c2-43e0-b142-915d113dbb8e.png",
+      "storage_path": "complete_images/complete_scene_001.png",
+      "media_type": "image/png",
+      "id": "complete_scene_001",
+      "width": 1254,
+      "height": 1254,
+      "empty_scene_image_id": null,
+      "status": "active",
+      "prompt_snapshot": "",
+      "reference_snapshot": {
+        "reference_image_ids": [],
+        "current_empty_scene_image_id": null,
+        "notes": ""
+      },
+      "generation_note": "",
+      "pipeline_run_id": "run_20260706161239784134_chapter_96eb047029b6_complete_scene_",
+      "pipeline_run_status": "uploaded",
+      "created_at": "2026-07-04T16:31:05.564486+00:00"
+    }
+  ],
+  "chapter_assets": [
+    {
+      "original_filename": "40764843-f70d-48dd-9d6a-8475a3fff53d.png",
+      "storage_path": "assets/chapter_asset_001.png",
+      "media_type": "image/png",
+      "id": "chapter_asset_001",
+      "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+      "lineage": {
+        "source_kind": "direct_upload",
+        "complete_scene_image_id": null,
+        "pipeline_run_id": null,
+        "run_asset_id": null
+      },
+      "linked_target_object_id": null,
+      "status": "available",
+      "created_at": "2026-07-04T16:35:11.067501+00:00"
+    },
+    {
+      "original_filename": "40764843-f70d-48dd-9d6a-8475a3fff53d.png",
+      "storage_path": "assets/chapter_asset_002.png",
+      "media_type": "image/png",
+      "id": "chapter_asset_002",
+      "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+      "lineage": {
+        "source_kind": "direct_upload",
+        "complete_scene_image_id": null,
+        "pipeline_run_id": null,
+        "run_asset_id": null
+      },
+      "linked_target_object_id": null,
+      "status": "available",
+      "created_at": "2026-07-05T11:07:23.387282+00:00"
+    },
+    {
+      "original_filename": "40764843-f70d-48dd-9d6a-8475a3fff53d.png",
+      "storage_path": "assets/chapter_asset_003.png",
+      "media_type": "image/png",
+      "id": "chapter_asset_003",
+      "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+      "lineage": {
+        "source_kind": "direct_upload",
+        "complete_scene_image_id": null,
+        "pipeline_run_id": null,
+        "run_asset_id": null
+      },
+      "linked_target_object_id": null,
+      "status": "removed",
+      "created_at": "2026-07-06T16:11:24.006914+00:00"
+    }
+  ],
+  "final_scene": null
+}

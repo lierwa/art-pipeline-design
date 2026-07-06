@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "empty_scene_image_id": "empty_scene_001",
+  "empty_scene_size": {
+    "width": 1254,
+    "height": 1254
+  },
+  "placements": [
+    {
+      "id": "placement_chapter_asset_001",
+      "asset_id": "chapter_asset_001",
+      "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+      "runtime_role": "target",
+      "transform": {
+        "cx": 0.2894736842105263,
+        "cy": 0.2914673046251994,
+        "w": 0.23444976076555024,
+        "h": 0.29106858054226475,
+        "rotation_deg": 0.0
+      },
+      "group_id": null,
+      "requires_placed": []
+    },
+    {
+      "id": "placement_chapter_asset_002",
+      "asset_id": "chapter_asset_002",
+      "display_name": "40764843-f70d-48dd-9d6a-8475a3fff53d",
+      "runtime_role": "target",
+      "transform": {
+        "cx": 0.6236044657097288,
+        "cy": 0.363237639553429,
+        "w": 0.2966507177033493,
+        "h": 0.42822966507177035,
+        "rotation_deg": 0.0
+      },
+      "group_id": null,
+      "requires_placed": []
+    }
+  ],
+  "groups": [],
+  "layer_order": [
+    "placement_chapter_asset_002",
+    "placement_chapter_asset_001"
+  ],
+  "updated_at": "2026-07-06T16:11:40.321605+00:00"
+}

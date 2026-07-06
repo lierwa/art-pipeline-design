@@ -1,0 +1,35 @@
+{
+  "id": "chapter_92705d23fe21",
+  "scene_pack_id": "scene_pack_b4bb24e8ddc2",
+  "title": "清洗苹果",
+  "summary": "团团发现苹果需要先洗干净。",
+  "seed": {
+    "scene_pack_id": "scene_pack_b4bb24e8ddc2",
+    "scene_pack_title": "室内家庭篇",
+    "chapter_id": "chapter_92705d23fe21",
+    "chapter_title": "清洗苹果",
+    "chapter_intent": "团团在厨房水槽前清洗苹果。",
+    "scene_domain": "厨房",
+    "daily_moment": "早餐前",
+    "event_seed": "团团发现苹果需要先洗干净。",
+    "spatial_seed": "水槽在前景，餐桌在后方，冰箱在左侧。",
+    "object_coverage_hint": [
+      "水槽",
+      "苹果",
+      "餐桌"
+    ],
+    "character_concept_hint": {
+      "cast_mode": "main_cast_and_supporting_cast",
+      "main_cast_hint": "团团作为主角猫",
+      "supporting_cast_hint": "阿布在背景记录",
+      "reference_asset_ids": [],
+      "constraints": [
+        "角色表情清楚",
+        "只使用猫咪主角团"
+      ]
+    },
+    "style_notes": "温暖厨房光线。"
+  },
+  "sort_order": 1,
+  "status": "draft"
+}

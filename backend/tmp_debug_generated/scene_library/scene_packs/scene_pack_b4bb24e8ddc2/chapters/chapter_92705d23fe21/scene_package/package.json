@@ -1,0 +1,82 @@
+{
+  "chapter_id": "chapter_92705d23fe21",
+  "current_empty_scene_image_id": "empty_scene_001",
+  "prompt": {
+    "prompt_text": "Low-shadow room scene.",
+    "scene_spatial_contract": "Bed against back wall, desk by window, floor kept clear.",
+    "updated_at": "2026-07-06T11:37:31.691994+00:00"
+  },
+  "prompt_confirmations": {
+    "avoid_objects_reviewed": true,
+    "style_reference_mode": "confirmed_empty"
+  },
+  "cast_assignments": [],
+  "reference_selections": [],
+  "target_objects": [
+    {
+      "id": "target_object_001",
+      "label": "book",
+      "description": "",
+      "priority": "required"
+    }
+  ],
+  "target_object_exemptions": [],
+  "avoid_objects": [
+    {
+      "id": "avoid_object_001",
+      "label": "shattered glass",
+      "description": ""
+    }
+  ],
+  "assembly": {
+    "schema_version": 1,
+    "empty_scene_image_id": null,
+    "empty_scene_size": null,
+    "placements": [],
+    "groups": [],
+    "layer_order": [],
+    "updated_at": null
+  },
+  "empty_scene_images": [
+    {
+      "original_filename": "empty.png",
+      "storage_path": "empty_scene_images/empty_scene_001.png",
+      "media_type": "image/png",
+      "id": "empty_scene_001",
+      "width": 72,
+      "height": 48,
+      "status": "available",
+      "prompt_snapshot": "Low-shadow room scene.\nBed against back wall, desk by window, floor kept clear.\nTarget objects: book\nAvoid objects: shattered glass",
+      "reference_snapshot": {
+        "reference_image_ids": [],
+        "current_empty_scene_image_id": null,
+        "notes": ""
+      },
+      "created_at": "2026-07-06T11:37:31.717145+00:00"
+    }
+  ],
+  "complete_images": [
+    {
+      "original_filename": "complete.png",
+      "storage_path": "complete_images/complete_scene_001.png",
+      "media_type": "image/png",
+      "id": "complete_scene_001",
+      "width": 96,
+      "height": 64,
+      "empty_scene_image_id": "empty_scene_001",
+      "status": "active",
+      "prompt_snapshot": "Low-shadow room scene.\nBed against back wall, desk by window, floor kept clear.\nTarget objects: book\nAvoid objects: shattered glass\nSelected empty scene image: empty_scene_001",
+      "reference_snapshot": {
+        "reference_image_ids": [],
+        "current_empty_scene_image_id": "empty_scene_001",
+        "notes": ""
+      },
+      "generation_note": "",
+      "pipeline_run_id": "run_current",
+      "pipeline_run_status": "succeeded",
+      "created_at": "2026-07-06T11:37:31.746977+00:00"
+    }
+  ],
+  "chapter_assets": [],
+  "final_scene": null
+}

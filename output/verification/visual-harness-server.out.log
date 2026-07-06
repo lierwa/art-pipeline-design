@@ -1,0 +1,4 @@
+Port 5197 is in use, trying another one...
+visual server http://127.0.0.1:5198
+http://127.0.0.1:5198/__course-planner-visual?view=chapter
+http://127.0.0.1:5198/__course-planner-visual?view=assembly

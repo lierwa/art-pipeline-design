@@ -1,0 +1,6 @@
+[backend] INFO:     Will watch for changes in these directories: ['D:\\work\\art-pipeline-v2-demo']
+[backend] INFO:     Uvicorn running on http://127.0.0.1:8766 (Press CTRL+C to quit)
+[backend] INFO:     Started reloader process [23296] using StatReload
+[backend] INFO:     Started server process [30932]
+[backend] INFO:     Waiting for application startup.
+[backend] INFO:     Application startup complete.
