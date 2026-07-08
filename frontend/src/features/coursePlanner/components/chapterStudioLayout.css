@@ -3,28 +3,45 @@
 }
 
 .chapter-workspace-page {
-  min-height: 100vh;
-  grid-template-rows: minmax(0, 1fr);
-  gap: 0;
-  padding: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  padding: 0.9rem;
   overflow: hidden;
   background:
     radial-gradient(circle at 55% 10%, rgb(20 54 72 / 0.26), transparent 32rem),
     linear-gradient(180deg, #07111a, #05080d 76%);
 }
 
+.chapter-workspace-route-body {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .chapter-workspace-page .chapter-scene-studio {
   width: 100%;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
   margin: 0;
-  grid-template-columns: 292px minmax(0, 1fr);
+  display: flex;
   gap: 0;
   border: 0;
   border-radius: 0;
   background: rgb(5 12 18 / 0.4);
 }
 
+.chapter-workspace-page .chapter-scene-studio__rail,
+.chapter-workspace-page .chapter-scene-studio__preparation,
+.chapter-workspace-page .chapter-scene-studio__media {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  overflow: hidden;
+}
+
 .chapter-workspace-page .chapter-studio-rail {
+  height: 100%;
+  overflow: auto;
   border-width: 0 1px 0 0;
   border-color: rgb(61 92 119 / 0.46);
   border-radius: 0;
@@ -33,32 +50,21 @@
 }
 
 .chapter-workspace-page .chapter-studio-main {
-  grid-template-columns: minmax(520px, 1.12fr) minmax(420px, 0.88fr);
+  min-width: 0;
+  grid-template-columns: minmax(360px, 0.8fr) minmax(460px, 1.2fr);
   gap: 0.82rem;
   align-content: start;
   padding: 1.55rem 1.6rem 1.75rem;
   overflow: auto;
 }
 
-.chapter-workspace-page .chapter-studio-main-heading {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-}
-
-.chapter-workspace-page .chapter-studio-main-heading h1 {
-  font-size: 1.56rem;
-}
-
-.chapter-workspace-page .chapter-studio-save-indicator {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 0.7rem;
-  border: 1px solid #2c7a4c;
-  border-radius: 999px;
-  color: #9df0b1;
-  font-size: 0.78rem;
-  font-weight: 780;
+.chapter-workspace-page .chapter-studio-column {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-content: start;
+  padding: 1.55rem 1.6rem 1.75rem;
+  overflow: auto;
 }
 
 .chapter-workspace-page .chapter-studio-panel {
@@ -79,8 +85,8 @@
 .chapter-final-body {
   min-width: 0;
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 0.82rem;
   align-items: center;
 }
 
@@ -114,8 +120,7 @@
     overflow: auto;
   }
 
-  .chapter-workspace-page .chapter-scene-studio,
-  .chapter-workspace-page .chapter-studio-main {
-    grid-template-columns: 1fr;
+  .chapter-workspace-page .chapter-scene-studio {
+    overflow-x: auto;
   }
 }

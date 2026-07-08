@@ -371,6 +371,7 @@ describe("App flow 02", () => {
       );
       expect(screen.getByRole("region", { name: /edit region 1 box/i })).toBeInTheDocument();
       expect(screen.getByTestId("resize-handle-element_001-se")).toBeInTheDocument();
+      expect(screen.queryByTestId("rotate-handle-element_001")).not.toBeInTheDocument();
     } finally {
       restoreFetch();
     }

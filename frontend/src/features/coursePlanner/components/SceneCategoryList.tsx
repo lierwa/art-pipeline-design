@@ -1,6 +1,6 @@
 import { Archive, Pencil, Plus, Trash2 } from "lucide-react";
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
-import { InlineItemActions } from "./CoursePlannerChrome";
+import { CoursePlannerIconButton, InlineItemActions } from "./CoursePlannerChrome";
 import type { ScenePack } from "../types";
 
 type SceneCategoryListProps = {
@@ -31,16 +31,13 @@ export function SceneCategoryList({
           <h2>Scene Packs</h2>
           <p>{scenePacks.length > 0 ? "选择一个 Scene Pack 来生成和整理 Chapter。" : "先创建 Scene Pack。"}</p>
         </div>
-        <button
-          type="button"
-          className="course-planner-icon-button course-planner-compact-icon-action"
-          aria-label="Add Scene Pack"
-          title="Add Scene Pack"
+        <CoursePlannerIconButton
+          ariaLabel="Add Scene Pack"
           disabled={isBusy}
           onClick={onCreateScenePack}
         >
           <Plus size={16} aria-hidden="true" />
-        </button>
+        </CoursePlannerIconButton>
       </div>
 
       <nav className="scene-category-list" aria-label="Scene Pack list">
@@ -70,29 +67,23 @@ export function SceneCategoryList({
                   <span className="scene-pack-card__meta">{metaText}</span>
                 </button>
                 <InlineItemActions
-                  ariaLabel={`Scene Pack actions for ${scenePack.title}`}
+                  ariaLabel="Scene Pack actions"
                 >
-                  <button
-                    type="button"
-                    className="course-planner-icon-button course-planner-compact-icon-action"
-                    aria-label={`Edit Scene Pack ${scenePack.title}`}
-                    title={`Edit Scene Pack ${scenePack.title}`}
+                  <CoursePlannerIconButton
+                    ariaLabel={`Edit Scene Pack ${scenePack.title}`}
                     disabled={!canMutate}
                     onClick={() => onEditScenePack(scenePack)}
                   >
                     <Pencil size={14} aria-hidden="true" />
-                  </button>
+                  </CoursePlannerIconButton>
                   <ConfirmActionDialog
                     trigger={(
-                      <button
-                        type="button"
-                        className="course-planner-icon-button course-planner-compact-icon-action"
-                        aria-label={`Archive Scene Pack ${scenePack.title}`}
-                        title={`Archive Scene Pack ${scenePack.title}`}
+                      <CoursePlannerIconButton
+                        ariaLabel={`Archive Scene Pack ${scenePack.title}`}
                         disabled={archiveDisabled}
                       >
                         <Archive size={14} aria-hidden="true" />
-                      </button>
+                      </CoursePlannerIconButton>
                     )}
                     title="Archive Scene Pack"
                     description="Archive this Scene Pack and keep its files available for later review."
@@ -101,15 +92,13 @@ export function SceneCategoryList({
                   />
                   <ConfirmActionDialog
                     trigger={(
-                      <button
-                        type="button"
-                        aria-label={`Delete Scene Pack ${scenePack.title}`}
-                        title={`Delete Scene Pack ${scenePack.title}`}
-                        className="course-planner-icon-button course-planner-compact-icon-action course-planner-inline-action is-destructive"
+                      <CoursePlannerIconButton
+                        ariaLabel={`Delete Scene Pack ${scenePack.title}`}
+                        className="course-planner-inline-action is-destructive"
                         disabled={!canMutate}
                       >
                         <Trash2 size={14} aria-hidden="true" />
-                      </button>
+                      </CoursePlannerIconButton>
                     )}
                     title="Delete Scene Pack"
                     description="Remove this Scene Pack from the active list. Existing files stay in the scene library."

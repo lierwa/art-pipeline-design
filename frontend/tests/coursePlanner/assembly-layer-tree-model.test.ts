@@ -19,6 +19,7 @@ import {
   type AssemblyManifestDraft,
 } from "../../src/features/coursePlanner/assembly/assemblyManifestDraft";
 import {
+  buildLayerDropTargets,
   buildLayerTreeData,
   createMovedLayerDraft,
 } from "../../src/features/coursePlanner/components/assemblyLayerTreeModel";
@@ -26,73 +27,6 @@ import {
   sceneAsset,
   studioScenePackageFixture,
 } from "./chapterWorkspaceFixtures";
-
-vi.mock("react-arborist", async () => {
-  const ReactModule = await import("react");
-
-  const Tree = ReactModule.forwardRef(function Tree({
-    children,
-    data,
-    onMove,
-  }: {
-    children: (props: {
-      dragHandle: React.Ref<HTMLDivElement>;
-      node: {
-        data: { id: string; children?: unknown[] };
-        isDragging: boolean;
-        willReceiveDrop: boolean;
-        isInternal: boolean;
-        isOpen: boolean;
-        level: number;
-        toggle: () => void;
-      };
-      style: React.CSSProperties;
-    }) => React.ReactNode;
-    data: Array<{ id: string; children?: unknown[] }>;
-    onMove?: (args: { dragIds: string[]; parentId: string | null; index: number }) => void;
-  }, ref: React.Ref<{ scrollTo: (id: string) => void }>) {
-    ReactModule.useImperativeHandle(ref, () => ({ scrollTo: () => undefined }));
-
-    const renderNode = (nodeData: { id: string; children?: unknown[] }, level: number): React.ReactNode => (
-      ReactModule.createElement(
-        "div",
-        { key: nodeData.id, "data-testid": `mock-tree-row-${nodeData.id}` },
-        children({
-          dragHandle: () => undefined,
-          node: {
-            data: nodeData,
-            isDragging: false,
-            willReceiveDrop: false,
-            isInternal: (nodeData.children ?? []).length > 0,
-            isOpen: true,
-            level,
-            toggle: () => undefined,
-          },
-          style: {},
-        }),
-        (nodeData.children ?? []).map((child) => renderNode(child as { id: string; children?: unknown[] }, level + 1)),
-      )
-    );
-
-    return ReactModule.createElement(
-      "div",
-      { role: "tree", "aria-label": "Placement layer order" },
-      data.map((node) => renderNode(node, 0)),
-      ReactModule.createElement("button", {
-        type: "button",
-        "aria-label": "move cup into group",
-        onClick: () => onMove?.({ dragIds: ["placement_chapter_asset_cup"], parentId: "group_1", index: 1 }),
-      }),
-      ReactModule.createElement("button", {
-        type: "button",
-        "aria-label": "move group into group",
-        onClick: () => onMove?.({ dragIds: ["group_1"], parentId: "group_2", index: 0 }),
-      }),
-    );
-  });
-
-  return { Tree };
-});
 
 import { AssemblyLayerTree } from "../../src/features/coursePlanner/components/AssemblyLayerTree";
 
@@ -156,6 +90,94 @@ describe("assemblyLayerTreeModel", () => {
     expect(movedDraft?.layer_order).toEqual([
       "placement_chapter_asset_cloth",
       "placement_chapter_asset_cup",
+      "placement_bowl",
+    ]);
+  });
+
+  it("moves an ungrouped root placement into the last group position when dropped on group end", () => {
+    const draft = breakfastGroupDraft();
+    const treeData = buildLayerTreeData(draft);
+
+    const movedDraft = createMovedLayerDraft(draft, treeData, {
+      dragIds: ["placement_chapter_asset_cup"],
+      parentId: "group_1",
+      index: 2,
+    });
+
+    expect(movedDraft?.groups[0]?.placement_ids).toEqual([
+      "placement_chapter_asset_cloth",
+      "placement_bowl",
+      "placement_chapter_asset_cup",
+    ]);
+    expect(movedDraft?.placements.find((placement) => placement.id === "placement_chapter_asset_cup")?.group_id).toBe("group_1");
+    expect(movedDraft?.layer_order).toEqual([
+      "placement_chapter_asset_cloth",
+      "placement_bowl",
+      "placement_chapter_asset_cup",
+    ]);
+  });
+
+  it("projects explicit root and group drop targets around an expanded group", () => {
+    const draft = breakfastGroupDraft();
+    const treeData = buildLayerTreeData(draft);
+
+    expect(buildLayerDropTargets(treeData).map((target) => ({
+      id: target.id,
+      parentId: target.parentId,
+      index: target.index,
+      kind: target.kind,
+    }))).toEqual([
+      { id: "root-before-placement_chapter_asset_cup", parentId: null, index: 0, kind: "root" },
+      { id: "root-before-group_1", parentId: null, index: 1, kind: "root" },
+      { id: "group-group_1-before-placement_chapter_asset_cloth", parentId: "group_1", index: 0, kind: "group-child" },
+      { id: "group-group_1-before-placement_bowl", parentId: "group_1", index: 1, kind: "group-child" },
+      { id: "group-group_1-end", parentId: "group_1", index: 2, kind: "group-child" },
+      { id: "root-end", parentId: null, index: 2, kind: "root" },
+    ]);
+  });
+
+  it("moves a group child back to root and dissolves the group if it becomes degenerate", () => {
+    const draft = breakfastGroupDraft();
+    const treeData = buildLayerTreeData(draft);
+
+    const movedDraft = createMovedLayerDraft(draft, treeData, {
+      dragIds: ["placement_bowl"],
+      parentId: "__REACT_ARBORIST_INTERNAL_ROOT__",
+      index: 1,
+    });
+
+    expect(movedDraft?.groups).toEqual([]);
+    expect(movedDraft?.placements.map((placement) => ({ id: placement.id, group_id: placement.group_id }))).toEqual([
+      { id: "placement_bowl", group_id: null },
+      { id: "placement_chapter_asset_cloth", group_id: null },
+      { id: "placement_chapter_asset_cup", group_id: null },
+    ]);
+    expect(movedDraft?.layer_order).toEqual([
+      "placement_chapter_asset_cup",
+      "placement_bowl",
+      "placement_chapter_asset_cloth",
+    ]);
+  });
+
+  it("moves a group child to root when dropped on the root target after the expanded group", () => {
+    const draft = breakfastGroupDraft();
+    const treeData = buildLayerTreeData(draft);
+
+    const movedDraft = createMovedLayerDraft(draft, treeData, {
+      dragIds: ["placement_bowl"],
+      parentId: null,
+      index: 2,
+    });
+
+    expect(movedDraft?.groups).toEqual([]);
+    expect(movedDraft?.placements.map((placement) => ({ id: placement.id, group_id: placement.group_id }))).toEqual([
+      { id: "placement_bowl", group_id: null },
+      { id: "placement_chapter_asset_cloth", group_id: null },
+      { id: "placement_chapter_asset_cup", group_id: null },
+    ]);
+    expect(movedDraft?.layer_order).toEqual([
+      "placement_chapter_asset_cup",
+      "placement_chapter_asset_cloth",
       "placement_bowl",
     ]);
   });
@@ -242,6 +264,7 @@ describe("assemblyLayerTreeModel", () => {
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth Target/i })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl Target/i })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Milk cup Target/i })).toBeInTheDocument();
+    expect(within(layerTree).getByLabelText("Drop into Breakfast props at end")).toBeInTheDocument();
   });
 
   it("uses live AssemblyLayerTree selection reducer for toggle and shift range", () => {
@@ -302,41 +325,6 @@ describe("assemblyLayerTreeModel", () => {
     ]);
   });
 
-  it("uses live AssemblyLayerTree move model for group insert and rejects nested groups", () => {
-    const scenePackage = scenePackageWithAssets([
-      sceneAsset("chapter_asset_cloth", "Cleanup cloth", "cloth.png", { linkedTargetObjectId: "target_object_cloth" }),
-      sceneAsset("chapter_asset_cup", "Milk cup", "cup.png"),
-      sceneAsset("chapter_asset_spoon", "Soup spoon", "spoon.png"),
-    ]);
-    const draft = twoGroupDraft(scenePackage);
-    const onDraftChange = vi.fn();
-
-    const { rerender } = renderAssemblyLayerTree({ draft, onDraftChange, scenePackage });
-
-    fireEvent.click(screen.getByRole("button", { name: "move cup into group" }));
-    expect(onDraftChange).not.toHaveBeenCalled();
-
-    const withUngroupedCup = breakfastGroupDraft(scenePackage);
-    onDraftChange.mockClear();
-    rerender(React.createElement(AssemblyLayerTree, {
-      draft: withUngroupedCup,
-      onDraftChange,
-      onSelectNodeIds: vi.fn(),
-      onSelectPlacement: vi.fn(),
-      scenePackage,
-      selectedNodeIds: [],
-      selectedPlacementId: null,
-    }));
-
-    fireEvent.click(screen.getByRole("button", { name: "move cup into group" }));
-    const movedDraft = onDraftChange.mock.calls[0]?.[0] as AssemblyManifestDraft;
-
-    expect(movedDraft.groups[0]?.placement_ids).toEqual([
-      "placement_chapter_asset_cloth",
-      "placement_chapter_asset_cup",
-      "placement_bowl",
-    ]);
-  });
 });
 
 function renderAssemblyLayerTree({

@@ -10,6 +10,7 @@ import type { CanvasObjectView } from "../canvasObjects";
 
 type CanvasBoxEditLayerProps = {
   canvasObjects: CanvasObjectView[];
+  canRotateObjects: boolean;
   editingElementId: string | null;
   hasUnsavedBoxEdit: boolean;
   source: SourceMetadata;
@@ -19,6 +20,7 @@ type CanvasBoxEditLayerProps = {
     object: CanvasObjectView,
     handle: ResizeHandle,
   ) => void;
+  onBeginBoxRotate: (event: PointerEvent<HTMLButtonElement>, object: CanvasObjectView) => void;
   onCancelBoxEdit: () => void;
   onConfirmBoxEdit: () => void;
   onEditKeyDown: (event: KeyboardEvent<HTMLDivElement>, object: CanvasObjectView) => void;
@@ -35,11 +37,13 @@ type CanvasBoxEditLayerProps = {
 
 export function CanvasBoxEditLayer({
   canvasObjects,
+  canRotateObjects,
   editingElementId,
   hasUnsavedBoxEdit,
   source,
   onBeginBoxMove,
   onBeginBoxResize,
+  onBeginBoxRotate,
   onCancelBoxEdit,
   onConfirmBoxEdit,
   onEditKeyDown,
@@ -98,6 +102,20 @@ export function CanvasBoxEditLayer({
                   onPointerCancel={onEndBoxEdit}
                 />
               ))}
+              {canRotateObjects ? (
+                <button
+                  type="button"
+                  aria-label={`Rotate ${object.displayName} placement`}
+                  className="rotate-handle"
+                  data-element-id={object.id}
+                  data-rotate-handle="true"
+                  data-testid={`rotate-handle-${object.id}`}
+                  onPointerDown={(event) => onBeginBoxRotate(event, object)}
+                  onPointerMove={onUpdateBoxEdit}
+                  onPointerUp={onEndBoxEdit}
+                  onPointerCancel={onEndBoxEdit}
+                />
+              ) : null}
             </div>
             {hasUnsavedBoxEdit ? (
               <div

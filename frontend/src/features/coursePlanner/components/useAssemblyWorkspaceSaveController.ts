@@ -167,10 +167,16 @@ export function preserveAssemblySelection(
   selection: AssemblySelectionSnapshot,
 ): AssemblySelectionSnapshot {
   const placementIds = new Set(draft.placements.map((placement) => placement.id));
-  const selectedLayerNodeIds = selection.selectedLayerNodeIds.filter((nodeId) => placementIds.has(nodeId));
+  const groupIds = new Set(draft.groups.map((group) => group.id));
+  // WHY: layer tree selection can point at either placements or one-level groups.
+  // Save echoes rebuild the draft from the server response, so pruning against placements only
+  // turns a valid selected group into "No selection" immediately after autosave.
+  const selectedLayerNodeIds = selection.selectedLayerNodeIds.filter((nodeId) => (
+    placementIds.has(nodeId) || groupIds.has(nodeId)
+  ));
   const selectedPlacementId = selection.selectedPlacementId && placementIds.has(selection.selectedPlacementId)
     ? selection.selectedPlacementId
-    : selectedLayerNodeIds[0] ?? null;
+    : selectedLayerNodeIds.find((nodeId) => placementIds.has(nodeId)) ?? null;
 
   return {
     selectedPlacementId,

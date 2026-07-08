@@ -19,7 +19,7 @@ import type {
 import { buildAssemblyReadiness } from "../assembly/assemblyReadiness";
 import { exportAssemblyPreviewFile } from "../assembly/assemblyExport";
 import { CompleteSceneImagesPanel } from "./CompleteSceneImagesPanel";
-import { CoursePlannerDrawer, CoursePlannerStatusBadge } from "./CoursePlannerChrome";
+import { CoursePlannerDrawer, CoursePlannerResizableColumns } from "./CoursePlannerChrome";
 import { EmptySceneImagesPanel } from "./EmptySceneImagesPanel";
 import { FinalScenePanel } from "./FinalScenePanel";
 import { CharacterBindingPanel, LibrarySelectionPanel, ReferenceImagesPanel } from "./LibrarySelectionPanel";
@@ -53,7 +53,6 @@ type StudioStep = {
 type LibraryDrawerKey = "character" | "reference";
 
 export function ChapterSceneStudio({
-  asyncStatus,
   chapter,
   characterIps,
   referenceImages,
@@ -73,7 +72,6 @@ export function ChapterSceneStudio({
   const [activeLibraryDrawer, setActiveLibraryDrawer] = useState<LibraryDrawerKey | null>(null);
   const libraryDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const assemblyReadiness = useMemo(() => buildAssemblyReadiness(localScenePackage), [localScenePackage]);
-  const pendingCount = Object.values(asyncStatus).filter((status) => status?.status === "pending").length;
   const steps = useMemo(
     () => buildStudioSteps(localScenePackage, assemblyReadiness.is_ready),
     [assemblyReadiness.is_ready, localScenePackage],
@@ -130,31 +128,62 @@ export function ChapterSceneStudio({
 
   return (
     <>
-      <div className="chapter-scene-studio">
-        <StudioProgressRail steps={steps} />
-        <ChapterStudioMain
-          activeLibraryDrawer={activeLibraryDrawer}
-          assemblyReadiness={assemblyReadiness}
-          chapter={chapter}
-          characterIps={characterIps}
-          localScenePackage={localScenePackage}
-          onAssignCharacterIp={onAssignCharacterIp}
-          onCloseLibraryDrawer={closeLibraryDrawer}
-          onDeleteCompleteSceneImage={handleDeleteCompleteSceneImage}
-          onImportCompleteImage={onImportCompleteImage}
-          onLockFinal={handleLockFinal}
-          onOpenCharacterBindingDrawer={openCharacterBindingDrawer}
-          onOpenReferenceImagesDrawer={openReferenceImagesDrawer}
-          onSelectEmptySceneImage={handleSelectEmptySceneImage}
-          onSelectReferenceImage={onSelectReferenceImage}
-          onUpdatePrompt={onUpdatePrompt}
-          onUploadCompleteSceneImage={onUploadCompleteSceneImage}
-          onUploadEmptySceneImage={onUploadEmptySceneImage}
-          onUploadReferenceImage={onUploadReferenceImage}
-          pendingCount={pendingCount}
-          referenceImages={referenceImages}
-        />
-      </div>
+      <CoursePlannerResizableColumns
+        ariaLabel="Chapter Scene Studio columns"
+        className="chapter-scene-studio"
+        groupId="chapter-scene-studio-layout"
+        storageKey="course-planner:chapter-scene-studio-layout"
+        left={{
+          id: "studio-progress",
+          defaultSize: "19%",
+          minSize: "260px",
+          maxSize: "380px",
+          className: "chapter-scene-studio__rail",
+          children: <StudioProgressRail steps={steps} />,
+        }}
+        center={{
+          id: "chapter-preparation",
+          defaultSize: "39%",
+          minSize: "430px",
+          className: "chapter-scene-studio__preparation",
+          children: (
+            <ChapterPreparationColumn
+              activeLibraryDrawer={activeLibraryDrawer}
+              assemblyReadiness={assemblyReadiness}
+              chapter={chapter}
+              characterIps={characterIps}
+              localScenePackage={localScenePackage}
+              onAssignCharacterIp={onAssignCharacterIp}
+              onCloseLibraryDrawer={closeLibraryDrawer}
+              onOpenCharacterBindingDrawer={openCharacterBindingDrawer}
+              onOpenReferenceImagesDrawer={openReferenceImagesDrawer}
+              onSelectReferenceImage={onSelectReferenceImage}
+              onUpdatePrompt={onUpdatePrompt}
+              onUploadReferenceImage={onUploadReferenceImage}
+              referenceImages={referenceImages}
+            />
+          ),
+        }}
+        right={{
+          id: "chapter-media",
+          defaultSize: "42%",
+          minSize: "520px",
+          maxSize: "760px",
+          className: "chapter-scene-studio__media",
+          children: (
+            <ChapterMediaColumn
+              assemblyReadiness={assemblyReadiness}
+              localScenePackage={localScenePackage}
+              onDeleteCompleteSceneImage={handleDeleteCompleteSceneImage}
+              onImportCompleteImage={onImportCompleteImage}
+              onLockFinal={handleLockFinal}
+              onSelectEmptySceneImage={handleSelectEmptySceneImage}
+              onUploadCompleteSceneImage={onUploadCompleteSceneImage}
+              onUploadEmptySceneImage={onUploadEmptySceneImage}
+            />
+          ),
+        }}
+      />
     </>
   );
 }
@@ -181,99 +210,6 @@ function StudioProgressRail({
           ))}
       </ol>
     </aside>
-  );
-}
-
-function ChapterStudioMain({
-  activeLibraryDrawer,
-  assemblyReadiness,
-  chapter,
-  characterIps,
-  localScenePackage,
-  onAssignCharacterIp,
-  onCloseLibraryDrawer,
-  onDeleteCompleteSceneImage,
-  onImportCompleteImage,
-  onLockFinal,
-  onOpenCharacterBindingDrawer,
-  onOpenReferenceImagesDrawer,
-  onSelectEmptySceneImage,
-  onSelectReferenceImage,
-  onUpdatePrompt,
-  onUploadCompleteSceneImage,
-  onUploadEmptySceneImage,
-  onUploadReferenceImage,
-  pendingCount,
-  referenceImages,
-}: {
-  activeLibraryDrawer: LibraryDrawerKey | null;
-  assemblyReadiness: ReturnType<typeof buildAssemblyReadiness>;
-  chapter: Chapter;
-  characterIps: CharacterIpProfile[];
-  localScenePackage: ChapterScenePackage;
-  onAssignCharacterIp: ChapterSceneStudioProps["onAssignCharacterIp"];
-  onCloseLibraryDrawer: () => void;
-  onDeleteCompleteSceneImage: ChapterSceneStudioProps["onDeleteCompleteSceneImage"];
-  onImportCompleteImage: ChapterSceneStudioProps["onImportCompleteImage"];
-  onLockFinal: () => Promise<ChapterScenePackage | null>;
-  onOpenCharacterBindingDrawer: (trigger: HTMLButtonElement) => void;
-  onOpenReferenceImagesDrawer: (trigger: HTMLButtonElement) => void;
-  onSelectEmptySceneImage: ChapterSceneStudioProps["onSelectEmptySceneImage"];
-  onSelectReferenceImage: ChapterSceneStudioProps["onSelectReferenceImage"];
-  onUpdatePrompt: ChapterSceneStudioProps["onUpdatePrompt"];
-  onUploadCompleteSceneImage: ChapterSceneStudioProps["onUploadCompleteSceneImage"];
-  onUploadEmptySceneImage: ChapterSceneStudioProps["onUploadEmptySceneImage"];
-  onUploadReferenceImage: ChapterSceneStudioProps["onUploadReferenceImage"];
-  pendingCount: number;
-  referenceImages: ReferenceLibraryImage[];
-}) {
-  return (
-    <div className="chapter-studio-main">
-      <ChapterStudioTitle chapter={chapter} pendingCount={pendingCount} />
-      <ChapterPreparationColumn
-        activeLibraryDrawer={activeLibraryDrawer}
-        assemblyReadiness={assemblyReadiness}
-        chapter={chapter}
-        characterIps={characterIps}
-        localScenePackage={localScenePackage}
-        onAssignCharacterIp={onAssignCharacterIp}
-        onCloseLibraryDrawer={onCloseLibraryDrawer}
-        onOpenCharacterBindingDrawer={onOpenCharacterBindingDrawer}
-        onOpenReferenceImagesDrawer={onOpenReferenceImagesDrawer}
-        onSelectReferenceImage={onSelectReferenceImage}
-        onUpdatePrompt={onUpdatePrompt}
-        onUploadReferenceImage={onUploadReferenceImage}
-        referenceImages={referenceImages}
-      />
-      <ChapterMediaColumn
-        assemblyReadiness={assemblyReadiness}
-        localScenePackage={localScenePackage}
-        onDeleteCompleteSceneImage={onDeleteCompleteSceneImage}
-        onImportCompleteImage={onImportCompleteImage}
-        onLockFinal={onLockFinal}
-        onSelectEmptySceneImage={onSelectEmptySceneImage}
-        onUploadCompleteSceneImage={onUploadCompleteSceneImage}
-        onUploadEmptySceneImage={onUploadEmptySceneImage}
-      />
-    </div>
-  );
-}
-
-function ChapterStudioTitle({
-  chapter,
-  pendingCount,
-}: {
-  chapter: Chapter;
-  pendingCount: number;
-}) {
-  return (
-    <header className="chapter-studio-main-heading">
-      <div>
-        <h1>{chapter.title}</h1>
-        <span>{chapter.summary}</span>
-      </div>
-      <span className="chapter-studio-save-indicator">{pendingCount > 0 ? "Syncing" : "Saved"}</span>
-    </header>
   );
 }
 
@@ -456,7 +392,6 @@ function ChapterAssemblySummary({
           <p>{assemblyReadiness.is_ready ? "Ready" : "Needs review"}</p>
         </div>
         <div className="chapter-assembly-summary-actions">
-          <CoursePlannerStatusBadge tone="success">Saved</CoursePlannerStatusBadge>
           {/* WHY: Chapter 是准备和状态聚合页；摆放编辑器有独立路由。
               这里只保留 Assembly 摘要和入口，避免把高频 canvas 工作台塞回 Chapter。 */}
           <Link

@@ -5,11 +5,19 @@
 .chapter-assembly-editor-page {
   min-height: 0;
   height: 100%;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0;
   padding: 0;
   overflow: hidden;
   background: #05080d;
+}
+
+.chapter-assembly-route-body {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.chapter-assembly-editor-page--loaded > .chapter-assembly-route-body {
+  grid-row: 1 / -1;
 }
 
 .assembly-product-shell {
@@ -24,6 +32,10 @@
   border-radius: 0;
   background: #05080d;
   color: var(--course-text);
+}
+
+.chapter-assembly-route-body > .assembly-product-shell {
+  grid-row: 1 / -1;
 }
 
 .assembly-workspace-feedback {
@@ -49,24 +61,6 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.assembly-editor-topbar-back {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #224157;
-  border-radius: 8px;
-  background: #081725;
-  color: #c6e8ff;
-  text-decoration: none;
-}
-
-.assembly-editor-topbar-back:hover {
-  border-color: #1a879c;
-  color: #f5fbff;
 }
 
 .assembly-editor-topbar-labels {
@@ -146,13 +140,23 @@
 .assembly-product-shell .assembly-editor-layout {
   display: flex;
   gap: 0;
-  padding: 0.9rem;
+  padding: 0;
   overflow: hidden;
 }
 
 .assembly-product-shell .assembly-editor-assets-column,
 .assembly-product-shell .assembly-editor-canvas-column,
 .assembly-product-shell .assembly-editor-inspector-column {
+  height: 100%;
+}
+
+.assembly-product-shell .assembly-editor-assets-column {
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+  overflow: hidden;
+}
+
+.assembly-product-shell .assembly-editor-assets-column > .assembly-asset-pool-panel {
   height: 100%;
 }
 
@@ -180,7 +184,7 @@
 .assembly-editor-statusbar {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(190px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(190px, 320px) minmax(0, 1fr) minmax(180px, 320px);
   align-items: center;
   gap: 1rem;
   padding: 0 1rem;
@@ -190,7 +194,8 @@
 }
 
 .assembly-editor-statusbar-save,
-.assembly-editor-statusbar-metrics {
+.assembly-editor-statusbar-metrics,
+.assembly-editor-statusbar-context {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -206,7 +211,15 @@
   justify-content: center;
 }
 
-.assembly-editor-statusbar-metrics span {
+.assembly-editor-statusbar-context {
+  gap: 0.9rem;
+  justify-content: flex-end;
+}
+
+.assembly-editor-statusbar-metrics span,
+.assembly-editor-statusbar-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -216,7 +229,7 @@
 }
 
 .assembly-product-shell .assembly-editor-inspector-column {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: clamp(320px, 38%, 440px) minmax(0, 1fr);
   align-content: stretch;
   overflow: hidden;
 }
@@ -235,9 +248,9 @@
 .assembly-product-shell .assembly-editor-stage {
   overflow: hidden;
   padding: 0;
-  border: 1px solid #202b39;
-  border-radius: 8px;
-  background: #0f1721;
+  border: 0;
+  border-radius: 0;
+  background: #080e16;
 }
 
 .assembly-product-shell .assembly-canvas-toolbar {
@@ -271,6 +284,6 @@
 
 @media (max-width: 1280px) {
   .assembly-product-shell .assembly-editor-layout {
-    padding: 0.72rem;
+    padding: 0;
   }
 }

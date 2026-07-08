@@ -47,13 +47,18 @@ describe("Scene Category Board", () => {
       expect(screen.queryByText(/Selected pack/i)).not.toBeInTheDocument();
       expect(screen.getAllByRole("region", { name: "Chapter list" })).toHaveLength(1);
       const packItem = screen.getByRole("group", { name: /Scene Pack 室内家庭篇/s });
-      expect(within(packItem).getByRole("group", { name: "Scene Pack actions for 室内家庭篇" })).toBeInTheDocument();
-      expect(within(packItem).getByRole("button", { name: /Edit/i })).toHaveClass("course-planner-icon-button");
-      expect(within(packItem).getByRole("button", { name: /Archive/i })).toHaveClass("course-planner-icon-button");
-      expect(within(packItem).getByRole("button", { name: /Delete/i })).toHaveClass("course-planner-icon-button");
+      const packActions = within(packItem).getByRole("group", { name: "Scene Pack actions" });
+      expect(within(packActions).getByRole("button", { name: /Edit Scene Pack/i })).toHaveClass("course-planner-icon-button");
+      expect(within(packActions).getByRole("button", { name: /Archive Scene Pack/i })).toHaveClass("course-planner-icon-button");
+      expect(within(packActions).getByRole("button", { name: /Delete Scene Pack/i })).toHaveClass("course-planner-icon-button");
       expect(within(packItem).queryByText(/^Edit$/)).not.toBeInTheDocument();
       expect(within(packItem).queryByText(/^Archive$/)).not.toBeInTheDocument();
-      expect(within(packItem).queryByText(/^Delete$/)).not.toBeInTheDocument();
+      expect(within(packActions).queryByText(/^Delete$/)).not.toBeInTheDocument();
+      const chapterList = screen.getByRole("region", { name: "Chapter list" });
+      const chapterItem = within(chapterList).getByRole("listitem");
+      expect(within(chapterItem).getByRole("link", { name: /Open Designer/i })).toBeInTheDocument();
+      expect(within(chapterItem).queryByText(/^Open Designer$/)).not.toBeInTheDocument();
+      expect(within(chapterItem).getByRole("button", { name: /Delete Chapter/i })).toHaveClass("course-planner-icon-button");
       expect(pageHeader?.parentElement).toHaveClass("scene-category-board-page__header");
     } finally {
       restoreFetch();

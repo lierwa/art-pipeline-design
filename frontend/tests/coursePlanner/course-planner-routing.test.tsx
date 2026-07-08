@@ -126,14 +126,15 @@ describe("Course Planner route navigation", () => {
       window.history.pushState({}, "", "/course-planner/chapters/chapter_breakfast_kitchen/assembly");
       render(<App />);
 
-      const banner = await screen.findByRole("banner");
+      const banner = await screen.findByRole("banner", { name: /course planner/i });
       expect(within(banner).getByRole("heading", { name: "Course Planner" })).toBeInTheDocument();
       const workspace = await screen.findByRole("main");
-      expect(await within(workspace).findByText("Loading")).toBeInTheDocument();
       expect(within(workspace).getByRole("link", { name: "Back to Chapter" })).toHaveAttribute(
         "href",
         "/course-planner/chapters/chapter_breakfast_kitchen",
       );
+      expect(await within(workspace).findByRole("status", { name: /loading/i })).toBeInTheDocument();
+      expect(within(workspace).queryByText(/^Loading$/)?.closest(".course-planner-page-header__actions")).toBeTruthy();
       expect(within(workspace).getByText("Assembly")).toBeInTheDocument();
       expect(within(workspace).getByText("早餐厨房")).toBeInTheDocument();
     } finally {

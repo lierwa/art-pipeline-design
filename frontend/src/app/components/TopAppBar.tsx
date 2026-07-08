@@ -75,7 +75,7 @@ export function TopAppBar({
     && onDeleteRun;
 
   return (
-    <header className="top-app-bar">
+    <header className="top-app-bar" aria-label={title}>
       <div className="brand-lockup">
         <div className="brand-mark" aria-hidden="true" />
         <div>

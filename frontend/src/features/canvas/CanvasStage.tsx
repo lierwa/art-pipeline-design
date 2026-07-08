@@ -12,7 +12,7 @@ import {
   type WorkspaceElement,
 } from "../../domain/workspace";
 import { CanvasArtboard, type CanvasHitTestStrategy } from "./CanvasArtboard";
-import { workspaceElementToCanvasObject } from "./canvasObjectAdapters";
+import { workspaceElementToCanvasObject } from "../canvasObjectAdapters";
 import {
   FOCUS_PAN_THRESHOLD,
   type DrawingEvent,
@@ -27,6 +27,7 @@ import {
   type CanvasObjectView,
   type CanvasSurfaceCapabilities,
 } from "../canvasObjects";
+import type { CanvasSelectionOverlayView } from "./CanvasOverlayLayer";
 
 export { workspaceElementToCanvasObject };
 
@@ -58,7 +59,9 @@ type CanvasStageProps = {
   focusRequest: { elementId: string; sequence: number } | null;
   manualElementName: string;
   renamingElementId: string | null;
+  selectionOverlays?: CanvasSelectionOverlayView[];
   canCreateChildFromDraft: boolean;
+  suppressedOverlayLabelIds?: string[];
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
   onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
@@ -118,7 +121,9 @@ export function CanvasStage({
   focusRequest,
   manualElementName,
   renamingElementId,
+  selectionOverlays,
   canCreateChildFromDraft,
+  suppressedOverlayLabelIds,
   onSelectElement,
   onClearSelection,
   onOpenElementContextMenu,
@@ -301,8 +306,10 @@ export function CanvasStage({
       isPanMode={isPanMode}
       manualElementName={manualElementName}
       renamingElementId={renamingElementId}
+      selectionOverlays={selectionOverlays}
       canCreateChildFromDraft={canCreateChildFromDraft}
       hasUnsavedBoxEdit={hasUnsavedBoxEdit}
+      suppressedOverlayLabelIds={suppressedOverlayLabelIds}
       onSelectElement={onSelectElement}
       onClearSelection={onClearSelection}
       onOpenElementContextMenu={onOpenElementContextMenu}

@@ -6,11 +6,13 @@ export type ResizeHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
 
 export type BoxEditDrag = {
   elementId: string;
-  mode: "move" | "resize";
+  mode: "move" | "resize" | "rotate";
   handle: ResizeHandle | null;
   startX: number;
   startY: number;
-  startBox: Box;
+  startBox: Box & { rotationDeg?: number };
+  startAngleDeg: number;
+  startRotationDeg: number;
 };
 
 export type DrawingEvent = PointerEvent<HTMLDivElement> | MouseEvent<HTMLDivElement>;
@@ -18,8 +20,8 @@ export type DrawingEventPhase = "down" | "move" | "up";
 export type ViewportRect = Pick<DOMRect, "left" | "right" | "top" | "bottom" | "width" | "height">;
 
 type ClientPositionEvent = {
-  clientX: number;
-  clientY: number;
+  clientX?: number;
+  clientY?: number;
   nativeEvent?: {
     clientX?: number;
     clientY?: number;

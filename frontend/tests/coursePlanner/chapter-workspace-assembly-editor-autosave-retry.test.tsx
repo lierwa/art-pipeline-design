@@ -61,6 +61,15 @@ function assemblyEditorStatus() {
   return screen.getByLabelText("Assembly editor status");
 }
 
+function expectIconOnlySaveButton() {
+  expect(screen.queryByText("Save Assembly")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save Assembly" })).not.toBeInTheDocument();
+  const saveButton = screen.getByRole("button", { name: "Save" });
+  expect(saveButton).toHaveClass("shared-icon-button");
+  expect(saveButton).not.toHaveClass("shared-icon-button-with-label");
+  return saveButton;
+}
+
 describe("Chapter Scene Studio assembly autosave retry and refresh paths", () => {
   it("flushes a dirty placement edit before Back navigation can clear the debounce timer", async () => {
     vi.useFakeTimers();
@@ -188,7 +197,7 @@ describe("Chapter Scene Studio assembly autosave retry and refresh paths", () =>
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
 
     fireEvent.change(positionXInput, { target: { value: "422" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Assembly" }));
+    fireEvent.click(expectIconOnlySaveButton());
 
     await flushAsyncScenePackage();
     expect(savedManifests).toHaveLength(2);
@@ -342,7 +351,7 @@ describe("Chapter Scene Studio assembly autosave retry and refresh paths", () =>
 
     expect(positionXInput).toHaveValue(308);
     expect(screen.queryByText(/New package data arrived from the server/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeEnabled();
+    expect(expectIconOnlySaveButton()).toBeEnabled();
   });
 
   it("keeps the dirty local draft on server conflict and retries with the latest edited manifest", async () => {

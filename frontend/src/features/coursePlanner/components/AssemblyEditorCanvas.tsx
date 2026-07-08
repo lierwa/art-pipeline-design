@@ -1,18 +1,11 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import {
-  AlignCenterHorizontal,
-  AlignCenterVertical,
-  AlignEndHorizontal,
-  AlignEndVertical,
-  AlignStartHorizontal,
-  AlignStartVertical,
   Hand,
   ImageOff,
   Maximize2,
   MousePointer2,
   Redo2,
   Save,
-  SquareDashed,
   Tags,
   Undo2,
   ZoomIn,
@@ -37,8 +30,10 @@ type AssemblyEditorCanvasProps = {
   canvasControls?: AssemblyAuthoringCanvasControls | null;
   canvasOverlays?: OverlayState;
   draft: AssemblyManifestDraft;
+  hiddenPlacementIds?: ReadonlySet<string>;
   saveStatus?: AsyncOperationState;
   scenePackage: ChapterScenePackage;
+  selectedLayerNodeIds?: string[];
   selectedPlacementId: string | null;
   selectedPlacementIds?: string[];
   onAddAsset?: (assetId: string, center?: { x: number; y: number }) => Promise<void> | void;
@@ -58,13 +53,14 @@ type AssemblyEditorCanvasProps = {
 };
 
 export function AssemblyEditorCanvas({
-  actionLabel = "Save Assembly",
+  actionLabel = "Save",
   canRedo = false,
   canTriggerSave = false,
   canUndo = false,
   canvasControls,
   canvasOverlays = DEFAULT_ASSEMBLY_CANVAS_OVERLAYS,
   draft,
+  hiddenPlacementIds,
   onAddAsset,
   onBoxEditEnd,
   onBoxEditStart,
@@ -81,12 +77,17 @@ export function AssemblyEditorCanvas({
   onUndo,
   saveStatus,
   scenePackage,
+  selectedLayerNodeIds,
   selectedPlacementId,
   selectedPlacementIds,
 }: AssemblyEditorCanvasProps) {
   const [localCanvasControls, setLocalCanvasControls] = useState<AssemblyAuthoringCanvasControls | null>(null);
   const emptySceneImage = scenePackage.empty_scene_images.find((image) => image.id === draft.empty_scene_image_id) ?? null;
   const resolvedCanvasControls = canvasControls ?? localCanvasControls;
+  const renderedCanvasOverlays: OverlayState = {
+    ...canvasOverlays,
+    showBoxes: false,
+  };
 
   function handleEditorControlsChange(controls: AssemblyAuthoringCanvasControls | null) {
     setLocalCanvasControls(controls);
@@ -114,7 +115,7 @@ export function AssemblyEditorCanvas({
         canTriggerSave={canTriggerSave && Boolean(onSave)}
         canUndo={canUndo}
         controls={resolvedCanvasControls}
-        overlays={canvasOverlays}
+        overlays={renderedCanvasOverlays}
         canvasSizeLabel={formatCanvasSize({ width: emptySceneImage.width, height: emptySceneImage.height })}
         saveStatus={saveStatus}
         onRedo={onRedo}
@@ -129,8 +130,10 @@ export function AssemblyEditorCanvas({
       >
         <AssemblyAuthoringCanvas
           draft={draft}
-          overlays={canvasOverlays}
+          hiddenPlacementIds={hiddenPlacementIds}
+          overlays={renderedCanvasOverlays}
           scenePackage={scenePackage}
+          selectedLayerNodeIds={selectedLayerNodeIds}
           selectedPlacementId={selectedPlacementId}
           selectedPlacementIds={selectedPlacementIds}
           onAddAsset={onAddAsset}
@@ -224,45 +227,6 @@ function AssemblyCanvasToolbar({
           />
         </div>
 
-        <div className="canvas-tool-group" aria-label="Alignment controls">
-          <IconButton
-            label="Align left"
-            icon={<AlignStartVertical size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("left")}
-          />
-          <IconButton
-            label="Align horizontal center"
-            icon={<AlignCenterVertical size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("hcenter")}
-          />
-          <IconButton
-            label="Align right"
-            icon={<AlignEndVertical size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("right")}
-          />
-          <IconButton
-            label="Align top"
-            icon={<AlignStartHorizontal size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("top")}
-          />
-          <IconButton
-            label="Align vertical middle"
-            icon={<AlignCenterHorizontal size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("vcenter")}
-          />
-          <IconButton
-            label="Align bottom"
-            icon={<AlignEndHorizontal size={16} strokeWidth={2.2} />}
-            disabled={!controls?.canAlign}
-            onClick={() => controls?.align("bottom")}
-          />
-        </div>
-
         <div className="zoom-controls" aria-label="Zoom controls">
           <IconButton
             label="Zoom out"
@@ -287,12 +251,6 @@ function AssemblyCanvasToolbar({
 
         <div className="canvas-overlay-switches" aria-label="Canvas overlays">
           <OverlayToggle
-            checked={overlays.showBoxes}
-            icon={<SquareDashed size={16} strokeWidth={2.2} />}
-            label="Show boxes"
-            onChange={() => onToggleOverlay?.("showBoxes")}
-          />
-          <OverlayToggle
             checked={overlays.showNames}
             icon={<Tags size={16} strokeWidth={2.2} />}
             label="Show names"
@@ -303,10 +261,9 @@ function AssemblyCanvasToolbar({
         <div className="canvas-draft-actions assembly-canvas-actions">
           <span className="assembly-canvas-size-label">{canvasSizeLabel}</span>
           <IconButton
-            label={saveStatus?.status === "pending" ? "Saving Assembly" : actionLabel}
-            aria-label={saveStatus?.status === "pending" ? "Saving Assembly" : actionLabel}
+            label={saveButtonLabel(actionLabel, saveStatus)}
+            aria-label={saveButtonLabel(actionLabel, saveStatus)}
             icon={<Save size={16} strokeWidth={2.2} />}
-            showLabel
             disabled={!canTriggerSave || !onSave || saveStatus?.status === "pending"}
             onClick={() => void onSave?.()}
           />
@@ -346,9 +303,19 @@ function formatCanvasSize(size: { width: number; height: number }) {
 }
 
 const DEFAULT_ASSEMBLY_CANVAS_OVERLAYS: OverlayState = {
-  showBoxes: true,
+  showBoxes: false,
   showMasks: false,
   showNames: true,
   showRejected: false,
   showThumbs: true,
 };
+
+function saveButtonLabel(actionLabel: string, saveStatus?: AsyncOperationState) {
+  if (saveStatus?.status === "pending") {
+    return "Saving";
+  }
+  if (actionLabel.toLowerCase().includes("retry")) {
+    return "Retry";
+  }
+  return "Save";
+}

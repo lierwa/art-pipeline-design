@@ -26,6 +26,7 @@ export type CanvasSurfaceCapabilities = {
   canCreateChild: boolean;
   canRenameObjects: boolean;
   canUseMissingMask: boolean;
+  canRotateObjects: boolean;
 };
 
 export const ART_PIPELINE_CANVAS_SURFACE_CAPABILITIES: CanvasSurfaceCapabilities = {
@@ -35,4 +36,5 @@ export const ART_PIPELINE_CANVAS_SURFACE_CAPABILITIES: CanvasSurfaceCapabilities
   canCreateChild: true,
   canRenameObjects: true,
   canUseMissingMask: true,
+  canRotateObjects: false,
 };

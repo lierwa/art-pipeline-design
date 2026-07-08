@@ -1,7 +1,11 @@
 import { useParams } from "react-router";
 
 import { AssemblyWorkspacePanel } from "../components/AssemblyWorkspacePanel";
-import { CoursePlannerPageHeader } from "../components/CoursePlannerChrome";
+import {
+  CoursePlannerPageHeader,
+  CoursePlannerStatusBadge,
+  CoursePlannerWorkspaceHeader,
+} from "../components/CoursePlannerChrome";
 import "../components/coursePlanner.css";
 import "../components/coursePlannerPanels.css";
 import "../components/chapterStudioShared.css";
@@ -31,7 +35,7 @@ export function ChapterAssemblyEditorPage() {
   const shouldRenderRouteHeader = !scenePackage;
 
   return (
-    <main className="chapter-assembly-editor-page">
+    <main className={scenePackage ? "chapter-assembly-editor-page chapter-assembly-editor-page--loaded" : "chapter-assembly-editor-page"}>
       {shouldRenderRouteHeader ? (
         <AssemblyRouteHeader
           backTo={backToChapter}
@@ -39,32 +43,34 @@ export function ChapterAssemblyEditorPage() {
           status={assemblyRouteStatusLabel(loadState)}
         />
       ) : null}
-      {loadState === "loading" && !scenePackage ? (
-        <section className="chapter-workspace-panel" aria-label="Chapter Scene Package Loading">
-          <h2>Loading Scene Package</h2>
-          <p>Loading the latest chapter scene-package snapshot.</p>
-        </section>
-      ) : null}
-      {loadState === "error" ? (
-        <section className="chapter-workspace-panel" aria-label="Chapter Scene Package Error">
-          <h2>Scene Package Unavailable</h2>
-          <p>{errorMessage ?? "Could not load Chapter Scene Package."}</p>
-        </section>
-      ) : null}
-      {scenePackage ? (
-        <AssemblyWorkspacePanel
-          backTo={backToChapter}
-          chapterTitle={chapter.title}
-          onDeleteChapterAsset={handlers.handleDeleteChapterAsset}
-          onDuplicateChapterAsset={handlers.handleDuplicateChapterAsset}
-          onListGeneratedAssets={handlers.handleListGeneratedAssets}
-          onMaterializeGeneratedAsset={handlers.handleMaterializeGeneratedAsset}
-          onSaveAssembly={handlers.handleSaveAssembly}
-          onUploadDirectAsset={handlers.handleUploadDirectAsset}
-          saveStatus={asyncStatus[`scenePackage:assemblySave:${chapter.id}`]}
-          scenePackage={scenePackage}
-        />
-      ) : null}
+      <div className="chapter-assembly-route-body">
+        {loadState === "loading" && !scenePackage ? (
+          <section className="chapter-workspace-panel course-planner-route-placeholder" aria-label="Chapter Scene Package Loading">
+            <h2>Loading Scene Package</h2>
+            <p>Loading the latest chapter scene-package snapshot.</p>
+          </section>
+        ) : null}
+        {loadState === "error" ? (
+          <section className="chapter-workspace-panel course-planner-route-placeholder" aria-label="Chapter Scene Package Error">
+            <h2>Scene Package Unavailable</h2>
+            <p>{errorMessage ?? "Could not load Chapter Scene Package."}</p>
+          </section>
+        ) : null}
+        {scenePackage ? (
+          <AssemblyWorkspacePanel
+            backTo={backToChapter}
+            chapterTitle={chapter.title}
+            onDeleteChapterAsset={handlers.handleDeleteChapterAsset}
+            onDuplicateChapterAsset={handlers.handleDuplicateChapterAsset}
+            onListGeneratedAssets={handlers.handleListGeneratedAssets}
+            onMaterializeGeneratedAsset={handlers.handleMaterializeGeneratedAsset}
+            onSaveAssembly={handlers.handleSaveAssembly}
+            onUploadDirectAsset={handlers.handleUploadDirectAsset}
+            saveStatus={asyncStatus[`scenePackage:assemblySave:${chapter.id}`]}
+            scenePackage={scenePackage}
+          />
+        ) : null}
+      </div>
     </main>
   );
 }
@@ -89,13 +95,17 @@ function AssemblyRouteHeader({
   status: string;
 }) {
   return (
-    <CoursePlannerPageHeader
+    <CoursePlannerWorkspaceHeader
       backTo={backTo}
       backLabel="Back to Chapter"
       eyebrow="Assembly"
       title={chapterTitle}
-      status={status}
-      statusTone={status === "Load failed" ? "danger" : "neutral"}
+      status={(
+        <CoursePlannerStatusBadge
+          label={status}
+          tone={status === "Load failed" ? "danger" : "neutral"}
+        />
+      )}
     />
   );
 }

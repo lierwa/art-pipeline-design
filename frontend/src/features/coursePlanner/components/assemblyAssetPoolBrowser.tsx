@@ -2,7 +2,15 @@ import { type ReactNode } from "react";
 import { Search } from "lucide-react";
 
 import type { ChapterScenePackage } from "../types";
-import { normalizeHumanText } from "./mediaDisplayNames";
+import {
+  buildReadableAssetPoolAssetNames,
+  readableAssetPoolAssetName,
+} from "./assemblyDisplayNames";
+
+export {
+  buildReadableAssetPoolAssetNames,
+  readableAssetPoolAssetName,
+} from "./assemblyDisplayNames";
 
 type ChapterAsset = ChapterScenePackage["chapter_assets"][number];
 
@@ -55,18 +63,12 @@ export function filterAssetPool(
   });
 }
 
-export function readableAssetPoolAssetName(asset: ChapterAsset): string {
-  const explicitName = normalizeHumanText(asset.display_name);
-  if (explicitName) {
-    return explicitName;
+export function assetDimensionLabel(asset: ChapterAsset): string | null {
+  const width = Number(asset.width);
+  const height = Number(asset.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
   }
 
-  const filenameName = normalizeHumanText(asset.original_filename.replace(/\.[^.]+$/, ""));
-  if (filenameName) {
-    return filenameName;
-  }
-
-  // WHY: 资源池需要高密度浏览；UUID 直传素材的 id fallback 会制造“Chapter asset 001”
-  // 这类伪名称。这里只在资源池显示/搜索边界降级为中性标签，不回写 manifest。
-  return asset.linked_target_object_id ? "Unnamed target asset" : "Unnamed asset";
+  return `${Math.round(width)} x ${Math.round(height)}`;
 }

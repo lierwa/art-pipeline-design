@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Trash2 } from "lucide-react";
 
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
@@ -7,8 +8,11 @@ import {
   updatePlacementTransform,
   type AssemblyManifestDraft,
 } from "../assembly/assemblyManifestDraft";
-import type { RuntimeRole } from "../types";
-import { readablePlacementName } from "./assemblyDisplayNames";
+import type { ChapterScenePackage, RuntimeRole } from "../types";
+import {
+  buildReadableAssetPoolAssetNames,
+  readableAssemblyPlacementName,
+} from "./assemblyDisplayNames";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
 
 type AssemblyPlacementPropertiesProps = {
@@ -16,11 +20,14 @@ type AssemblyPlacementPropertiesProps = {
   draft: AssemblyManifestDraft;
   onDraftChange: (draft: AssemblyManifestDraft) => void;
   onSelectionChange: (placementId: string | null, placementIds: string[]) => void;
+  scenePackage: ChapterScenePackage;
+  selectedNodeIds: string[];
   selectedPlacementId: string | null;
   selectedPlacementIds: string[];
 };
 
 type PlacementDraft = AssemblyManifestDraft["placements"][number];
+type GroupDraft = AssemblyManifestDraft["groups"][number];
 type EmptySceneSize = NonNullable<AssemblyManifestDraft["empty_scene_size"]>;
 type TransformFieldKey = typeof TRANSFORM_FIELDS[number]["key"];
 
@@ -39,10 +46,24 @@ export function AssemblyPlacementProperties({
   draft,
   onDraftChange,
   onSelectionChange,
+  scenePackage,
+  selectedNodeIds,
   selectedPlacementId,
   selectedPlacementIds,
 }: AssemblyPlacementPropertiesProps) {
-  const selection = resolvePlacementSelection(draft, selectedPlacementId, selectedPlacementIds, alignmentRiskPlacementIds);
+  const assetNameById = useMemo(
+    () => buildReadableAssetPoolAssetNames(scenePackage.chapter_assets),
+    [scenePackage.chapter_assets],
+  );
+  const selection = resolvePlacementSelection(
+    draft,
+    selectedPlacementId,
+    selectedPlacementIds,
+    selectedNodeIds,
+    alignmentRiskPlacementIds,
+    assetNameById,
+  );
+  const selectedItemCount = selection.selectedPlacements.length + selection.selectedGroups.length;
 
   function handleRoleChange(role: RuntimeRole) {
     if (selection.selectedPlacements.length === 0) {
@@ -61,6 +82,18 @@ export function AssemblyPlacementProperties({
         placement.id === selection.placement?.id
           ? { ...placement, display_name: name }
           : placement
+      )),
+    });
+  }
+
+  function handleGroupNameChange(name: string) {
+    if (!selection.group || selection.selectedGroups.length !== 1 || selection.selectedPlacements.length > 0) {
+      return;
+    }
+    onDraftChange({
+      ...draft,
+      groups: draft.groups.map((group) => (
+        group.id === selection.group?.id ? { ...group, display_name: name } : group
       )),
     });
   }
@@ -99,19 +132,22 @@ export function AssemblyPlacementProperties({
     <section className="chapter-studio-panel chapter-studio-panel-stack assembly-placement-properties-panel" aria-label="Placement properties">
       <PlacementPanelHeader
         hasAlignmentRisk={selection.hasAlignmentRisk}
-        onRemovePlacement={selection.selectedPlacements.length > 0 ? handleRemovePlacement : null}
-        placementName={selection.placementName}
-        selectedCount={selection.selectedPlacements.length}
+        onRemovePlacement={selection.selectedGroups.length === 0 && selection.selectedPlacements.length > 0 ? handleRemovePlacement : null}
+        selectionName={selection.selectionName}
+        selectedCount={selectedItemCount}
       />
       <PlacementPanelBody
         emptySceneSize={draft.empty_scene_size}
+        group={selection.group}
+        onGroupNameChange={handleGroupNameChange}
         onNameChange={handleNameChange}
         onRoleChange={handleRoleChange}
         onTransformChange={handleTransformChange}
         placement={selection.placement}
         placementName={selection.placementName}
+        selectedGroups={selection.selectedGroups}
         selectedPlacements={selection.selectedPlacements}
-        selectedCount={selection.selectedPlacements.length}
+        selectedCount={selectedItemCount}
         selectedRole={selection.selectedRole}
         showAlignmentRisk={selection.hasAlignmentRisk}
       />
@@ -122,25 +158,25 @@ export function AssemblyPlacementProperties({
 function PlacementPanelHeader({
   hasAlignmentRisk,
   onRemovePlacement,
-  placementName,
+  selectionName,
   selectedCount,
 }: {
   hasAlignmentRisk: boolean;
   onRemovePlacement: (() => void) | null;
-  placementName: string | null;
+  selectionName: string | null;
   selectedCount: number;
 }) {
   return (
     <div className="chapter-studio-panel-heading assembly-placement-properties-heading">
       <div>
         <h2>Placement</h2>
-        <p>{selectedCount > 1 ? `${selectedCount} selected` : placementName ?? "No selection"}</p>
+        <p>{selectedCount > 1 ? `${selectedCount} selected` : selectionName ?? "No selection"}</p>
       </div>
       <div className="assembly-placement-heading-actions">
         {hasAlignmentRisk ? <CoursePlannerStatusBadge tone="warning">Alignment risk</CoursePlannerStatusBadge> : null}
         {onRemovePlacement ? (
           <PlacementRemoveAction
-            placementName={placementName}
+            placementName={selectionName}
             selectedCount={selectedCount}
             onRemovePlacement={onRemovePlacement}
           />
@@ -152,22 +188,28 @@ function PlacementPanelHeader({
 
 function PlacementPanelBody({
   emptySceneSize,
+  group,
+  onGroupNameChange,
   onNameChange,
   onRoleChange,
   onTransformChange,
   placement,
   placementName,
+  selectedGroups,
   selectedPlacements,
   selectedCount,
   selectedRole,
   showAlignmentRisk,
 }: {
   emptySceneSize: AssemblyManifestDraft["empty_scene_size"];
+  group: GroupDraft | null;
+  onGroupNameChange: (name: string) => void;
   onNameChange: (name: string) => void;
   onRoleChange: (role: RuntimeRole) => void;
   onTransformChange: (key: TransformFieldKey, value: number) => void;
   placement: PlacementDraft | null;
   placementName: string | null;
+  selectedGroups: GroupDraft[];
   selectedPlacements: PlacementDraft[];
   selectedCount: number;
   selectedRole: RuntimeRole | null;
@@ -175,6 +217,15 @@ function PlacementPanelBody({
 }) {
   if (selectedCount === 0) {
     return <PlacementEmptyState />;
+  }
+
+  if (group && selectedGroups.length === 1 && selectedPlacements.length === 0) {
+    return (
+      <div className="assembly-property-compact">
+        <PlacementNameField placementName={group.display_name} onNameChange={onGroupNameChange} />
+        <PlacementGroupSummary group={group} />
+      </div>
+    );
   }
 
   return (
@@ -195,6 +246,16 @@ function PlacementPanelBody({
           onTransformChange={onTransformChange}
         />
       ) : null}
+    </div>
+  );
+}
+
+function PlacementGroupSummary({ group }: { group: GroupDraft }) {
+  return (
+    <div className="assembly-editor-empty-state assembly-editor-empty-state-compact">
+      <div>
+        <strong>{group.placement_ids.length} placements grouped.</strong>
+      </div>
     </div>
   );
 }
@@ -420,7 +481,7 @@ function PlacementEmptyState() {
     <div className="assembly-editor-empty-state assembly-editor-empty-state-compact">
       <div>
         <strong>Select a placement to inspect its details.</strong>
-        <p>The layer tree and the asset pool's Locate Placement action drive this panel.</p>
+        <p>Select a layer or canvas item to continue.</p>
       </div>
     </div>
   );
@@ -430,21 +491,33 @@ function resolvePlacementSelection(
   draft: AssemblyManifestDraft,
   selectedPlacementId: string | null,
   selectedPlacementIds: string[],
+  selectedNodeIds: string[],
   alignmentRiskPlacementIds: string[],
+  assetNameById: ReadonlyMap<string, string>,
 ) {
   const alignmentRiskPlacementIdSet = new Set(alignmentRiskPlacementIds);
   const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
+  const groupsById = new Map(draft.groups.map((group) => [group.id, group]));
   const selectedPlacements = selectedPlacementIds
     .map((placementId) => placementsById.get(placementId))
     .filter((placement): placement is PlacementDraft => Boolean(placement));
+  const selectedGroups = selectedNodeIds
+    .map((nodeId) => groupsById.get(nodeId))
+    .filter((group): group is GroupDraft => Boolean(group));
   const placement = selectedPlacementId ? placementsById.get(selectedPlacementId) ?? null : null;
+  const group = selectedGroups.length === 1 && selectedPlacements.length === 0 ? selectedGroups[0] ?? null : null;
+  const placementName = placement ? readableAssemblyPlacementName(placement, assetNameById) : null;
+  const groupName = group?.display_name ?? null;
 
   return {
     hasAlignmentRisk: selectedPlacements.some((item) => alignmentRiskPlacementIdSet.has(item.id)),
+    group,
     placement,
-    placementName: placement ? readablePlacementName(placement.display_name, placement.asset_id) : null,
+    placementName,
+    selectedGroups,
     selectedPlacements,
     selectedRole: resolveSelectedRole(selectedPlacements),
+    selectionName: placementName ?? groupName,
   };
 }
 

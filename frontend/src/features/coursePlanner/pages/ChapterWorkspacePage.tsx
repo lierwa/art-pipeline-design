@@ -2,7 +2,11 @@ import { useParams } from "react-router";
 
 import { isAssemblyReady } from "../assembly/assemblyReadiness";
 import { ChapterSceneStudio } from "../components/ChapterSceneStudio";
-import { CoursePlannerPageHeader } from "../components/CoursePlannerChrome";
+import {
+  CoursePlannerPageHeader,
+  CoursePlannerStatusBadge,
+  CoursePlannerWorkspaceHeader,
+} from "../components/CoursePlannerChrome";
 import "../components/coursePlanner.css";
 import "../components/coursePlannerPanels.css";
 import "../components/chapterStudioShared.css";
@@ -29,46 +33,50 @@ export function ChapterWorkspacePage() {
 
   return (
     <main className="chapter-workspace-page">
-      <CoursePlannerPageHeader
+      <CoursePlannerWorkspaceHeader
         backTo="/course-planner"
         backLabel="Back to board"
-        eyebrow={`${scenePack.title} / Chapter Scene Studio`}
         title={chapter.title}
-        subtitle={chapter.summary}
-        status={studioStatusLabel(loadState, scenePackage)}
-        statusTone={studioStatusTone(loadState, scenePackage)}
+        status={(
+          <CoursePlannerStatusBadge
+            label={studioStatusLabel(loadState, scenePackage)}
+            tone={studioStatusTone(loadState, scenePackage)}
+          />
+        )}
       />
-      {loadState === "loading" && !scenePackage ? (
-        <section className="chapter-workspace-panel" aria-label="Chapter Scene Package Loading">
-          <h2>Loading Scene Package</h2>
-          <p>Loading the latest chapter scene-package snapshot.</p>
-        </section>
-      ) : null}
-      {loadState === "error" ? (
-        <section className="chapter-workspace-panel" aria-label="Chapter Scene Package Error">
-          <h2>Scene Package Unavailable</h2>
-          <p>{errorMessage ?? "Could not load Chapter Scene Package."}</p>
-        </section>
-      ) : null}
-      {scenePackage ? (
-        <ChapterSceneStudio
-          chapter={chapter}
-          scenePackage={scenePackage}
-          characterIps={characterIps}
-          referenceImages={referenceImages}
-          asyncStatus={asyncStatus}
-          onAssignCharacterIp={handlers.handleAssignCharacterIp}
-          onSelectReferenceImage={handlers.handleSelectReferenceImage}
-          onUpdatePrompt={handlers.handleUpdatePrompt}
-          onUploadReferenceImage={handlers.handleUploadReferenceImage}
-          onUploadEmptySceneImage={handlers.handleUploadEmptySceneImage}
-          onSelectEmptySceneImage={handlers.handleSelectEmptySceneImage}
-          onUploadCompleteSceneImage={handlers.handleUploadCompleteSceneImage}
-          onDeleteCompleteSceneImage={handlers.handleDeleteCompleteSceneImage}
-          onImportCompleteImage={handlers.handleImportCompleteImage}
-          onLockFinal={handlers.handleLockFinal}
-        />
-      ) : null}
+      <div className="chapter-workspace-route-body">
+        {loadState === "loading" && !scenePackage ? (
+          <section className="chapter-workspace-panel course-planner-route-placeholder" aria-label="Chapter Scene Package Loading">
+            <h2>Loading Scene Package</h2>
+            <p>Loading the latest chapter scene-package snapshot.</p>
+          </section>
+        ) : null}
+        {loadState === "error" ? (
+          <section className="chapter-workspace-panel course-planner-route-placeholder" aria-label="Chapter Scene Package Error">
+            <h2>Scene Package Unavailable</h2>
+            <p>{errorMessage ?? "Could not load Chapter Scene Package."}</p>
+          </section>
+        ) : null}
+        {scenePackage ? (
+          <ChapterSceneStudio
+            chapter={chapter}
+            scenePackage={scenePackage}
+            characterIps={characterIps}
+            referenceImages={referenceImages}
+            asyncStatus={asyncStatus}
+            onAssignCharacterIp={handlers.handleAssignCharacterIp}
+            onSelectReferenceImage={handlers.handleSelectReferenceImage}
+            onUpdatePrompt={handlers.handleUpdatePrompt}
+            onUploadReferenceImage={handlers.handleUploadReferenceImage}
+            onUploadEmptySceneImage={handlers.handleUploadEmptySceneImage}
+            onSelectEmptySceneImage={handlers.handleSelectEmptySceneImage}
+            onUploadCompleteSceneImage={handlers.handleUploadCompleteSceneImage}
+            onDeleteCompleteSceneImage={handlers.handleDeleteCompleteSceneImage}
+            onImportCompleteImage={handlers.handleImportCompleteImage}
+            onLockFinal={handlers.handleLockFinal}
+          />
+        ) : null}
+      </div>
     </main>
   );
 }

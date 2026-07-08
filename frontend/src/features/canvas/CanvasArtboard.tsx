@@ -10,7 +10,7 @@ import {
 } from "../../domain/workspace";
 import { CanvasBoxEditLayer } from "./CanvasBoxEditLayer";
 import { CanvasDraftControls } from "./CanvasDraftControls";
-import { CanvasOverlayLayer } from "./CanvasOverlayLayer";
+import { CanvasOverlayLayer, type CanvasSelectionOverlayView } from "./CanvasOverlayLayer";
 import type { CanvasObjectView, CanvasSurfaceCapabilities } from "../canvasObjects";
 import {
   type BoxEditDrag,
@@ -21,10 +21,18 @@ import {
   eventPointToImageWithin,
   keyboardDelta,
   moveBox,
-  parseResizeHandle,
   pointIsInsideBox,
   resizeBox,
 } from "./canvasStageGeometry";
+
+type BoxEditPointerEvent = {
+  clientX?: number;
+  clientY?: number;
+  nativeEvent?: {
+    clientX?: number;
+    clientY?: number;
+  };
+};
 
 export type CanvasHitTestStrategy = "front" | "smallest-on-modified-selection";
 
@@ -46,8 +54,10 @@ export type CanvasArtboardProps = {
   isPanMode: boolean;
   manualElementName: string;
   renamingElementId: string | null;
+  selectionOverlays?: CanvasSelectionOverlayView[];
   canCreateChildFromDraft: boolean;
   hasUnsavedBoxEdit: boolean;
+  suppressedOverlayLabelIds?: string[];
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
   onClearSelection: () => void;
   onOpenElementContextMenu: (elementId: string, position: { x: number; y: number }) => void;
@@ -87,8 +97,10 @@ export function CanvasArtboard({
   isPanMode,
   manualElementName,
   renamingElementId,
+  selectionOverlays,
   canCreateChildFromDraft,
   hasUnsavedBoxEdit,
+  suppressedOverlayLabelIds,
   onSelectElement,
   onClearSelection,
   onOpenElementContextMenu,
@@ -212,40 +224,13 @@ export function CanvasArtboard({
       return undefined;
     }
 
-    function handleNativePointerDown(event: globalThis.PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) {
-        return;
-      }
-
-      const handleControl = target.closest<HTMLElement>("[data-resize-handle]");
-      if (handleControl) {
-        const object = canvasObjects.find((candidate) => candidate.id === handleControl.dataset.elementId);
-        const handle = parseResizeHandle(handleControl.dataset.resizeHandle);
-        if (object && handle) {
-          event.preventDefault();
-          startBoxEditDrag(event.clientX, event.clientY, object, "resize", handle);
-        }
-        return;
-      }
-
-      const editRegion = target.closest<HTMLElement>("[data-canvas-edit-region]");
-      if (editRegion) {
-        const object = canvasObjects.find((candidate) => candidate.id === editRegion.dataset.elementId);
-        if (object) {
-          event.preventDefault();
-          startBoxEditDrag(event.clientX, event.clientY, object, "move", null);
-        }
-      }
-    }
-
     function handleNativePointerMove(event: globalThis.PointerEvent) {
       if (!boxEditDragRef.current) {
         return;
       }
 
       event.preventDefault();
-      updateBoxEditFromClient(event.clientX, event.clientY);
+      updateBoxEditFromPointer(event);
     }
 
     function handleNativePointerEnd(event: globalThis.PointerEvent) {
@@ -257,24 +242,27 @@ export function CanvasArtboard({
       finishBoxEditDrag();
     }
 
-    artboard.addEventListener("pointerdown", handleNativePointerDown);
     artboard.addEventListener("pointermove", handleNativePointerMove);
     artboard.addEventListener("pointerup", handleNativePointerEnd);
     artboard.addEventListener("pointercancel", handleNativePointerEnd);
+    artboard.ownerDocument.addEventListener("pointermove", handleNativePointerMove);
+    artboard.ownerDocument.addEventListener("pointerup", handleNativePointerEnd);
+    artboard.ownerDocument.addEventListener("pointercancel", handleNativePointerEnd);
 
     return () => {
-      artboard.removeEventListener("pointerdown", handleNativePointerDown);
       artboard.removeEventListener("pointermove", handleNativePointerMove);
       artboard.removeEventListener("pointerup", handleNativePointerEnd);
       artboard.removeEventListener("pointercancel", handleNativePointerEnd);
+      artboard.ownerDocument.removeEventListener("pointermove", handleNativePointerMove);
+      artboard.ownerDocument.removeEventListener("pointerup", handleNativePointerEnd);
+      artboard.ownerDocument.removeEventListener("pointercancel", handleNativePointerEnd);
     };
   }, [canvasObjects, onBoxDraftChange, onBoxEditEnd, onBoxEditStart, onSelectElement, source]);
 
   function startBoxEditDrag(
-    clientX: number,
-    clientY: number,
+    event: BoxEditPointerEvent,
     object: CanvasObjectView,
-    mode: "move" | "resize",
+    mode: BoxEditDrag["mode"],
     handle: ResizeHandle | null,
   ) {
     const artboard = artboardRef.current;
@@ -282,7 +270,12 @@ export function CanvasArtboard({
       return;
     }
 
-    const point = eventPointToImageWithin({ clientX, clientY }, artboard, source);
+    const point = pointFromPointerEvent(
+      event,
+      artboard,
+      source,
+      mode === "rotate" ? rotateHandleStartPoint(object.box) : null,
+    );
     boxEditDragRef.current = {
       elementId: object.id,
       mode,
@@ -290,6 +283,8 @@ export function CanvasArtboard({
       startX: point.x,
       startY: point.y,
       startBox: object.box,
+      startAngleDeg: angleFromBoxCenter(point, object.box),
+      startRotationDeg: object.box.rotationDeg ?? 0,
     };
     onBoxEditStart?.(object.id);
     onSelectElement(object.id);
@@ -308,7 +303,7 @@ export function CanvasArtboard({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    startBoxEditDrag(event.clientX, event.clientY, object, "move", null);
+    startBoxEditDrag(event, object, "move", null);
   }
 
   function beginBoxResize(
@@ -319,23 +314,35 @@ export function CanvasArtboard({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    startBoxEditDrag(event.clientX, event.clientY, object, "resize", handle);
+    startBoxEditDrag(event, object, "resize", handle);
   }
 
-  function updateBoxEditFromClient(clientX: number, clientY: number) {
+  function beginBoxRotate(event: PointerEvent<HTMLButtonElement>, object: CanvasObjectView) {
+    if (!capabilities.canRotateObjects) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    startBoxEditDrag(event, object, "rotate", null);
+  }
+
+  function updateBoxEditFromPointer(event: BoxEditPointerEvent) {
     const drag = boxEditDragRef.current;
     const artboard = artboardRef.current;
     if (!drag || !artboard) {
       return;
     }
 
-    const point = eventPointToImageWithin({ clientX, clientY }, artboard, source);
+    const point = pointFromPointerEvent(
+      event,
+      artboard,
+      source,
+      drag.mode === "rotate" ? rotateHandleFallbackMovePoint(drag.startBox) : null,
+    );
     const deltaX = point.x - drag.startX;
     const deltaY = point.y - drag.startY;
-    const nextBox =
-      drag.mode === "move"
-        ? moveBox(drag.startBox, deltaX, deltaY, source)
-        : resizeBox(drag.startBox, drag.handle ?? "se", deltaX, deltaY, source);
+    const nextBox = nextBoxForEditDrag(drag, point, deltaX, deltaY, source);
     onBoxDraftChange(drag.elementId, nextBox);
   }
 
@@ -345,7 +352,7 @@ export function CanvasArtboard({
     }
 
     event.preventDefault();
-    updateBoxEditFromClient(event.clientX, event.clientY);
+    updateBoxEditFromPointer(event);
   }
 
   function endBoxEdit(event: PointerEvent<HTMLElement>) {
@@ -449,10 +456,12 @@ export function CanvasArtboard({
         missingMaskRegion={visibleMissingMaskRegion}
         overlays={overlays}
         renamingElementId={renamingElementId}
+        selectionOverlays={selectionOverlays}
         selectedElementId={selectedElementId}
         selectedElementIds={selectedElementIds}
         source={source}
         splitRegions={visibleSplitRegions}
+        suppressedLabelIds={suppressedOverlayLabelIds}
         onCancelRenameElement={onCancelRenameElement}
         onCommitRenameElement={onCommitRenameElement}
         onSelectElement={onSelectElement}
@@ -472,11 +481,13 @@ export function CanvasArtboard({
       />
       <CanvasBoxEditLayer
         canvasObjects={canvasObjects}
+        canRotateObjects={capabilities.canRotateObjects}
         editingElementId={editingElementId}
         hasUnsavedBoxEdit={hasUnsavedBoxEdit}
         source={source}
         onBeginBoxMove={beginBoxMove}
         onBeginBoxResize={beginBoxResize}
+        onBeginBoxRotate={beginBoxRotate}
         onCancelBoxEdit={onCancelBoxEdit}
         onConfirmBoxEdit={onConfirmBoxEdit}
         onEditKeyDown={handleEditKeyDown}
@@ -499,4 +510,71 @@ export function CanvasArtboard({
       />
     </div>
   );
+}
+
+function nextBoxForEditDrag(
+  drag: BoxEditDrag,
+  point: { x: number; y: number },
+  deltaX: number,
+  deltaY: number,
+  source: CanvasArtboardProps["source"],
+) {
+  if (drag.mode === "move") {
+    return moveBox(drag.startBox, deltaX, deltaY, source);
+  }
+  if (drag.mode === "resize") {
+    return resizeBox(drag.startBox, drag.handle ?? "se", deltaX, deltaY, source);
+  }
+  return {
+    ...drag.startBox,
+    rotationDeg: normalizeRotationDeg(
+      drag.startRotationDeg + angleFromBoxCenter(point, drag.startBox) - drag.startAngleDeg,
+    ),
+  };
+}
+
+function angleFromBoxCenter(point: { x: number; y: number }, box: Box & { rotationDeg?: number }) {
+  const centerX = box.x + box.w / 2;
+  const centerY = box.y + box.h / 2;
+  return Math.atan2(point.y - centerY, point.x - centerX) * 180 / Math.PI;
+}
+
+function pointFromPointerEvent(
+  event: BoxEditPointerEvent,
+  artboard: HTMLElement,
+  source: SourceMetadata,
+  fallbackPoint: { x: number; y: number } | null,
+) {
+  if (hasPointerCoordinates(event)) {
+    return eventPointToImageWithin(event, artboard, source);
+  }
+  return fallbackPoint ?? eventPointToImageWithin(event, artboard, source);
+}
+
+function hasPointerCoordinates(event: BoxEditPointerEvent) {
+  return (
+    typeof event.clientX === "number"
+    || typeof event.clientY === "number"
+    || typeof event.nativeEvent?.clientX === "number"
+    || typeof event.nativeEvent?.clientY === "number"
+  );
+}
+
+function rotateHandleStartPoint(box: Box & { rotationDeg?: number }) {
+  return {
+    x: box.x + box.w / 2,
+    y: box.y,
+  };
+}
+
+function rotateHandleFallbackMovePoint(box: Box & { rotationDeg?: number }) {
+  return {
+    x: box.x + box.w,
+    y: box.y + box.h / 2,
+  };
+}
+
+function normalizeRotationDeg(value: number) {
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return Math.round(normalized);
 }

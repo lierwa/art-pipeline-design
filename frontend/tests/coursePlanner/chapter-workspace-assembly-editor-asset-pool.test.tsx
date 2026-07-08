@@ -1,4 +1,6 @@
 import "./assemblyEditorDependencyMocks";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
@@ -43,7 +45,7 @@ afterEach(() => {
 });
 
 describe("Assembly editor asset pool", () => {
-  it("keeps asset cards compact with icon-only placement actions", async () => {
+  it("keeps asset cards compact with reference-style add and more actions", async () => {
     mockScenePackageImages();
     render(
       <AssemblyEditorHarness
@@ -64,15 +66,14 @@ describe("Assembly editor asset pool", () => {
     expect(within(assetPool).getByText("Breakfast bowl")).toBeInTheDocument();
     expect(within(assetPool).queryByText("40764843-f70d-48dd-9d6a-8475a3fff53d.png")).not.toBeInTheDocument();
 
-    ["Add to Assembly", "Locate Placement", "Duplicate Chapter Asset", "Delete Asset"].forEach((label) => {
-      const button = within(assetPool).getByRole("button", { name: label });
-      expect(button).toHaveAttribute("title", label);
-      expect(button).toHaveClass("assembly-editor-icon-button");
-      expect(button).toHaveTextContent("");
-    });
+    const card = within(assetPool).getByText("Breakfast bowl").closest("article") as HTMLElement;
+    expect(within(card).getByRole("button", { name: "Add to Assembly" })).toHaveClass("assembly-asset-card-add");
+    expect(within(card).getByRole("button", { name: "Asset actions for Breakfast bowl" })).toHaveClass("assembly-asset-card-more");
+    expect(within(card).queryByRole("button", { name: "Locate Placement" })).not.toBeInTheDocument();
   });
 
   it("renders generated assets as the primary group and uploads as secondary with usage counts", async () => {
+    const user = userEvent.setup();
     mockScenePackageImages();
     render(<AssemblyEditorHarness initialScenePackage={manyResourceAssetPoolScenePackage()} />);
 
@@ -94,11 +95,74 @@ describe("Assembly editor asset pool", () => {
     expect(within(generatedGroup).getByText("Cute Cat")).toBeInTheDocument();
     expect(within(generatedGroup).getByText("Tissue Box")).toBeInTheDocument();
     expect(within(generatedGroup).getByText("2 uses")).toBeInTheDocument();
-    expect(within(generatedGroup).getByText("1 use")).toBeInTheDocument();
+    expect(within(generatedGroup).getAllByText("1 use").length).toBeGreaterThanOrEqual(2);
+    const generatedHeading = within(generatedGroup).getByRole("heading", { name: "Generated assets (3)" });
+    expect(generatedHeading).toBeInTheDocument();
+    const generatedCollapseButton = within(generatedGroup).getByRole("button", { name: "Collapse Generated assets" });
+    expect(generatedCollapseButton).toHaveClass("course-planner-icon-button");
+    expect(generatedCollapseButton).toHaveAttribute("aria-expanded", "true");
+    expect(generatedCollapseButton.closest(".assembly-asset-pool-group-heading-actions")).toBeInstanceOf(HTMLElement);
+    await user.click(generatedCollapseButton);
+    expect(within(generatedGroup).queryByText("Cute Cat")).not.toBeInTheDocument();
+    expect(within(generatedGroup).getByRole("button", { name: "Expand Generated assets" })).toHaveAttribute("aria-expanded", "false");
     const uploadedRugCard = within(uploadsGroup).getByText("Uploaded rug").closest("article");
     expect(uploadedRugCard).toBeInTheDocument();
     expect(within(uploadedRugCard as HTMLElement).getByText("0 uses")).toBeInTheDocument();
-    expect(within(assetPool).queryByText(/40764843|Chapter asset 001/)).not.toBeInTheDocument();
+    expect(within(assetPool).queryByText(/40764843|c47d8a10|Chapter asset 001/)).not.toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed asset 1")).toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed asset 2")).toBeInTheDocument();
+  });
+
+  it("uses fixed thumbnail frames, three-part cards, and a sticky upload footer", () => {
+    mockScenePackageImages();
+    render(<AssemblyEditorHarness initialScenePackage={manyResourceAssetPoolScenePackage()} />);
+
+    const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
+    const generatedGroup = within(assetPool).getByRole("group", { name: "Generated assets" });
+    const catCard = within(generatedGroup).getByText("Cute Cat").closest("article");
+    expect(catCard).toBeInTheDocument();
+    expect(catCard).toHaveClass("assembly-asset-row");
+    expect(catCard?.querySelector(".assembly-asset-card-top")).toBeInstanceOf(HTMLElement);
+    expect(catCard?.querySelector(".assembly-asset-card-middle")).toBeInstanceOf(HTMLElement);
+    expect(catCard?.querySelector(".assembly-asset-card-bottom")).toBeInstanceOf(HTMLElement);
+    expect(catCard?.querySelector(".assembly-asset-thumb-frame")).toBeInstanceOf(HTMLElement);
+    expect(catCard?.querySelector(".assembly-asset-thumb-frame img.assembly-asset-thumb")).toBeInstanceOf(HTMLImageElement);
+    expect(catCard?.querySelector(".assembly-asset-card-add")).toBeInstanceOf(HTMLButtonElement);
+    expect(catCard?.querySelector(".assembly-asset-card-bottom .assembly-asset-usage-count")).toBeInTheDocument();
+    expect(catCard?.querySelector(".assembly-asset-card-bottom .assembly-asset-actions")).toBeInTheDocument();
+    expect(within(catCard as HTMLElement).getByText("1024 x 1024")).toBeInTheDocument();
+    expect(within(catCard as HTMLElement).getByRole("button", { name: "Add to Assembly" })).toBeEnabled();
+    expect(within(catCard as HTMLElement).getByRole("button", { name: "Asset actions for Cute Cat" })).toHaveClass("assembly-asset-card-more");
+    expect(within(assetPool).queryByText(/^x$/i)).not.toBeInTheDocument();
+
+    const uploadFooter = assetPool.querySelector(".assembly-asset-pool-upload-footer");
+    expect(uploadFooter).toBeInstanceOf(HTMLElement);
+    expect(within(uploadFooter as HTMLElement).getByRole("button", { name: "Upload images" })).toBeInTheDocument();
+    expect(within(uploadFooter as HTMLElement).getByRole("button", { name: "Upload images" })).toHaveClass(
+      "assembly-asset-pool-upload-button",
+    );
+    expect(within(assetPool).getAllByRole("button", { name: "Upload images" })).toHaveLength(1);
+
+    const stylesheet = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyAssetPool.css"),
+      "utf8",
+    );
+    expect(cssRule(stylesheet, ".assembly-editor-assets-column .assembly-asset-row")).toContain(
+      "grid-template-rows: auto minmax(0, 1fr) auto",
+    );
+    expect(cssRule(stylesheet, ".assembly-editor-assets-column .assembly-asset-thumb-frame")).toContain(
+      "aspect-ratio: 4 / 3",
+    );
+    const footerRule = cssRule(stylesheet, ".assembly-asset-pool-upload-footer");
+    expect(footerRule).toContain("position: sticky");
+    expect(footerRule).toContain("bottom: 0");
+    const shellStylesheet = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyEditorShell.css"),
+      "utf8",
+    );
+    const railRule = cssRule(shellStylesheet, ".assembly-product-shell .assembly-editor-assets-column");
+    expect(railRule).toContain("grid-template-rows: minmax(0, 1fr)");
+    expect(railRule).toContain("align-content: stretch");
   });
 
   it("searches generated and uploaded asset groups from the same field", async () => {
@@ -158,7 +222,7 @@ describe("Assembly editor asset pool", () => {
 
     expect(await screen.findByText("Saving changes")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Milk cup target/, pressed: true })).toBeInTheDocument();
-    expect(within(assetPool).getByRole("button", { name: "Locate Placement" })).toBeInTheDocument();
+    expect(within(card as HTMLElement).getByRole("button", { name: "Asset actions for Milk cup" })).toBeInTheDocument();
   });
 
   it("locates an existing placement when clicking its used asset card", async () => {
@@ -183,14 +247,14 @@ describe("Assembly editor asset pool", () => {
     render(<AssemblyEditorHarness initialScenePackage={studioScenePackageFixture()} />);
 
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
-    expect(within(assetPool).getByRole("button", { name: "Locate Placement" })).toBeInTheDocument();
+    expect(within(assetPool).getByRole("button", { name: "Asset actions for Breakfast bowl" })).toBeInTheDocument();
 
     await user.click(within(assetPool).getByRole("button", { name: "Add to Assembly" }));
 
     expect(await screen.findByText("Saving changes")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Breakfast bowl target/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Breakfast bowl 2 target/, pressed: true })).toBeInTheDocument();
-    expect(within(assetPool).getByRole("button", { name: "Locate Placement" })).toBeInTheDocument();
+    expect(within(assetPool).getByRole("button", { name: "Asset actions for Breakfast bowl" })).toBeInTheDocument();
     expect(within(assetPool).getByRole("button", { name: "Add to Assembly" })).toBeEnabled();
     expect(within(assetPool).getByText("2 uses")).toBeInTheDocument();
   });
@@ -261,11 +325,12 @@ describe("Assembly editor asset pool", () => {
 
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
     const search = within(assetPool).getByRole("searchbox", { name: "Search assets" });
-    expect(within(assetPool).getByText("Unnamed asset")).toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed asset 1")).toBeInTheDocument();
 
     await user.type(search, "Unnamed asset");
 
-    expect(within(assetPool).getByText("Unnamed asset")).toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed asset 1")).toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed asset 2")).toBeInTheDocument();
     expect(within(assetPool).queryByText(/40764843|Chapter asset 001/)).not.toBeInTheDocument();
   });
 
@@ -299,8 +364,8 @@ describe("Assembly editor asset pool", () => {
     expect(within(assetPool).queryByText(uuidName)).not.toBeInTheDocument();
     expect(within(assetPool).queryByText(`${uuidName}.png`)).not.toBeInTheDocument();
     expect(within(assetPool).getByText("Unnamed asset")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Chapter asset 001 target/ })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Placement properties" })).toHaveTextContent("Chapter asset 001");
+    expect(screen.getByRole("button", { name: /Unnamed asset target/ })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Placement properties" })).toHaveTextContent("Unnamed asset");
   });
 
   it("disables Add to Assembly when no Empty Scene Image is selected", () => {
@@ -330,6 +395,7 @@ describe("Assembly editor asset pool", () => {
 function manyResourceAssetPoolScenePackage(): ChapterScenePackage {
   const scenePackage = coursePlannerVisualReferenceFixture().scenePackage;
   const uuidOnlyAssetName = "40764843-f70d-48dd-9d6a-8475a3fff53d";
+  const secondUuidOnlyAssetName = "c47d8a10-9a5f-4e01-a45f-01cb21b7ec23";
 
   return {
     ...scenePackage,
@@ -370,6 +436,11 @@ function manyResourceAssetPoolScenePackage(): ChapterScenePackage {
       }),
       sceneAsset("chapter_asset_rug", "Uploaded rug", "uploaded-rug.png"),
       sceneAsset("chapter_asset_001", uuidOnlyAssetName, `${uuidOnlyAssetName}.png`),
+      {
+        ...sceneAsset("chapter_asset_002", secondUuidOnlyAssetName, `${secondUuidOnlyAssetName}.png`),
+        width: null as unknown as number,
+        height: null as unknown as number,
+      },
     ],
   };
 }
@@ -413,4 +484,12 @@ function generatedOutput(
     unavailable_reason: overrides.unavailable_reason ?? null,
     chapter_asset_id: overrides.chapter_asset_id ?? null,
   };
+}
+
+function cssRule(stylesheet: string, selector: string): string {
+  return stylesheet.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{[^}]+}`))?.[0] ?? "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

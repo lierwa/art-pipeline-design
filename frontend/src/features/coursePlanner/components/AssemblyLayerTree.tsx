@@ -5,24 +5,35 @@ import {
   useState,
   type CSSProperties,
   type Dispatch,
-  type MouseEvent,
   type SetStateAction,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react";
-import { ChevronDown, GripVertical, Layers3, Trash2 } from "lucide-react";
 import {
-  Tree,
-  type NodeRendererProps,
-  type TreeApi,
-} from "react-arborist";
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { ChevronDown, Eye, EyeOff, Folder, Layers3, Trash2 } from "lucide-react";
 
 import { type AssemblyManifestDraft } from "../assembly/assemblyManifestDraft";
 import { scenePackageMediaUrl } from "../scenePackageMedia";
 import type { ChapterScenePackage } from "../types";
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
+import { buildReadableAssetPoolAssetNames } from "./assemblyDisplayNames";
 import {
+  buildLayerDropTargets,
   buildLayerTreeData,
-  countTreeRows,
   applyCollapsedGroups,
   createDeletedLayerNodeDraft,
   createGroupedSelectionDraft,
@@ -35,17 +46,20 @@ import {
   isLayerNodeSelected,
   resolveGroupActionState,
   sameStringSet,
+  type AssemblyLayerDropTarget,
   type AssemblyLayerTreeNode,
 } from "./assemblyLayerTreeModel";
 
 type AssemblyLayerTreeProps = {
   draft: AssemblyManifestDraft;
+  hiddenPlacementIds?: ReadonlySet<string>;
   scenePackage: ChapterScenePackage;
   selectedNodeIds: string[];
   selectedPlacementId: string | null;
   onDraftChange: (draft: AssemblyManifestDraft) => void;
   onSelectNodeIds: (nodeIds: string[]) => void;
   onSelectPlacement: (placementId: string | null) => void;
+  onTogglePlacementVisibility?: (node: AssemblyLayerTreeNode) => void;
 };
 
 type PlacementSelectionEvent = {
@@ -54,18 +68,35 @@ type PlacementSelectionEvent = {
   shiftKey: boolean;
 };
 
-const ASSEMBLY_LAYER_ROW_HEIGHT = 64;
+type AssemblyLayerTreeMove = {
+  dragIds: string[];
+  index: number;
+  parentId: unknown;
+};
+
+const EMPTY_HIDDEN_PLACEMENT_IDS: ReadonlySet<string> = new Set();
+
+const layerDropCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
+};
 
 export function AssemblyLayerTree({
   draft,
+  hiddenPlacementIds = EMPTY_HIDDEN_PLACEMENT_IDS,
   onDraftChange,
   onSelectNodeIds,
   onSelectPlacement,
+  onTogglePlacementVisibility,
   scenePackage,
   selectedNodeIds,
   selectedPlacementId,
 }: AssemblyLayerTreeProps) {
-  const state = useAssemblyLayerTreeState(draft, selectedNodeIds, selectedPlacementId);
+  const state = useAssemblyLayerTreeState(draft, scenePackage, selectedNodeIds, selectedPlacementId);
+  const [draggingLayerId, setDraggingLayerId] = useState<string | null>(null);
+  const [activeDropTargetId, setActiveDropTargetId] = useState<string | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const draggingLayerNode = draggingLayerId ? state.nodesById.get(draggingLayerId) ?? null : null;
   const handlers = createAssemblyLayerTreeHandlers({
     draft,
     onDraftChange,
@@ -76,6 +107,35 @@ export function AssemblyLayerTree({
     state,
   });
 
+  function handleLayerDragStart(event: DragStartEvent) {
+    setDraggingLayerId(String(event.active.id));
+    setActiveDropTargetId(null);
+  }
+
+  function handleLayerDragOver(event: DragOverEvent) {
+    setActiveDropTargetId(event.over?.id ? String(event.over.id) : null);
+  }
+
+  function handleLayerDragCancel() {
+    setDraggingLayerId(null);
+    setActiveDropTargetId(null);
+  }
+
+  function handleLayerDragEnd(event: DragEndEvent) {
+    const draggedId = String(event.active.id);
+    const dropTarget = event.over?.data.current?.target as AssemblyLayerDropTarget | undefined;
+    setDraggingLayerId(null);
+    setActiveDropTargetId(null);
+    if (!dropTarget) {
+      return;
+    }
+    handlers.handleLayerTreeMove({
+      dragIds: [draggedId],
+      parentId: dropTarget.parentId,
+      index: dropTarget.index,
+    });
+  }
+
   return (
     <section className="chapter-studio-panel chapter-studio-panel-stack asset-tree-panel assembly-placement-list-panel" aria-label="Placement layers">
       <div className="chapter-studio-panel-heading assembly-layer-panel-heading">
@@ -83,43 +143,57 @@ export function AssemblyLayerTree({
           <h2>Placement layers</h2>
           <p>Front to back</p>
         </div>
-        <LayerGroupAction groupAction={state.groupAction} onAction={handlers.handleGroupAction} />
+        <LayerPanelActions
+          deleteNode={state.selectedLayerNode}
+          groupAction={state.groupAction}
+          onDelete={handlers.handleDeleteLayerNode}
+          onGroupAction={handlers.handleGroupAction}
+        />
       </div>
       <div className="asset-tree-body assembly-layer-tree-body" ref={state.panelBodyRef}>
         <div className="asset-tree assembly-layer-list" role="tree" aria-label="Placement layer order">
           {state.tree.length > 0 ? (
-            <Tree
-              ref={state.treeRef}
-              className="asset-tree-arborist"
-              data={state.visibleTree}
-              height={state.treeViewportHeight}
-              indent={0}
-              rowHeight={ASSEMBLY_LAYER_ROW_HEIGHT}
-              selection={selectedPlacementId ?? undefined}
-              width="100%"
-              childrenAccessor={(node) => node.children ?? null}
-              disableDrop={({ dragNodes, parentNode }) => {
-                if (!parentNode?.data) {
-                  return false;
-                }
-                return !(parentNode.data.kind === "group" && dragNodes[0]?.data.kind === "placement");
-              }}
-              idAccessor={(node) => node.id}
-              onMove={handlers.handleLayerTreeMove}
-              openByDefault
+            <DndContext
+              sensors={sensors}
+              collisionDetection={layerDropCollisionDetection}
+              onDragStart={handleLayerDragStart}
+              onDragOver={handleLayerDragOver}
+              onDragCancel={handleLayerDragCancel}
+              onDragEnd={handleLayerDragEnd}
             >
-              {(props) => (
-                <PlacementLayerListRow
-                  {...props}
-                  collapsed={state.collapsedGroupIds.has(props.node.data.id)}
-                  onDelete={handlers.handleDeleteLayerNode}
-                  onSelect={handlers.handleRowSelection}
-                  onToggleGroup={handlers.handleToggleGroup}
-                  scenePackage={scenePackage}
-                  selected={isLayerNodeSelected(props.node.data, state.selectedIdSet, selectedNodeIds, selectedPlacementId)}
+              <div className="assembly-layer-native-tree" data-dragging-layer={draggingLayerId ?? undefined}>
+                {state.visibleTree.map((node, index) => (
+                  <PlacementLayerRootBlock
+                    key={node.id}
+                    activeDropTargetId={activeDropTargetId}
+                    collapsedGroupIds={state.collapsedGroupIds}
+                    draggingLayerId={draggingLayerId}
+                    dropTargetsById={state.dropTargetsById}
+                    hiddenPlacementIds={hiddenPlacementIds}
+                    node={node}
+                    onSelect={handlers.handleRowSelection}
+                    onToggleGroup={handlers.handleToggleGroup}
+                    onToggleVisibility={onTogglePlacementVisibility}
+                    onUngroup={handlers.handleGroupAction}
+                    rootIndex={index}
+                    scenePackage={scenePackage}
+                    selectedIdSet={state.selectedIdSet}
+                    selectedNodeIds={selectedNodeIds}
+                    selectedPlacementId={selectedPlacementId}
+                  />
+                ))}
+                <LayerDropZone
+                  active={draggingLayerId !== null}
+                  activeDropTargetId={activeDropTargetId}
+                  target={state.dropTargetsById.get("root-end")}
                 />
-              )}
-            </Tree>
+              </div>
+              <DragOverlay dropAnimation={null} zIndex={10_000}>
+                {draggingLayerNode ? (
+                  <LayerDragOverlayPreview node={draggingLayerNode} scenePackage={scenePackage} />
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           ) : <PlacementLayerEmptyState />}
         </div>
       </div>
@@ -129,39 +203,59 @@ export function AssemblyLayerTree({
 
 function useAssemblyLayerTreeState(
   draft: AssemblyManifestDraft,
+  scenePackage: ChapterScenePackage,
   selectedNodeIds: string[],
   selectedPlacementId: string | null,
 ) {
-  const tree = useMemo(() => buildLayerTreeData(draft), [draft]);
-  const treeRef = useRef<TreeApi<AssemblyLayerTreeNode>>(null);
+  const assetNameById = useMemo(
+    () => buildReadableAssetPoolAssetNames(scenePackage.chapter_assets),
+    [scenePackage.chapter_assets],
+  );
+  const tree = useMemo(() => buildLayerTreeData(draft, assetNameById), [assetNameById, draft]);
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const selectedIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(() => new Set());
   const visibleTree = useMemo(() => applyCollapsedGroups(tree, collapsedGroupIds), [collapsedGroupIds, tree]);
+  const dropTargets = useMemo(() => buildLayerDropTargets(visibleTree), [visibleTree]);
+  const dropTargetsById = useMemo(
+    () => new Map(dropTargets.map((target) => [target.id, target])),
+    [dropTargets],
+  );
   const visibleNodeIds = useMemo(() => flattenVisibleNodeIds(visibleTree), [visibleTree]);
   const nodesById = useMemo(() => indexLayerNodes(tree), [tree]);
+  const selectedLayerNode = useMemo(() => {
+    if (selectedNodeIds.length === 1) {
+      return nodesById.get(selectedNodeIds[0] ?? "") ?? null;
+    }
+    // WHY: 多选时不能把最后聚焦的 placement 伪装成唯一删除目标；
+    // 批量删除走 Properties 的确认入口，避免 header 图标误导删除范围。
+    return null;
+  }, [nodesById, selectedNodeIds]);
   const groupAction = useMemo(() => resolveGroupActionState(draft, selectedNodeIds), [draft, selectedNodeIds]);
-  const treeFallbackHeight = Math.max(ASSEMBLY_LAYER_ROW_HEIGHT, countTreeRows(visibleTree) * ASSEMBLY_LAYER_ROW_HEIGHT);
-  const [treeViewportHeight, setTreeViewportHeight] = useState(treeFallbackHeight);
 
   useEffect(() => {
-    if (selectedPlacementId) {
-      treeRef.current?.scrollTo(selectedPlacementId);
+    const scrollTargetId = selectedNodeIds[selectedNodeIds.length - 1] ?? selectedPlacementId;
+    if (!scrollTargetId) {
+      return;
     }
-  }, [selectedPlacementId, tree]);
+    const scrollTarget = panelBodyRef.current
+      ?.querySelector<HTMLElement>(`[data-layer-node-id="${escapeLayerNodeId(scrollTargetId)}"]`) ?? null;
+    if (typeof scrollTarget?.scrollIntoView === "function") {
+      scrollTarget.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedNodeIds, selectedPlacementId, tree]);
   useEffect(() => pruneCollapsedGroupIds(draft, setCollapsedGroupIds), [draft.groups]);
-  useEffect(() => syncLayerTreeHeight(panelBodyRef.current, treeFallbackHeight, setTreeViewportHeight), [treeFallbackHeight]);
 
   return {
     collapsedGroupIds,
+    dropTargetsById,
     groupAction,
     nodesById,
     panelBodyRef,
+    selectedLayerNode,
     selectedIdSet,
     setCollapsedGroupIds,
     tree,
-    treeRef,
-    treeViewportHeight,
     visibleNodeIds,
     visibleTree,
   };
@@ -191,7 +285,7 @@ function createAssemblyLayerTreeHandlers({
     handleGroupAction: () => {
       applyGroupAction({ draft, groupAction: state.groupAction, onDraftChange, onSelectNodeIds, onSelectPlacement });
     },
-    handleLayerTreeMove: (move: { dragIds: string[]; index: number; parentId: unknown }) => {
+    handleLayerTreeMove: (move: AssemblyLayerTreeMove) => {
       const result = createMovedLayerSelectionDraft(
         draft,
         state.tree,
@@ -233,35 +327,6 @@ function pruneCollapsedGroupIds(
     const next = new Set([...current].filter((groupId) => groupIds.has(groupId)));
     return sameStringSet(next, current) ? current : next;
   });
-}
-
-function syncLayerTreeHeight(
-  body: HTMLDivElement | null,
-  treeFallbackHeight: number,
-  setTreeViewportHeight: Dispatch<SetStateAction<number>>,
-) {
-  if (!body) {
-    setTreeViewportHeight(treeFallbackHeight);
-    return;
-  }
-
-  function syncTreeHeight() {
-    const measuredHeight = body?.clientHeight ?? 0;
-    setTreeViewportHeight(
-      measuredHeight > 0
-        ? Math.max(ASSEMBLY_LAYER_ROW_HEIGHT, measuredHeight)
-        : treeFallbackHeight,
-    );
-  }
-
-  syncTreeHeight();
-  if (typeof ResizeObserver === "undefined") {
-    return;
-  }
-
-  const observer = new ResizeObserver(syncTreeHeight);
-  observer.observe(body);
-  return () => observer.disconnect();
 }
 
 function applyGroupAction({
@@ -333,54 +398,176 @@ function toggleCollapsedGroup(
   });
 }
 
-function LayerGroupAction({
+function escapeLayerNodeId(nodeId: string): string {
+  return nodeId.replace(/["\\]/g, "\\$&");
+}
+
+function LayerPanelActions({
+  deleteNode,
   groupAction,
-  onAction,
+  onDelete,
+  onGroupAction,
 }: {
+  deleteNode: AssemblyLayerTreeNode | null;
   groupAction: ReturnType<typeof resolveGroupActionState>;
-  onAction: () => void;
+  onDelete: (node: AssemblyLayerTreeNode) => void;
+  onGroupAction: () => void;
 }) {
-  if (groupAction.kind === "idle") {
+  if (groupAction.kind === "idle" && !deleteNode) {
     return null;
   }
 
-  const label = groupAction.kind === "group" ? "Group selected layers" : "Ungroup selected layer";
   return (
     <div className="assembly-layer-panel-actions" role="toolbar" aria-label="Layer actions">
-      <button
-        type="button"
-        className="course-planner-secondary-action assembly-layer-command"
-        aria-label={label}
-        title={label}
-        onClick={onAction}
-      >
-        <Layers3 size={15} aria-hidden="true" />
-        <span>{groupAction.kind === "group" ? "Group" : "Ungroup"}</span>
-      </button>
+      {groupAction.kind === "group" ? (
+        <button
+          type="button"
+          className="course-planner-secondary-action assembly-layer-command"
+          aria-label="Group selected layers"
+          title="Group selected layers"
+          onClick={onGroupAction}
+        >
+          <Layers3 size={15} aria-hidden="true" />
+          <span>Group</span>
+        </button>
+      ) : null}
+      {deleteNode ? (
+        <LayerDeleteAction
+          buttonClassName="course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-panel-delete-button"
+          node={deleteNode}
+          onDelete={onDelete}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function PlacementLayerRootBlock({
+  activeDropTargetId,
+  collapsedGroupIds,
+  draggingLayerId,
+  dropTargetsById,
+  hiddenPlacementIds,
+  node,
+  onSelect,
+  onToggleGroup,
+  onToggleVisibility,
+  onUngroup,
+  rootIndex,
+  scenePackage,
+  selectedIdSet,
+  selectedNodeIds,
+  selectedPlacementId,
+}: {
+  activeDropTargetId: string | null;
+  collapsedGroupIds: Set<string>;
+  draggingLayerId: string | null;
+  dropTargetsById: Map<string, AssemblyLayerDropTarget>;
+  hiddenPlacementIds: ReadonlySet<string>;
+  node: AssemblyLayerTreeNode;
+  onSelect: (node: AssemblyLayerTreeNode, event: PlacementSelectionEvent) => void;
+  onToggleGroup: (groupId: string) => void;
+  onToggleVisibility?: (node: AssemblyLayerTreeNode) => void;
+  onUngroup: () => void;
+  rootIndex: number;
+  scenePackage: ChapterScenePackage;
+  selectedIdSet: Set<string>;
+  selectedNodeIds: string[];
+  selectedPlacementId: string | null;
+}) {
+  const isCollapsed = node.kind === "group" && collapsedGroupIds.has(node.id);
+  const children = isCollapsed ? [] : node.children ?? [];
+
+  return (
+    <div className="assembly-layer-root-block" data-layer-root-index={rootIndex}>
+      <LayerDropZone
+        active={draggingLayerId !== null}
+        activeDropTargetId={activeDropTargetId}
+        target={dropTargetsById.get(`root-before-${node.id}`)}
+      />
+      <PlacementLayerListRow
+        dragging={draggingLayerId === node.id}
+        level={0}
+        node={node}
+        collapsed={isCollapsed}
+        onSelect={onSelect}
+        onUngroup={onUngroup}
+        onToggleGroup={onToggleGroup}
+        onToggleVisibility={onToggleVisibility}
+        scenePackage={scenePackage}
+        selected={isLayerNodeSelected(node, selectedIdSet, selectedNodeIds, selectedPlacementId)}
+        visibilityHidden={isLayerNodeHidden(node, hiddenPlacementIds)}
+      />
+      {node.kind === "group" && children.length > 0 ? (
+        <div className="assembly-layer-group-children" role="group" aria-label={`${node.name} child layers`}>
+          {children.map((child) => (
+            <div key={child.id} className="assembly-layer-child-block">
+              <LayerDropZone
+                active={draggingLayerId !== null}
+                activeDropTargetId={activeDropTargetId}
+                target={dropTargetsById.get(`group-${node.id}-before-${child.id}`)}
+              />
+              <PlacementLayerListRow
+                dragging={draggingLayerId === child.id}
+                level={1}
+                node={child}
+                collapsed={false}
+                onSelect={onSelect}
+                onUngroup={onUngroup}
+                onToggleGroup={onToggleGroup}
+                onToggleVisibility={onToggleVisibility}
+                scenePackage={scenePackage}
+                selected={isLayerNodeSelected(child, selectedIdSet, selectedNodeIds, selectedPlacementId)}
+                visibilityHidden={isLayerNodeHidden(child, hiddenPlacementIds)}
+              />
+            </div>
+          ))}
+          <LayerDropZone
+            active={draggingLayerId !== null}
+            activeDropTargetId={activeDropTargetId}
+            target={dropTargetsById.get(`group-${node.id}-end`)}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function PlacementLayerListRow({
   collapsed,
-  dragHandle,
+  dragging,
+  level,
   node,
-  onDelete,
   onSelect,
+  onUngroup,
   onToggleGroup,
+  onToggleVisibility,
   scenePackage,
   selected,
-  style,
+  visibilityHidden,
 }: {
   collapsed: boolean;
-  onDelete: (node: AssemblyLayerTreeNode) => void;
+  dragging: boolean;
+  level: number;
+  node: AssemblyLayerTreeNode;
   onSelect: (node: AssemblyLayerTreeNode, event: PlacementSelectionEvent) => void;
+  onUngroup: () => void;
   onToggleGroup: (groupId: string) => void;
+  onToggleVisibility?: (node: AssemblyLayerTreeNode) => void;
   scenePackage: ChapterScenePackage;
   selected: boolean;
-} & NodeRendererProps<AssemblyLayerTreeNode>) {
-  const row = node.data;
+  visibilityHidden: boolean;
+}) {
+  const row = node;
   const rowAriaLabel = `${row.name} ${row.kind === "placement" ? row.runtimeRole : row.typeLabel ?? ""}`.trim();
+  const rowRoleLabel = row.kind === "group" ? `(${flattenNodePlacementIds(row).length})` : row.typeLabel;
+  const { attributes, isDragging, listeners, setNodeRef } = useDraggable({
+    id: row.id,
+    data: {
+      kind: row.kind,
+      nodeId: row.id,
+    },
+  });
 
   function handleSelectKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Enter" && event.key !== " ") {
@@ -401,25 +588,38 @@ function PlacementLayerListRow({
 
   return (
     <div
-      style={style}
       className={[
         "asset-tree-item",
         "assembly-layer-item",
+        row.kind === "group" ? "assembly-layer-item-group" : "assembly-layer-item-placement",
         selected ? "is-selected is-focused" : "",
-        node.isDragging ? "is-dragging" : "",
-        node.willReceiveDrop ? "is-drop-target" : "",
+        visibilityHidden ? "is-hidden" : "",
+        dragging || isDragging ? "is-dragging" : "",
       ].filter(Boolean).join(" ")}
+      data-depth={level}
+      data-layer-node-id={row.id}
       role="treeitem"
       aria-selected={selected}
     >
-      <div ref={dragHandle} className="asset-tree-row assembly-layer-row">
-        <div className="asset-tree-row-depth" style={{ "--asset-depth": node.level } as CSSProperties}>
+      <div
+        ref={setNodeRef}
+        className="asset-tree-row assembly-layer-row"
+      >
+        <div
+          className="asset-tree-row-depth"
+          style={{
+            "--asset-depth": level,
+            "--assembly-layer-depth-offset": level > 0 ? "24px" : "0",
+          } as CSSProperties}
+        >
           {row.kind === "group" ? (
             <LayerCollapseToggle collapsed={collapsed} groupName={row.name} onClick={handleToggleClick} />
           ) : (
             <span className="asset-generate-toggle-spacer" aria-hidden="true" />
           )}
           <div
+            {...attributes}
+            {...listeners}
             className="asset-tree-select assembly-layer-row-select"
             role="button"
             tabIndex={0}
@@ -436,27 +636,172 @@ function PlacementLayerListRow({
               />
             ) : (
               <span className="asset-tree-thumb assembly-layer-thumb assembly-layer-thumb-group" aria-hidden="true">
-                <Layers3 size={16} />
+                <Folder size={16} />
               </span>
             )}
-            <span className="asset-tree-copy">
-              <strong>{row.name}</strong>
-              {row.typeLabel ? <span>{row.typeLabel}</span> : null}
-            </span>
+            <strong className="assembly-layer-name">{row.name}</strong>
           </div>
         </div>
         <span
           className="asset-tree-actions assembly-layer-row-actions"
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
         >
-          <span className="assembly-layer-drag-affordance" title="Drag to reorder layers">
-            <GripVertical size={16} strokeWidth={2.2} />
-          </span>
-          <LayerDeleteAction node={row} onDelete={onDelete} />
+          {rowRoleLabel ? <span className="assembly-layer-role">{rowRoleLabel}</span> : null}
+          {selected && row.kind === "group" ? (
+            <LayerUngroupAction node={row} onUngroup={onUngroup} />
+          ) : null}
+          <LayerVisibilityAction hidden={visibilityHidden} node={row} onToggle={onToggleVisibility} />
         </span>
       </div>
     </div>
+  );
+}
+
+function LayerDragOverlayPreview({
+  node,
+  scenePackage,
+}: {
+  node: AssemblyLayerTreeNode;
+  scenePackage: ChapterScenePackage;
+}) {
+  const roleLabel = node.kind === "group" ? `(${flattenNodePlacementIds(node).length})` : node.typeLabel;
+  return (
+    <div
+      className={[
+        "asset-tree-item",
+        "assembly-layer-item",
+        "assembly-layer-drag-overlay",
+        node.kind === "group" ? "assembly-layer-item-group" : "assembly-layer-item-placement",
+      ].join(" ")}
+    >
+      <div className="asset-tree-row assembly-layer-row">
+        <div
+          className="asset-tree-row-depth"
+          style={{
+            "--asset-depth": 0,
+            "--assembly-layer-depth-offset": "0",
+          } as CSSProperties}
+        >
+          <span className="asset-generate-toggle-spacer" aria-hidden="true" />
+          <div className="asset-tree-select assembly-layer-row-select">
+            {node.assetId ? (
+              <img
+                className="asset-tree-thumb assembly-layer-thumb"
+                alt=""
+                src={scenePackageMediaUrl(scenePackage.chapter_id, "chapter_assets", node.assetId)}
+              />
+            ) : (
+              <span className="asset-tree-thumb assembly-layer-thumb assembly-layer-thumb-group" aria-hidden="true">
+                <Folder size={16} />
+              </span>
+            )}
+            <strong className="assembly-layer-name">{node.name}</strong>
+          </div>
+        </div>
+        <span className="asset-tree-actions assembly-layer-row-actions">
+          {roleLabel ? <span className="assembly-layer-role">{roleLabel}</span> : null}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function LayerDropZone({
+  active,
+  activeDropTargetId,
+  target,
+}: {
+  active: boolean;
+  activeDropTargetId: string | null;
+  target: AssemblyLayerDropTarget | undefined;
+}) {
+  if (!target) {
+    return null;
+  }
+  return <RegisteredLayerDropZone active={active} activeDropTargetId={activeDropTargetId} target={target} />;
+}
+
+function RegisteredLayerDropZone({
+  active,
+  activeDropTargetId,
+  target,
+}: {
+  active: boolean;
+  activeDropTargetId: string | null;
+  target: AssemblyLayerDropTarget;
+}) {
+  const { isOver, setNodeRef } = useDroppable({
+    id: target.id,
+    data: { target },
+  });
+  const isCurrentTarget = isOver || activeDropTargetId === target.id;
+
+  return (
+    <div
+      ref={setNodeRef}
+      aria-label={target.label}
+      className={[
+        "assembly-layer-drop-zone",
+        `assembly-layer-drop-zone-${target.kind}`,
+        active ? "is-drop-active" : "",
+        isCurrentTarget ? "is-over" : "",
+      ].filter(Boolean).join(" ")}
+      data-layer-drop-kind={target.kind}
+      data-layer-drop-parent-id={target.parentId ?? "root"}
+      data-layer-drop-index={target.index}
+    />
+  );
+}
+
+function LayerUngroupAction({
+  node,
+  onUngroup,
+}: {
+  node: AssemblyLayerTreeNode;
+  onUngroup: () => void;
+}) {
+  const label = `Ungroup ${node.name}`;
+  return (
+    <button
+      type="button"
+      className="course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-ungroup-button"
+      aria-label={label}
+      title={label}
+      onClick={onUngroup}
+    >
+      <Layers3 size={15} aria-hidden="true" />
+    </button>
+  );
+}
+
+function isLayerNodeHidden(node: AssemblyLayerTreeNode, hiddenPlacementIds: ReadonlySet<string>): boolean {
+  const placementIds = flattenNodePlacementIds(node);
+  return placementIds.length > 0 && placementIds.every((placementId) => hiddenPlacementIds.has(placementId));
+}
+
+function LayerVisibilityAction({
+  hidden,
+  node,
+  onToggle,
+}: {
+  hidden: boolean;
+  node: AssemblyLayerTreeNode;
+  onToggle?: (node: AssemblyLayerTreeNode) => void;
+}) {
+  const action = hidden ? "Show" : "Hide";
+  const label = `${action} ${node.name}${node.kind === "group" ? " group" : ""}`;
+  return (
+    <button
+      type="button"
+      className="course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-visibility-button"
+      aria-label={label}
+      title={label}
+      onClick={() => onToggle?.(node)}
+    >
+      {hidden ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+    </button>
   );
 }
 
@@ -489,9 +834,11 @@ function LayerCollapseToggle({
 }
 
 function LayerDeleteAction({
+  buttonClassName = "course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-delete-button",
   node,
   onDelete,
 }: {
+  buttonClassName?: string;
   node: AssemblyLayerTreeNode;
   onDelete: (node: AssemblyLayerTreeNode) => void;
 }) {
@@ -503,7 +850,7 @@ function LayerDeleteAction({
       trigger={(
         <button
           type="button"
-          className="course-planner-secondary-action chapter-studio-icon-action assembly-editor-icon-button assembly-layer-delete-button"
+          className={buttonClassName}
           aria-label={deleteLabel}
           title={deleteLabel}
         >
@@ -531,4 +878,3 @@ function PlacementLayerEmptyState() {
     </div>
   );
 }
-

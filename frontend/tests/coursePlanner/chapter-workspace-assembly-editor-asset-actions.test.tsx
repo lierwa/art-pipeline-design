@@ -49,7 +49,8 @@ describe("Assembly editor asset actions", () => {
 
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
     const assetRows = within(assetPool).getAllByRole("article");
-    await user.click(within(assetRows[0] ?? document.body).getByRole("button", { name: "Delete Asset" }));
+    await user.click(within(assetRows[0] ?? document.body).getByRole("button", { name: "Asset actions for Breakfast bowl" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete asset" }));
     expect(await screen.findByText("Delete Breakfast bowl?")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Confirm delete asset" }));
@@ -124,18 +125,19 @@ describe("Assembly editor asset actions", () => {
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
     expect(assetPool).not.toHaveTextContent(uuidAssetId);
     expect(assetPool).not.toHaveTextContent(dependencyUuidAssetId);
-    expect(within(assetPool).getAllByText("Unnamed target asset").length).toBeGreaterThan(0);
+    expect(within(assetPool).getByText("Unnamed target asset 1")).toBeInTheDocument();
+    expect(within(assetPool).getByText("Unnamed target asset 2")).toBeInTheDocument();
 
     const layerTree = screen.getByRole("region", { name: "Placement layers" });
-    await user.click(within(layerTree).getByRole("button", { name: /Chapter asset target/ }));
+    await user.click(within(layerTree).getByRole("button", { name: /Unnamed target asset 1 target/ }));
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
     expect(properties).not.toHaveTextContent(uuidAssetId);
     expect(properties).not.toHaveTextContent(dependencyUuidAssetId);
-    expect(within(properties).getAllByText("Chapter asset").length).toBeGreaterThan(0);
-    expect(within(properties).getByLabelText("Name")).toHaveDisplayValue("Chapter asset");
+    expect(within(properties).getAllByText("Unnamed target asset 1").length).toBeGreaterThan(0);
+    expect(within(properties).getByLabelText("Name")).toHaveDisplayValue("Unnamed target asset 1");
     expect(within(properties).queryByText("Dependencies")).not.toBeInTheDocument();
-    expect(within(properties).queryByRole("checkbox", { name: /Chapter asset initial/ })).not.toBeInTheDocument();
+    expect(within(properties).queryByRole("checkbox", { name: /Unnamed target asset 2 initial/ })).not.toBeInTheDocument();
   });
 
   it("does not expose grouping controls in the placement properties workflow", async () => {
@@ -173,6 +175,6 @@ describe("Assembly editor asset actions", () => {
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
     const uploadsGroup = await within(assetPool).findByRole("group", { name: "Uploads" });
     expect(await within(uploadsGroup).findByRole("heading", { name: "cloth" })).toBeInTheDocument();
-    expect(within(assetPool).getByRole("button", { name: "Upload Scene Asset" })).toBeInTheDocument();
+    expect(within(assetPool).getByRole("button", { name: "Upload images" })).toBeInTheDocument();
   });
 });

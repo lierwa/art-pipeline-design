@@ -1,7 +1,9 @@
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 
 import { CanvasStage } from "../../canvas/CanvasStage";
+import type { CanvasSelectionOverlayView } from "../../canvas/CanvasOverlayLayer";
 import { useCanvasViewport } from "../../canvas/useCanvasViewport";
 import { isEditableShortcutTarget, isSpacePanShortcut } from "../../../app/keyboardShortcuts";
 import type { Box, ElementSelectionMode, OverlayState, SourceMetadata } from "../../../domain/workspace";
@@ -22,7 +24,6 @@ import {
   type AssemblyPlacementContextMenuAction,
 } from "./AssemblyPlacementContextMenu";
 import {
-  alignAssemblyPlacements,
   boxIntersectsSelection,
   canvasPointFromEvent,
   isFiniteCanvasPoint,
@@ -32,8 +33,6 @@ import {
 } from "./assemblyCanvasControls";
 
 export type AssemblyAuthoringCanvasControls = {
-  align: (alignment: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => void;
-  canAlign: boolean;
   isPanMode: boolean;
   zoomPercent: number;
   pan: () => void;
@@ -49,8 +48,10 @@ type AssemblyAuthoringCanvasProps = {
   canSave?: boolean;
   canUndo?: boolean;
   draft: AssemblyManifestDraft;
+  hiddenPlacementIds?: ReadonlySet<string>;
   overlays: OverlayState;
   scenePackage: ChapterScenePackage;
+  selectedLayerNodeIds?: string[];
   selectedPlacementId: string | null;
   selectedPlacementIds?: string[];
   onAddAsset?: (assetId: string, center?: { x: number; y: number }) => Promise<void> | void;
@@ -75,13 +76,16 @@ const ASSEMBLY_CANVAS_CAPABILITIES = {
   canCreateChild: false,
   canRenameObjects: false,
   canUseMissingMask: false,
+  canRotateObjects: true,
 } as const;
+const EMPTY_HIDDEN_PLACEMENT_IDS: ReadonlySet<string> = new Set();
 
 export function AssemblyAuthoringCanvas({
   canRedo = false,
   canSave = false,
   canUndo = false,
   draft,
+  hiddenPlacementIds = EMPTY_HIDDEN_PLACEMENT_IDS,
   onAddAsset,
   onBoxEditEnd,
   onBoxEditStart,
@@ -97,6 +101,7 @@ export function AssemblyAuthoringCanvas({
   onUndo,
   overlays,
   scenePackage,
+  selectedLayerNodeIds = [],
   selectedPlacementId,
   selectedPlacementIds = selectedPlacementId ? [selectedPlacementId] : [],
 }: AssemblyAuthoringCanvasProps) {
@@ -114,6 +119,7 @@ export function AssemblyAuthoringCanvas({
     position: { x: number; y: number };
   } | null>(null);
   const [marqueeBox, setMarqueeBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [marqueeHost, setMarqueeHost] = useState<HTMLElement | null>(null);
   const [deleteRequest, setDeleteRequest] = useState<string[] | null>(null);
   viewportRef.current = viewport;
 
@@ -128,9 +134,21 @@ export function AssemblyAuthoringCanvas({
     ? `${draft.empty_scene_image_id ?? ""}:${sceneSize.width}x${sceneSize.height}`
     : null;
   const lastEmptySceneViewportKeyRef = useRef<string | null>(null);
-  const canvasObjects = useMemo(
+  const allCanvasObjects = useMemo(
     () => buildAssemblyCanvasObjects({ draft, scenePackage, sceneSize }),
     [draft, scenePackage, sceneSize],
+  );
+  const canvasObjects = useMemo(
+    () => allCanvasObjects.filter((object) => !hiddenPlacementIds.has(object.id)),
+    [allCanvasObjects, hiddenPlacementIds],
+  );
+  const groupCanvasSelection = useMemo(
+    () => buildSelectedGroupCanvasSelection({
+      canvasObjects,
+      draft,
+      selectedLayerNodeIds,
+    }),
+    [canvasObjects, draft, selectedLayerNodeIds],
   );
   const source = useMemo<SourceMetadata | null>(() => {
     if (!emptySceneImage || !sceneSize) {
@@ -148,8 +166,6 @@ export function AssemblyAuthoringCanvas({
     : null;
   const controls = useMemo<AssemblyAuthoringCanvasControls>(() => ({
     isPanMode: viewport.isCanvasPanMode,
-    align: handleAlign,
-    canAlign: selectedPlacementIds.length >= 2,
     zoomPercent: viewport.canvasZoom,
     pan: () => viewportRef.current.togglePanMode(Boolean(source)),
     select: () => viewportRef.current.selectCanvasTool("select"),
@@ -157,7 +173,7 @@ export function AssemblyAuthoringCanvas({
     getViewportCenter: () => getViewportCenter(canvasRootRef.current, sceneSize),
     zoomIn: () => viewportRef.current.zoomIn(),
     zoomOut: () => viewportRef.current.zoomOut(),
-  }), [sceneSize, selectedPlacementIds.length, source, viewport.canvasZoom, viewport.isCanvasPanMode]);
+  }), [sceneSize, source, viewport.canvasZoom, viewport.isCanvasPanMode]);
   // WHY: Assembly 的 layer_order[0] 是 frontmost；多选/右键也必须遵守 manifest 层级语义，不能复用 pipeline 的面积优先命中。
   const assemblyHitTestStrategy = "front";
   const placementMenuActions = useMemo(
@@ -255,6 +271,7 @@ export function AssemblyAuthoringCanvas({
     event.preventDefault();
     event.stopPropagation();
     marqueeRef.current = { pointerId, start: point };
+    setMarqueeHost(artboard);
     setMarqueeBox({ x: point.x, y: point.y, w: 0, h: 0 });
   }
 
@@ -288,6 +305,7 @@ export function AssemblyAuthoringCanvas({
     const selectionBox = pointsToSelectionBox(marquee.start, point);
     marqueeRef.current = null;
     setMarqueeBox(null);
+    setMarqueeHost(null);
     if (selectionBox.w < 4 && selectionBox.h < 4) {
       onSelectPlacement(null);
       return;
@@ -359,10 +377,16 @@ export function AssemblyAuthoringCanvas({
     if (!sceneSize) {
       return;
     }
+    const rotatedBox = box as Box & { rotationDeg?: number };
+    // WHY: 旋转手柄把画布指针角度换算成 CanvasObjectBox.rotationDeg；
+    // 这里继续走 updatePlacementTransform，确保画布和属性面板只写同一份 manifest transform 事实。
     onDraftChange(updatePlacementTransform(
       draft,
       placementId,
-      canvasBoxToPlacementTransform({ ...box, rotationDeg: objectRotation(canvasObjects, placementId) }, sceneSize),
+      canvasBoxToPlacementTransform({
+        ...box,
+        rotationDeg: rotatedBox.rotationDeg ?? objectRotation(canvasObjects, placementId),
+      }, sceneSize),
     ));
   }
 
@@ -382,6 +406,7 @@ export function AssemblyAuthoringCanvas({
       onPointerCancelCapture={() => {
         marqueeRef.current = null;
         setMarqueeBox(null);
+        setMarqueeHost(null);
       }}
     >
       <CanvasStage
@@ -402,6 +427,7 @@ export function AssemblyAuthoringCanvas({
         overlays={overlays}
         panOffset={viewport.canvasPan}
         renamingElementId={null}
+        selectionOverlays={groupCanvasSelection.selectionOverlays}
         selectedElementId={selectedPlacementId}
         selectedElementIds={selectedPlacementIds}
         showHeader={false}
@@ -409,6 +435,7 @@ export function AssemblyAuthoringCanvas({
         sourceDetails=""
         sourceUrl={sourceUrl}
         splitRegions={[]}
+        suppressedOverlayLabelIds={groupCanvasSelection.suppressedLabelIds}
         tool={viewport.tool}
         workspaceRunId={null}
         zoomPercent={viewport.canvasZoom}
@@ -446,7 +473,9 @@ export function AssemblyAuthoringCanvas({
           onClose={() => setPlacementMenu(null)}
         />
       ) : null}
-      {marqueeBox && sceneSize ? <MarqueeOverlay box={marqueeBox} sceneSize={sceneSize} /> : null}
+      {marqueeBox && sceneSize && marqueeHost
+        ? createPortal(<MarqueeOverlay box={marqueeBox} sceneSize={sceneSize} />, marqueeHost)
+        : null}
       <DeletePlacementsDialog
         placementIds={deleteRequest}
         onCancel={() => setDeleteRequest(null)}
@@ -465,12 +494,6 @@ export function AssemblyAuthoringCanvas({
     return canvasRootRef.current?.querySelector<HTMLElement>("[data-testid='canvas-artboard']") ?? null;
   }
 
-  function handleAlign(alignment: Parameters<typeof alignAssemblyPlacements>[2]) {
-    if (selectedPlacementIds.length < 2) {
-      return;
-    }
-    onDraftChange(alignAssemblyPlacements(draft, selectedPlacementIds, alignment));
-  }
 }
 
 function resolvePlacementMenuActions({
@@ -544,6 +567,60 @@ function resolvePlacementMenuActions({
   });
 
   return actions;
+}
+
+function buildSelectedGroupCanvasSelection({
+  canvasObjects,
+  draft,
+  selectedLayerNodeIds,
+}: {
+  canvasObjects: ReturnType<typeof buildAssemblyCanvasObjects>;
+  draft: AssemblyManifestDraft;
+  selectedLayerNodeIds: string[];
+}): {
+  selectionOverlays: CanvasSelectionOverlayView[];
+  suppressedLabelIds: string[];
+} {
+  const selectedGroupIds = new Set(selectedLayerNodeIds);
+  if (selectedGroupIds.size === 0) {
+    return { selectionOverlays: [], suppressedLabelIds: [] };
+  }
+
+  const visibleObjectById = new Map(canvasObjects.map((object) => [object.id, object]));
+  const selectionOverlays = draft.groups.flatMap((group) => {
+    if (!selectedGroupIds.has(group.id)) {
+      return [];
+    }
+    const childObjects = group.placement_ids
+      .map((placementId) => visibleObjectById.get(placementId))
+      .filter((object): object is ReturnType<typeof buildAssemblyCanvasObjects>[number] => Boolean(object));
+    const box = unionCanvasBoxes(childObjects.map((object) => object.box));
+    return box ? [{ id: group.id, displayName: group.display_name, box }] : [];
+  });
+  const suppressedLabelIds = selectionOverlays.length > 0
+    ? draft.groups
+      .filter((group) => selectedGroupIds.has(group.id))
+      .flatMap((group) => group.placement_ids)
+      .filter((placementId) => visibleObjectById.has(placementId))
+    : [];
+
+  return { selectionOverlays, suppressedLabelIds };
+}
+
+function unionCanvasBoxes(boxes: Box[]): Box | null {
+  if (boxes.length === 0) {
+    return null;
+  }
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.w));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.h));
+  return {
+    x: left,
+    y: top,
+    w: Math.max(0, right - left),
+    h: Math.max(0, bottom - top),
+  };
 }
 
 function objectRotation(

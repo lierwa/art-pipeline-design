@@ -37,49 +37,6 @@ export function nudgeAssemblyPlacements(
   }));
 }
 
-export function alignAssemblyPlacements(
-  draft: AssemblyManifestDraft,
-  placementIds: string[],
-  alignment: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom",
-) {
-  const selected = draft.placements.filter((placement) => placementIds.includes(placement.id));
-  if (selected.length < 2) {
-    return draft;
-  }
-  const bounds = selected.map((placement) => transformToUnitBox(placement.transform));
-  const minX = Math.min(...bounds.map((box) => box.x));
-  const maxX = Math.max(...bounds.map((box) => box.x + box.w));
-  const minY = Math.min(...bounds.map((box) => box.y));
-  const maxY = Math.max(...bounds.map((box) => box.y + box.h));
-  const centerX = minX + (maxX - minX) / 2;
-  const centerY = minY + (maxY - minY) / 2;
-
-  const selectedIds = new Set(placementIds);
-  return draft.placements.reduce((nextDraft, placement) => {
-    if (!selectedIds.has(placement.id)) {
-      return nextDraft;
-    }
-    const transform = placement.transform;
-    const box = transformToUnitBox(transform);
-    if (alignment === "left") {
-      return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cx: minX + box.w / 2 }));
-    }
-    if (alignment === "right") {
-      return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cx: maxX - box.w / 2 }));
-    }
-    if (alignment === "hcenter") {
-      return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cx: centerX }));
-    }
-    if (alignment === "top") {
-      return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cy: minY + box.h / 2 }));
-    }
-    if (alignment === "bottom") {
-      return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cy: maxY - box.h / 2 }));
-    }
-    return updatePlacementTransform(nextDraft, placement.id, clampTransformPosition({ ...transform, cy: centerY }));
-  }, draft);
-}
-
 export function removeAssemblyPlacements(draft: AssemblyManifestDraft, placementIds: string[]) {
   return placementIds.reduce((nextDraft, placementId) => removePlacement(nextDraft, placementId), draft);
 }
@@ -129,18 +86,9 @@ function updateSelectedPlacementTransforms(
   ), draft);
 }
 
-function transformToUnitBox(transform: ChapterSceneAssemblyTransform): CanvasBox {
-  return {
-    x: transform.cx - transform.w / 2,
-    y: transform.cy - transform.h / 2,
-    w: transform.w,
-    h: transform.h,
-  };
-}
-
 function clampTransform(transform: ChapterSceneAssemblyTransform, sceneSize: CanvasSize): ChapterSceneAssemblyTransform {
-  // WHY: keyboard nudges can push normalized coordinates outside the backend protocol; only nudge
-  // needs the scene-pixel minimum size floor, while alignment must preserve authored dimensions.
+  // WHY: keyboard nudges can push normalized coordinates outside the backend protocol, so this keeps
+  // movement edits inside the manifest bounds while preserving the authored scene-pixel minimum size.
   return clampTransformPosition({
     ...transform,
     w: Math.max(transform.w, 1 / sceneSize.width),

@@ -16,6 +16,11 @@ import { AssemblyLayerTree } from "./AssemblyLayerTree";
 import { AssemblyPlacementProperties } from "./AssemblyPlacementProperties";
 import { AssemblyWorkspaceFeedback } from "./AssemblyWorkspaceFeedback";
 import {
+  flattenNodePlacementIds,
+  sameStringSet,
+  type AssemblyLayerTreeNode,
+} from "./assemblyLayerTreeModel";
+import {
   useAssemblyWorkspaceController,
   type AssemblyWorkspaceLockFinalState,
   type AssemblyWorkspaceSaveState,
@@ -94,6 +99,7 @@ export function AssemblyWorkspacePanel({
   scenePackage,
 }: AssemblyWorkspacePanelProps) {
   const [canvasControls, setCanvasControls] = useState<AssemblyAuthoringCanvasControls | null>(null);
+  const [hiddenPlacementIds, setHiddenPlacementIds] = useState<Set<string>>(() => new Set());
   const generatedAssetsDrawer = useGeneratedAssetsDrawer({
     onListGeneratedAssets,
     onMaterializeGeneratedAsset,
@@ -105,6 +111,32 @@ export function AssemblyWorkspacePanel({
     saveStatus,
     scenePackage,
   });
+  useEffect(() => {
+    const placementIds = new Set(controller.draft.placements.map((placement) => placement.id));
+    setHiddenPlacementIds((current) => {
+      const next = new Set([...current].filter((placementId) => placementIds.has(placementId)));
+      return sameStringSet(current, next) ? current : next;
+    });
+  }, [controller.draft.placements]);
+
+  function handleTogglePlacementVisibility(node: AssemblyLayerTreeNode) {
+    const placementIds = flattenNodePlacementIds(node);
+    if (placementIds.length === 0) {
+      return;
+    }
+    setHiddenPlacementIds((current) => {
+      const next = new Set(current);
+      const shouldShow = placementIds.every((placementId) => next.has(placementId));
+      placementIds.forEach((placementId) => {
+        if (shouldShow) {
+          next.delete(placementId);
+        } else {
+          next.add(placementId);
+        }
+      });
+      return next;
+    });
+  }
 
   return (
     <section className="assembly-workspace assembly-product-shell" aria-label="Assembly workspace">
@@ -122,7 +154,9 @@ export function AssemblyWorkspacePanel({
 
       <AssemblyEditorColumns
         canvasControls={canvasControls}
+        hiddenPlacementIds={hiddenPlacementIds}
         onCanvasControlsChange={setCanvasControls}
+        onTogglePlacementVisibility={handleTogglePlacementVisibility}
         controller={controller}
         onDeleteChapterAsset={onDeleteChapterAsset}
         onDuplicateChapterAsset={onDuplicateChapterAsset}
@@ -208,20 +242,24 @@ function useGeneratedAssetsDrawer({
 function AssemblyEditorColumns({
   canvasControls,
   controller,
+  hiddenPlacementIds,
   onCanvasControlsChange,
   onDeleteChapterAsset,
   onDuplicateChapterAsset,
   onOpenGeneratedAssets,
+  onTogglePlacementVisibility,
   saveStatus,
   onUploadDirectAsset,
   scenePackage,
 }: {
   canvasControls: AssemblyAuthoringCanvasControls | null;
   controller: ReturnType<typeof useAssemblyWorkspaceController>;
+  hiddenPlacementIds: ReadonlySet<string>;
   onCanvasControlsChange: (controls: AssemblyAuthoringCanvasControls | null) => void;
   onDeleteChapterAsset: AssemblyWorkspacePanelProps["onDeleteChapterAsset"];
   onDuplicateChapterAsset: AssemblyWorkspacePanelProps["onDuplicateChapterAsset"];
   onOpenGeneratedAssets: () => void;
+  onTogglePlacementVisibility: (node: AssemblyLayerTreeNode) => void;
   saveStatus?: AsyncOperationState;
   onUploadDirectAsset: AssemblyWorkspacePanelProps["onUploadDirectAsset"];
   scenePackage: ChapterScenePackage;
@@ -259,6 +297,7 @@ function AssemblyEditorColumns({
         <AssemblyCanvasColumn
           canvasControls={canvasControls}
           controller={controller}
+          hiddenPlacementIds={hiddenPlacementIds}
           onCanvasControlsChange={onCanvasControlsChange}
           saveStatus={saveStatus}
           scenePackage={scenePackage}
@@ -266,7 +305,12 @@ function AssemblyEditorColumns({
       </Panel>
       <AssemblyEditorResizeHandle label="Resize inspector rail" />
       <Panel id={ASSEMBLY_EDITOR_PANEL_IDS[2]} defaultSize="26%" minSize="320px" maxSize="500px">
-        <AssemblyInspectorColumn controller={controller} scenePackage={scenePackage} />
+        <AssemblyInspectorColumn
+          controller={controller}
+          hiddenPlacementIds={hiddenPlacementIds}
+          onTogglePlacementVisibility={onTogglePlacementVisibility}
+          scenePackage={scenePackage}
+        />
       </Panel>
     </Group>
   );
@@ -320,12 +364,14 @@ function AssemblyAssetsColumn({
 function AssemblyCanvasColumn({
   canvasControls,
   controller,
+  hiddenPlacementIds,
   onCanvasControlsChange,
   saveStatus,
   scenePackage,
 }: {
   canvasControls: AssemblyAuthoringCanvasControls | null;
   controller: ReturnType<typeof useAssemblyWorkspaceController>;
+  hiddenPlacementIds: ReadonlySet<string>;
   onCanvasControlsChange: (controls: AssemblyAuthoringCanvasControls | null) => void;
   saveStatus?: AsyncOperationState;
   scenePackage: ChapterScenePackage;
@@ -340,8 +386,10 @@ function AssemblyCanvasColumn({
         canvasControls={canvasControls}
         canvasOverlays={controller.canvasOverlays}
         draft={controller.draft}
+        hiddenPlacementIds={hiddenPlacementIds}
         saveStatus={saveStatus}
         scenePackage={scenePackage}
+        selectedLayerNodeIds={controller.selectedLayerNodeIds}
         selectedPlacementId={controller.selectedPlacementId}
         selectedPlacementIds={controller.selectedPlacementIds}
         onBoxEditEnd={controller.handleBoxEditEnd}
@@ -368,9 +416,13 @@ function AssemblyCanvasColumn({
 
 function AssemblyInspectorColumn({
   controller,
+  hiddenPlacementIds,
+  onTogglePlacementVisibility,
   scenePackage,
 }: {
   controller: ReturnType<typeof useAssemblyWorkspaceController>;
+  hiddenPlacementIds: ReadonlySet<string>;
+  onTogglePlacementVisibility: (node: AssemblyLayerTreeNode) => void;
   scenePackage: ChapterScenePackage;
 }) {
   return (
@@ -380,17 +432,21 @@ function AssemblyInspectorColumn({
         draft={controller.draft}
         onDraftChange={controller.handleDraftChange}
         onSelectionChange={controller.handlePropertySelectionChange}
+        scenePackage={scenePackage}
+        selectedNodeIds={controller.selectedLayerNodeIds}
         selectedPlacementId={controller.selectedPlacementId}
         selectedPlacementIds={controller.selectedPlacementIds}
       />
       <AssemblyLayerTree
         draft={controller.draft}
+        hiddenPlacementIds={hiddenPlacementIds}
         scenePackage={scenePackage}
         selectedNodeIds={controller.selectedLayerNodeIds}
         selectedPlacementId={controller.selectedPlacementId}
         onDraftChange={controller.handleDraftChange}
         onSelectNodeIds={controller.setSelectedLayerNodeIds}
         onSelectPlacement={controller.setSelectedPlacementId}
+        onTogglePlacementVisibility={onTogglePlacementVisibility}
       />
     </div>
   );
@@ -408,6 +464,9 @@ function AssemblyEditorStatusBar({
   const metrics = primaryPlacement && controller.draft.empty_scene_size
     ? placementStatusMetrics(primaryPlacement, controller.draft.empty_scene_size)
     : [];
+  const selectedLayerCount = controller.selectedLayerNodeIds.length;
+  const sceneSize = controller.draft.empty_scene_size;
+  const layerCount = controller.draft.layer_order.length;
 
   return (
     <footer className="assembly-editor-statusbar" aria-label="Assembly editor status">
@@ -416,10 +475,14 @@ function AssemblyEditorStatusBar({
         <span>{editorStatusLabel(controller.saveState)}</span>
       </div>
       <div className="assembly-editor-statusbar-metrics">
-        <span>{selectedPlacements.length} selected</span>
+        <span>{selectedLayerCount} selected</span>
         {metrics.map((metric) => (
           <span key={metric.label}>{metric.label} {metric.value}</span>
         ))}
+      </div>
+      <div className="assembly-editor-statusbar-context">
+        <span>{layerCount} {layerCount === 1 ? "layer" : "layers"}</span>
+        {sceneSize ? <span>{sceneSize.width} x {sceneSize.height}</span> : null}
       </div>
     </footer>
   );

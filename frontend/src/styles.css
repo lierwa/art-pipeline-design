@@ -1942,6 +1942,11 @@ button:disabled {
   z-index: 8;
 }
 
+.overlay-item-selection-projection {
+  z-index: 7;
+  pointer-events: none;
+}
+
 .overlay-item.is-merge-selected .overlay-box {
   border-color: #17c6d4;
   border-width: 3px;
@@ -1977,6 +1982,7 @@ button:disabled {
 .canvas-object-image {
   position: absolute;
   inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -1984,6 +1990,9 @@ button:disabled {
 }
 
 .overlay-box {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
   width: 100%;
   height: 100%;
   border: 2px solid #5d78ff;
@@ -2041,6 +2050,7 @@ button:disabled {
 
 .resize-handle {
   position: absolute;
+  z-index: 5;
   width: 12px;
   min-width: 12px;
   height: 12px;
@@ -2107,10 +2117,52 @@ button:disabled {
   cursor: ew-resize;
 }
 
+.rotate-handle {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  z-index: 5;
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  min-height: 14px;
+  padding: 0;
+  border: 2px solid #0d1219;
+  border-radius: 50%;
+  background: #f5b544;
+  box-shadow:
+    0 0 0 1px rgba(245, 181, 68, 0.78),
+    0 14px 24px rgba(2, 6, 14, 0.28);
+  pointer-events: auto;
+  cursor: grab;
+  transform: translate(-50%, -50%);
+}
+
+.rotate-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -22px;
+  width: 2px;
+  height: 20px;
+  background: rgba(245, 181, 68, 0.76);
+  transform: translateX(-50%);
+}
+
+.rotate-handle:active {
+  cursor: grabbing;
+}
+
+.rotate-handle:focus-visible {
+  outline: 2px solid #f4f7fb;
+  outline-offset: 2px;
+}
+
 .overlay-label,
 .overlay-mask-placeholder {
   position: absolute;
   left: 0;
+  z-index: 3;
   padding: 0.2rem 0.45rem;
   border-radius: 6px;
   font-size: 0.8rem;
@@ -2119,7 +2171,6 @@ button:disabled {
 
 .overlay-label {
   bottom: calc(100% + 4px);
-  z-index: 2;
   min-width: 0;
   min-height: 0;
   max-width: min(12rem, 34vw);

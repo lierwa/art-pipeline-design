@@ -1,6 +1,13 @@
-.assembly-editor-assets-column .chapter-studio-card-list {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.55rem;
+.assembly-asset-pool-panel {
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: visible;
+}
+
+.assembly-editor-assets-column .chapter-studio-card-list,
+.assembly-editor-assets-column .assembly-asset-list.chapter-studio-card-list {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.62rem;
   align-content: start;
   justify-content: stretch;
 }
@@ -54,6 +61,16 @@
   min-width: 0;
 }
 
+.assembly-asset-pool-scroll {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  gap: 0.72rem;
+  align-content: start;
+  overflow: auto;
+  padding-right: 0.15rem;
+}
+
 .assembly-asset-pool-groups,
 .assembly-asset-pool-group {
   min-width: 0;
@@ -69,6 +86,24 @@
   gap: 0.5rem;
 }
 
+.assembly-asset-pool-group-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.assembly-asset-pool-group-heading-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.assembly-asset-pool-collapse-button {
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+}
+
 .assembly-asset-pool-group-heading h3 {
   margin: 0;
   color: var(--course-text-strong);
@@ -76,19 +111,36 @@
   font-weight: 790;
 }
 
-.assembly-asset-pool-group-heading span,
+.assembly-asset-pool-group-heading h3 span {
+  color: var(--course-text-muted);
+  font-weight: 720;
+}
+
 .assembly-asset-usage-count {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 0.46rem;
+  min-height: 20px;
+  padding: 0 0.42rem;
   border: 1px solid #244056;
   border-radius: 999px;
   background: rgb(6 17 28 / 0.82);
   color: #9cafc3;
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 780;
   white-space: nowrap;
+}
+
+.assembly-asset-pool-upload-footer {
+  position: sticky;
+  bottom: 0;
+  align-self: end;
+  z-index: 4;
+  min-width: 0;
+  display: grid;
+  gap: 0.45rem;
+  padding-top: 0.68rem;
+  border-top: 1px solid #1b3448;
+  background: linear-gradient(180deg, rgb(8 17 27 / 0.94), #07111c 55%);
 }
 
 .assembly-asset-pool-actions {
@@ -97,12 +149,16 @@
   gap: 0.38rem;
 }
 
-.assembly-asset-pool-actions .assembly-upload-target-field {
-  width: 112px;
+.assembly-asset-pool-upload-options {
   min-width: 0;
 }
 
-.assembly-asset-pool-actions .assembly-field span {
+.assembly-asset-pool-upload-footer .assembly-upload-target-field {
+  min-width: 0;
+  display: block;
+}
+
+.assembly-asset-pool-upload-footer .assembly-field span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -111,44 +167,99 @@
   white-space: nowrap;
 }
 
-.assembly-asset-pool-actions .assembly-field select {
+.assembly-asset-pool-upload-footer .assembly-field select {
+  width: 100%;
   min-height: 32px;
   padding: 0 0.44rem;
   font-size: 0.74rem;
 }
 
+.assembly-asset-pool-upload-button {
+  width: 100%;
+  min-height: 38px;
+  justify-content: center;
+  gap: 0.42rem;
+  border-color: #23435d;
+  background: #081725;
+  color: var(--course-text-strong);
+  font-weight: 780;
+}
+
 .assembly-editor-assets-column .assembly-asset-row {
   position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0.46rem;
+  gap: 0.42rem;
   align-content: start;
-  min-height: 134px;
-  padding: 0.48rem;
+  min-height: 0;
+  padding: 0.42rem;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.assembly-asset-card-top,
+.assembly-asset-card-middle,
+.assembly-asset-card-bottom {
+  min-width: 0;
+}
+
+.assembly-editor-assets-column .assembly-asset-thumb-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  display: grid;
+  place-items: center;
+  border: 1px solid #1b3448;
+  border-radius: 6px;
+  background: #050b12;
   overflow: hidden;
 }
 
 .assembly-editor-assets-column .assembly-asset-thumb {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  height: 74px;
+  height: 100%;
   object-fit: contain;
-  border: 1px solid #1b3448;
-  background: #050b12;
 }
 
-.assembly-editor-assets-column .chapter-studio-card-header {
+.assembly-editor-assets-column .assembly-asset-card-add {
+  position: absolute;
+  top: 0.38rem;
+  right: 0.38rem;
+  width: 1.78rem;
+  min-width: 1.78rem;
+  height: 1.78rem;
+  min-height: 1.78rem;
+  padding: 0;
+  border-color: #315b7a;
+  border-radius: 7px;
+  background: rgb(8 23 37 / 0.94);
+  color: var(--course-text-strong);
+  box-shadow: 0 8px 18px rgb(0 0 0 / 0.28);
+}
+
+.assembly-editor-assets-column .assembly-asset-card-middle {
+  min-width: 0;
   display: grid;
-  gap: 0.32rem;
+  align-content: start;
+  gap: 0.24rem;
+}
+
+.assembly-editor-assets-column .assembly-asset-meta {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .assembly-editor-assets-column .assembly-asset-status-dots {
-  position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
   display: flex;
   align-items: center;
-  gap: 0.32rem;
-  justify-content: start;
-  z-index: 1;
+  gap: 0.28rem;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .assembly-editor-assets-column .assembly-asset-status-dots .course-planner-status-badge {
@@ -159,44 +270,109 @@
 }
 
 .assembly-editor-assets-column .assembly-asset-list .assembly-asset-actions {
-  position: absolute;
-  top: 0.42rem;
-  right: 0.42rem;
-  grid-column: auto;
-  grid-template-columns: repeat(3, 1.78rem);
-  gap: 0.24rem;
-  opacity: 0;
-  transform: translateY(-2px);
-  transition: opacity 120ms ease, transform 120ms ease;
-  z-index: 2;
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  overflow: visible;
 }
 
-.assembly-editor-assets-column .assembly-asset-list .assembly-asset-actions .assembly-editor-icon-button {
-  width: 1.78rem;
-  min-width: 1.78rem;
-  height: 1.78rem;
-  background: rgb(6 17 28 / 0.9);
+.assembly-editor-assets-column .assembly-asset-card-more {
+  width: 1.42rem;
+  min-width: 1.42rem;
+  height: 1.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8fa4ba;
+  cursor: pointer;
 }
 
-.assembly-editor-assets-column .assembly-asset-list .assembly-asset-row:hover .assembly-asset-actions,
-.assembly-editor-assets-column .assembly-asset-list .assembly-asset-row:focus-within .assembly-asset-actions {
-  opacity: 1;
-  transform: translateY(0);
+.assembly-editor-assets-column .assembly-asset-card-more:hover,
+.assembly-editor-assets-column .assembly-asset-card-more:focus-visible,
+.assembly-editor-assets-column .assembly-asset-card-more[data-state="open"] {
+  background: rgb(27 52 72 / 0.62);
+  color: var(--course-text-strong);
+  outline: 0;
+}
+
+.assembly-asset-action-popover {
+  z-index: 80;
+  min-width: 112px;
+  display: grid;
+  gap: 0.12rem;
+  padding: 0.24rem;
+  border: 1px solid #28445b;
+  border-radius: 7px;
+  background: #06111c;
+  box-shadow: 0 14px 32px rgb(0 0 0 / 0.32);
+}
+
+.assembly-asset-action-menu-item {
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.34rem;
+  padding: 0 0.48rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--course-text-strong);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 720;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.assembly-asset-action-menu-item:hover,
+.assembly-asset-action-menu-item:focus-visible {
+  background: #0c2a3a;
+  outline: 0;
+}
+
+.assembly-asset-action-menu-item-danger {
+  color: #fca5a5;
+}
+
+.assembly-editor-assets-column .assembly-asset-card-bottom {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.3rem;
+  overflow: visible;
 }
 
 .assembly-editor-assets-column .assembly-asset-meta h3 {
-  display: -webkit-box;
-  min-height: 1.9rem;
-  white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  font-size: 0.78rem;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--course-text-strong);
+  text-overflow: ellipsis;
+  font-size: 0.76rem;
   line-height: 1.2;
+  white-space: nowrap;
 }
 
 .assembly-editor-assets-column .assembly-asset-meta p {
+  margin: 0.16rem 0 0;
+  overflow: hidden;
+  color: var(--course-text-muted);
+  text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.68rem;
+  font-size: 0.66rem;
 }
 
 .assembly-editor-assets-column .assembly-asset-usage-legend {
@@ -205,7 +381,7 @@
 
 @media (max-width: 1280px) {
   .assembly-editor-assets-column .chapter-studio-card-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(98px, 1fr));
   }
 }
 

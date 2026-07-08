@@ -1,4 +1,6 @@
 import { BrowserRouter, MemoryRouter } from "react-router";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { describe, expect, it, render, screen, userEvent, within } from "../app/appTestHarness";
 
@@ -55,9 +57,14 @@ describe("Scene Category Board chapter density", () => {
     expect(dragHandle).toHaveAttribute("draggable", "true");
 
     const openDesigner = within(chapterItem).getByRole("link", { name: "Open Designer for 早餐厨房" });
+    expect(openDesigner).toHaveClass("course-planner-icon-link");
     expect(openDesigner).toHaveClass("course-planner-compact-link");
+    expect(within(chapterItem).queryByText(/^Open Designer$/)).not.toBeInTheDocument();
 
-    const deleteButton = within(chapterItem).getByRole("button", { name: "Delete Chapter 早餐厨房" });
+    const chapterActions = within(chapterItem).getByRole("group", { name: "Chapter actions for 早餐厨房" });
+    expect(chapterActions).toHaveClass("selected-sequence-actions");
+
+    const deleteButton = within(chapterActions).getByRole("button", { name: "Delete Chapter 早餐厨房" });
     expect(deleteButton).toHaveClass("course-planner-icon-button");
 
     await user.click(deleteButton);
@@ -65,7 +72,57 @@ describe("Scene Category Board chapter density", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Chapter" });
     expect(dialog).toHaveTextContent("Delete 早餐厨房 from this Scene Pack's accepted Chapter list.");
   });
+
+  it("keeps the pending delete action compact and icon-only", () => {
+    render(
+      <BrowserRouter>
+        <SelectedChapterSequence
+          chapters={[chapter("chapter_breakfast_kitchen", "早餐厨房")]}
+          deletingChapterId="chapter_breakfast_kitchen"
+          isReordering={false}
+          onDeleteChapter={() => undefined}
+          onReorderChapters={() => undefined}
+        />
+      </BrowserRouter>,
+    );
+
+    const chapterList = screen.getByRole("region", { name: "Chapter list" });
+    const chapterItem = within(chapterList).getByRole("listitem");
+    const chapterActions = within(chapterItem).getByRole("group", { name: "Chapter actions for 早餐厨房" });
+    const pendingDeleteButton = within(chapterActions).getByRole("button", { name: "Deleting Chapter 早餐厨房" });
+
+    expect(pendingDeleteButton).toHaveClass("course-planner-icon-button");
+    expect(pendingDeleteButton).toBeDisabled();
+    expect(pendingDeleteButton).toHaveAttribute("title", "Deleting Chapter 早餐厨房");
+    expect(within(chapterActions).queryByText(/^Deleting\.\.\.$/)).not.toBeInTheDocument();
+  });
+
+  it("keeps Course Planner header and selected Chapter item layout contracts", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "coursePlanner.css"),
+      "utf8",
+    );
+    const headerRule = cssRule(css, ".course-planner-page-header");
+    const itemRule = cssRule(css, ".selected-sequence-item");
+    const contentRule = cssRule(css, ".selected-sequence-content");
+    const actionsRule = cssRule(css, ".selected-sequence-actions");
+
+    expect(headerRule).toContain("grid-template-columns: 32px minmax(0, 1fr) max-content");
+    expect(itemRule).toContain("grid-template-columns: 30px minmax(0, 1fr)");
+    expect(itemRule).not.toContain("minmax(66px, auto)");
+    expect(contentRule).toContain("grid-column: 2");
+    expect(actionsRule).toContain("grid-column: 2");
+    expect(actionsRule).toContain("justify-self: end");
+  });
 });
+
+function cssRule(css: string, selector: string): string {
+  return css.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{[^}]+}`))?.[0] ?? "";
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function chapter(id: string, title: string): Chapter {
   return {

@@ -1,6 +1,7 @@
 import {
   groupPlacements,
   movePlacementToGroup,
+  movePlacementOutOfGroup,
   movePlacementLayer,
   removePlacement,
   removePlacementGroup,
@@ -12,7 +13,7 @@ import {
   type LayerTreeMoveNode,
 } from "../../authoring/layerTreeMoveModel";
 import { reduceSelection } from "../../authoring/selectionModel";
-import { readablePlacementName } from "./assemblyDisplayNames";
+import { readableAssemblyPlacementName } from "./assemblyDisplayNames";
 
 export type AssemblyLayerTreeNode = {
   id: string;
@@ -32,9 +33,21 @@ export type ArboristMoveArgs = {
   index: number;
 };
 
-const REACT_ARBORIST_ROOT_ID = "__REACT_ARBORIST_INTERNAL_ROOT__";
+export type AssemblyLayerDropTarget = {
+  id: string;
+  parentId: string | null;
+  index: number;
+  kind: "root" | "group-child";
+  label: string;
+};
 
-export function buildLayerTreeData(draft: AssemblyManifestDraft): AssemblyLayerTreeNode[] {
+const REACT_ARBORIST_ROOT_ID = "__REACT_ARBORIST_INTERNAL_ROOT__";
+const EMPTY_ASSET_NAME_BY_ID: ReadonlyMap<string, string> = new Map();
+
+export function buildLayerTreeData(
+  draft: AssemblyManifestDraft,
+  assetNameById: ReadonlyMap<string, string> = EMPTY_ASSET_NAME_BY_ID,
+): AssemblyLayerTreeNode[] {
   const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
   const groupsById = new Map(draft.groups.map((group) => [group.id, group]));
   const emittedGroupIds = new Set<string>();
@@ -46,7 +59,7 @@ export function buildLayerTreeData(draft: AssemblyManifestDraft): AssemblyLayerT
     }
 
     if (!placement.group_id) {
-      return [placementNodeFromDraft(placement)];
+      return [placementNodeFromDraft(placement, assetNameById)];
     }
 
     if (emittedGroupIds.has(placement.group_id)) {
@@ -55,7 +68,9 @@ export function buildLayerTreeData(draft: AssemblyManifestDraft): AssemblyLayerT
     emittedGroupIds.add(placement.group_id);
 
     const group = groupsById.get(placement.group_id);
-    return group ? [groupNodeFromDraft(draft, group.id, group.display_name)] : [placementNodeFromDraft(placement)];
+    return group
+      ? [groupNodeFromDraft(draft, group.id, group.display_name, assetNameById)]
+      : [placementNodeFromDraft(placement, assetNameById)];
   });
 }
 
@@ -164,7 +179,15 @@ export function createMovedLayerDraft(
     return null;
   }
 
+  if (move.sourceParentId !== null && move.parentId === null) {
+    const nextDraft = movePlacementOutOfGroup(draft, move.dragId, move.index);
+    return nextDraft === draft ? null : nextDraft;
+  }
+
   if (move.sourceParentId === null && move.parentId && isRootPlacement(treeData, move.dragId)) {
+    // WHY: `group-end` is now an explicit droppable inside the expanded group. Treating
+    // group end as root-after-group makes the visual drop line lie about the result.
+    // Root-level drops must come from root drop targets (`parentId === null`) instead.
     const nextDraft = movePlacementToGroup(draft, move.dragId, move.parentId, move.index);
     return nextDraft === draft ? null : nextDraft;
   }
@@ -175,14 +198,7 @@ export function createMovedLayerDraft(
     return null;
   }
 
-  let nextDraft = draft;
-  const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
-  nextLayerOrder.forEach((placementId, placementIndex) => {
-    const currentIndex = nextDraft.layer_order.indexOf(placementId);
-    if (currentIndex !== placementIndex && placementsById.has(placementId)) {
-      nextDraft = movePlacementLayer(nextDraft, placementId, placementIndex);
-    }
-  });
+  let nextDraft = applyLayerOrder(draft, nextLayerOrder);
   if (nextGroupPlacementOrder) {
     // WHY: group child reorder changes two manifest facts. Updating only layer_order leaves
     // groups[].placement_ids stale, so subsequent saves and reloads can disagree about child order.
@@ -249,6 +265,27 @@ export function createMovedLayerSelectionDraft(
     selectedNodeIds: nextSelectedIds,
     selectedPlacementId: draggedNode ? resolvePrimaryPlacementId(draggedNode, nextSelectedIds, nodesById) : null,
   };
+}
+
+export function buildLayerDropTargets(treeData: AssemblyLayerTreeNode[]): AssemblyLayerDropTarget[] {
+  const targets: AssemblyLayerDropTarget[] = [];
+  treeData.forEach((node, rootIndex) => {
+    targets.push(rootDropTarget(node, rootIndex));
+    if (node.kind === "group" && node.groupId) {
+      (node.children ?? []).forEach((child, childIndex) => {
+        targets.push(groupChildDropTarget(node, child, childIndex));
+      });
+      targets.push(groupEndDropTarget(node));
+    }
+  });
+  targets.push({
+    id: "root-end",
+    parentId: null,
+    index: treeData.length,
+    kind: "root",
+    label: "Drop at root end",
+  });
+  return targets;
 }
 
 export function countTreeRows(nodes: AssemblyLayerTreeNode[]): number {
@@ -356,6 +393,7 @@ function groupNodeFromDraft(
   draft: AssemblyManifestDraft,
   groupId: string,
   groupName: string,
+  assetNameById: ReadonlyMap<string, string>,
 ): AssemblyLayerTreeNode {
   const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
   const childNodes = normalizePlacementOrder(draft)
@@ -363,7 +401,7 @@ function groupNodeFromDraft(
     .filter((placement): placement is AssemblyManifestDraft["placements"][number] => (
       placement !== undefined && placement.group_id === groupId
     ))
-    .map(placementNodeFromDraft);
+    .map((placement) => placementNodeFromDraft(placement, assetNameById));
 
   return {
     id: groupId,
@@ -378,16 +416,53 @@ function groupNodeFromDraft(
   };
 }
 
-function placementNodeFromDraft(placement: AssemblyManifestDraft["placements"][number]): AssemblyLayerTreeNode {
+function placementNodeFromDraft(
+  placement: AssemblyManifestDraft["placements"][number],
+  assetNameById: ReadonlyMap<string, string>,
+): AssemblyLayerTreeNode {
   return {
     id: placement.id,
     assetId: placement.asset_id,
     kind: "placement",
-    name: readablePlacementName(placement.display_name, placement.asset_id),
+    name: readableAssemblyPlacementName(placement, assetNameById),
     typeLabel: placement.runtime_role === "target" ? "Target" : "Initial",
     groupId: placement.group_id,
     placementId: placement.id,
     runtimeRole: placement.runtime_role,
+  };
+}
+
+function rootDropTarget(node: AssemblyLayerTreeNode, rootIndex: number): AssemblyLayerDropTarget {
+  return {
+    id: `root-before-${node.id}`,
+    parentId: null,
+    index: rootIndex,
+    kind: "root",
+    label: `Drop at root before ${node.name}`,
+  };
+}
+
+function groupChildDropTarget(
+  groupNode: AssemblyLayerTreeNode,
+  childNode: AssemblyLayerTreeNode,
+  childIndex: number,
+): AssemblyLayerDropTarget {
+  return {
+    id: `group-${groupNode.id}-before-${childNode.id}`,
+    parentId: groupNode.id,
+    index: childIndex,
+    kind: "group-child",
+    label: `Drop into ${groupNode.name} at position ${childIndex + 1}`,
+  };
+}
+
+function groupEndDropTarget(groupNode: AssemblyLayerTreeNode): AssemblyLayerDropTarget {
+  return {
+    id: `group-${groupNode.id}-end`,
+    parentId: groupNode.id,
+    index: groupNode.children?.length ?? 0,
+    kind: "group-child",
+    label: `Drop into ${groupNode.name} at end`,
   };
 }
 
@@ -530,6 +605,18 @@ function replaceGroupPlacementsInLayerOrder(
   }
 
   return inserted ? nextLayerOrder : layerOrder;
+}
+
+function applyLayerOrder(draft: AssemblyManifestDraft, nextLayerOrder: string[]): AssemblyManifestDraft {
+  let nextDraft = draft;
+  const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
+  nextLayerOrder.forEach((placementId, placementIndex) => {
+    const currentIndex = nextDraft.layer_order.indexOf(placementId);
+    if (currentIndex !== placementIndex && placementsById.has(placementId)) {
+      nextDraft = movePlacementLayer(nextDraft, placementId, placementIndex);
+    }
+  });
+  return nextDraft;
 }
 
 export function flattenNodePlacementIds(node: AssemblyLayerTreeNode): string[] {

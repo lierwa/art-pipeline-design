@@ -1,61 +1,256 @@
 .assembly-placement-list-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
 .assembly-placement-list-panel > .asset-tree-body {
+  height: 100%;
   min-height: 0;
-  overflow: hidden;
-  padding: 0.48rem 0.42rem;
+  scrollbar-gutter: stable;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0.34rem 0.26rem;
 }
 
 .assembly-layer-list {
   min-height: 0;
   height: 100%;
+  max-width: 100%;
   overflow: hidden;
 }
 
+.assembly-layer-native-tree,
+.assembly-layer-root-block,
+.assembly-layer-child-block,
+.assembly-layer-group-children {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.assembly-layer-native-tree {
+  display: grid;
+  align-content: start;
+}
+
+.assembly-layer-drop-zone {
+  position: relative;
+  height: 12px;
+  min-height: 12px;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.assembly-layer-drop-zone::before {
+  position: absolute;
+  left: 0.4rem;
+  right: 0.4rem;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: transparent;
+  content: "";
+  transform: translateY(-50%);
+}
+
+.assembly-layer-drop-zone-root {
+  margin-left: 0;
+}
+
+.assembly-layer-drop-zone-group-child {
+  margin-left: 24px;
+}
+
+.assembly-layer-drop-zone.is-over::before,
+.assembly-layer-drop-zone:focus-visible::before {
+  background: rgb(77 164 255 / 0.9);
+  box-shadow: 0 0 0 1px rgb(77 164 255 / 0.22);
+}
+
+.assembly-layer-drop-zone-group-child.is-over::before,
+.assembly-layer-drop-zone-group-child:focus-visible::before {
+  background: rgb(119 216 255 / 0.72);
+}
+
 .assembly-layer-item .asset-tree-row {
-  height: 64px;
-  min-height: 64px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: 38px;
+  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 0.2rem;
+  padding: 0.12rem 0.18rem;
+  overflow: hidden;
   cursor: grab;
 }
 
+.assembly-layer-item.is-dragging > .asset-tree-row {
+  opacity: 0.38;
+}
+
+.assembly-layer-drag-overlay {
+  width: min(100%, 420px);
+  opacity: 0.58;
+  pointer-events: none;
+  cursor: grabbing;
+}
+
+.assembly-layer-item.is-selected > .asset-tree-row,
+.assembly-layer-item.is-focused > .asset-tree-row {
+  border-color: transparent;
+  border-radius: 0 6px 6px 0;
+  background: rgb(73 145 255 / 0.13);
+  box-shadow: inset 2px 0 0 rgb(73 145 255 / 0.94);
+}
+
+.assembly-layer-item-group.is-selected > .asset-tree-row,
+.assembly-layer-item-group.is-focused > .asset-tree-row {
+  background: rgb(73 145 255 / 0.07);
+}
+
 .assembly-layer-item .asset-tree-row-depth {
-  grid-template-rows: minmax(48px, auto);
+  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-rows: minmax(30px, auto);
+  column-gap: 0.14rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  padding-left: var(--assembly-layer-depth-offset, 0);
+}
+
+.assembly-layer-item-placement .asset-tree-row-depth {
+  grid-template-columns: 0 minmax(0, 1fr);
+  column-gap: 0;
+}
+
+.assembly-layer-item-placement .asset-generate-toggle-spacer {
+  display: none;
 }
 
 .assembly-layer-row-select {
+  grid-column: 2;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-rows: minmax(30px, auto);
+  column-gap: 0.36rem;
+  row-gap: 0;
+  align-items: center;
+  min-height: 30px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   cursor: pointer;
 }
 
-.assembly-layer-thumb {
+.assembly-layer-item .assembly-layer-thumb {
+  grid-column: 1;
+  grid-row: 1;
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  max-height: 24px;
+  align-self: center;
+  justify-self: start;
   object-fit: contain;
   background: #040b12;
 }
 
-.assembly-layer-row-actions {
-  display: grid;
-  place-items: center;
-  min-width: 34px;
-}
-
-.assembly-layer-drag-affordance {
-  width: 26px;
-  height: 32px;
+.assembly-layer-item .assembly-layer-thumb-group {
   display: inline-grid;
   place-items: center;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: #8fa2b8;
-  cursor: grab;
+  border-color: transparent;
+  background: transparent;
+  color: #80a7d7;
 }
 
-.assembly-layer-item.is-dragging .assembly-layer-drag-affordance,
-.assembly-layer-row:hover .assembly-layer-drag-affordance {
-  border-color: #2b67b8;
-  background: rgba(39, 117, 255, 0.12);
-  color: #dbeafe;
+.assembly-layer-item-group.is-selected .assembly-layer-thumb-group,
+.assembly-layer-item-group.is-focused .assembly-layer-thumb-group {
+  color: #b9d7ff;
+}
+
+.assembly-layer-row-actions {
+  min-width: max-content;
+  max-width: max-content;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 0.18rem;
+  align-items: center;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+.assembly-layer-name,
+.assembly-layer-role {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-layer-name {
+  display: block;
+  grid-column: 2;
+  width: 100%;
+  color: var(--course-text-strong);
+  font-size: 0.78rem;
+  font-weight: 790;
+  justify-self: start;
+  max-width: 100%;
+}
+
+.assembly-layer-role {
+  color: var(--course-text-muted);
+  font-size: 0.68rem;
+  flex: 0 0 auto;
+  max-width: 54px;
+  text-align: right;
+}
+
+.assembly-layer-visibility-button,
+.assembly-layer-ungroup-button,
+.assembly-layer-delete-button,
+.assembly-layer-panel-delete-button {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+}
+
+.assembly-layer-visibility-button {
+  border-color: transparent;
+  background: transparent;
+  color: #9cafc3;
+}
+
+.assembly-layer-ungroup-button {
+  border-color: #24445d;
+  background: rgb(73 145 255 / 0.1);
+  color: #b9d7ff;
+}
+
+.assembly-layer-visibility-button:hover,
+.assembly-layer-visibility-button:focus-visible,
+.assembly-layer-ungroup-button:hover,
+.assembly-layer-ungroup-button:focus-visible {
+  border-color: #254560;
+  background: rgb(119 216 255 / 0.1);
+  color: #d6e6f7;
+}
+
+.assembly-layer-item.is-hidden .assembly-layer-thumb,
+.assembly-layer-item.is-hidden .assembly-layer-name,
+.assembly-layer-item.is-hidden .assembly-layer-role {
+  opacity: 0.48;
 }
 
 .assembly-property-compact {
@@ -69,8 +264,17 @@
 
 .assembly-placement-properties-panel {
   grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
   gap: 0.38rem;
+  height: 100%;
   padding: 0.72rem;
+  overflow: hidden;
+}
+
+.assembly-product-shell .assembly-editor-inspector-column > .assembly-placement-properties-panel,
+.assembly-product-shell .assembly-editor-inspector-column > .assembly-placement-list-panel {
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 

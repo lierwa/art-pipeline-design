@@ -56,13 +56,15 @@ export function CompleteSceneImagesPanel({
                 src={scenePackageMediaUrl(scenePackage.chapter_id, "complete_images", image.id)}
               />
               <div className="chapter-complete-image-copy">
-                <h3 title={image.original_filename}>{imageName}</h3>
+                <div className="chapter-media-title-row">
+                  <h3 title={image.original_filename}>{imageName}</h3>
+                  <CoursePlannerStatusBadge tone="success">
+                    {image.pipeline_run_status ?? "Complete"}
+                  </CoursePlannerStatusBadge>
+                </div>
                 <p>{image.width} x {image.height}</p>
                 {image.generation_note ? <p className="chapter-media-note">{image.generation_note}</p> : null}
               </div>
-              <CoursePlannerStatusBadge tone="success">
-                {image.pipeline_run_status ?? "Complete"}
-              </CoursePlannerStatusBadge>
               <div className="chapter-complete-image-actions">
                 <button
                   type="button"

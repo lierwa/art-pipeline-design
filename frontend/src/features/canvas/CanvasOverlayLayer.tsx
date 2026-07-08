@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import {
   type Box,
@@ -13,6 +13,12 @@ import {
 } from "./canvasStageGeometry";
 import type { CanvasObjectView, CanvasSurfaceCapabilities } from "../canvasObjects";
 
+export type CanvasSelectionOverlayView = {
+  id: string;
+  displayName: string;
+  box: Box;
+};
+
 type CanvasOverlayLayerProps = {
   canvasObjects: CanvasObjectView[];
   capabilities: CanvasSurfaceCapabilities;
@@ -22,10 +28,12 @@ type CanvasOverlayLayerProps = {
   missingMaskRegion: DraftRegion | null;
   overlays: OverlayState;
   renamingElementId: string | null;
+  selectionOverlays?: CanvasSelectionOverlayView[];
   selectedElementId: string | null;
   selectedElementIds: string[];
   source: SourceMetadata;
   splitRegions: DraftRegion[];
+  suppressedLabelIds?: string[];
   onCancelRenameElement: () => void;
   onCommitRenameElement: (elementId: string, name: string) => void;
   onSelectElement: (elementId: string, mode?: ElementSelectionMode) => void;
@@ -41,16 +49,19 @@ export function CanvasOverlayLayer({
   missingMaskRegion,
   overlays,
   renamingElementId,
+  selectionOverlays = [],
   selectedElementId,
   selectedElementIds,
   source,
   splitRegions,
+  suppressedLabelIds = [],
   onCancelRenameElement,
   onCommitRenameElement,
   onSelectElement,
   onStartRenameElement,
 }: CanvasOverlayLayerProps) {
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const suppressedLabelIdSet = useMemo(() => new Set(suppressedLabelIds), [suppressedLabelIds]);
 
   useEffect(() => {
     if (renamingElementId) {
@@ -108,7 +119,7 @@ export function CanvasOverlayLayer({
                 className="overlay-box"
               />
             ) : null}
-            {overlays.showNames ? (
+            {overlays.showNames && !suppressedLabelIdSet.has(object.id) ? (
               isRenaming && capabilities.canRenameObjects ? (
                 <input
                   ref={renameInputRef}
@@ -166,6 +177,27 @@ export function CanvasOverlayLayer({
           </div>
         );
       })}
+      {selectionOverlays.map((selectionOverlay) => (
+        <div
+          key={selectionOverlay.id}
+          data-testid={`overlay-selection-${selectionOverlay.id}`}
+          className="overlay-item overlay-item-selection-projection is-selected"
+          style={boxToPercentStyle(selectionOverlay.box, source)}
+        >
+          <div
+            data-testid={`overlay-selection-box-${selectionOverlay.id}`}
+            className="overlay-box"
+          />
+          {overlays.showNames ? (
+            <span
+              data-testid={`overlay-selection-label-${selectionOverlay.id}`}
+              className={overlayLabelClassName(selectionOverlay, source)}
+            >
+              {selectionOverlay.displayName}
+            </span>
+          ) : null}
+        </div>
+      ))}
       {mergePreview ? (
         <div
           className="overlay-item overlay-item-merge-preview"
@@ -203,7 +235,7 @@ export function CanvasOverlayLayer({
   );
 }
 
-function overlayLabelClassName(object: CanvasObjectView, source: SourceMetadata): string {
+function overlayLabelClassName(object: { box: Box }, source: SourceMetadata): string {
   const classes = ["overlay-label"];
   const relativeWidth = object.box.w / source.width;
   const relativeHeight = object.box.h / source.height;

@@ -1,10 +1,14 @@
 import { ArrowLeft } from "lucide-react";
 import { useState, type MouseEvent } from "react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 
 import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
 import type { AssemblyReadiness } from "../assembly/assemblyReadiness";
-import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
+import {
+  CoursePlannerIconLink,
+  CoursePlannerStatusBadge,
+  CoursePlannerWorkspaceHeader,
+} from "./CoursePlannerChrome";
 import type { AssemblyWorkspaceSaveState } from "./AssemblyWorkspacePanel";
 
 type AssemblyWorkspaceFeedbackProps = {
@@ -34,18 +38,13 @@ export function AssemblyWorkspaceFeedback({
 
   return (
     <div className="assembly-workspace-feedback">
-      <header className="assembly-editor-topbar" aria-label="Assembly editor top bar">
-        <div className="assembly-editor-topbar-context">
-          {backTo ? (
-            <BackNavigationLink backTo={backTo} onBeforeBackNavigation={onBeforeBackNavigation} />
-          ) : null}
-          <div className="assembly-editor-topbar-labels">
-            <TopbarLabel label="Assembly" />
-            <TopbarLabel label={chapterTitle ?? "Untitled Chapter"} />
-          </div>
-          <span className="assembly-editor-context-count">{placementCountLabel(placementCount)}</span>
-        </div>
-      </header>
+      <CoursePlannerWorkspaceHeader
+        actions={<span className="assembly-editor-context-count">{placementCountLabel(placementCount)}</span>}
+        backAction={backTo ? <BackNavigationLink backTo={backTo} onBeforeBackNavigation={onBeforeBackNavigation} /> : null}
+        eyebrow="Assembly"
+        title={chapterTitle ?? "Untitled Chapter"}
+        variant="compact"
+      />
 
       {saveState !== "saved" && saveError ? (
         <div role="status" className="course-planner-inline-error">
@@ -128,24 +127,15 @@ function BackNavigationLink({
   };
 
   return (
-    <Link
-      className="assembly-editor-topbar-back"
+    <CoursePlannerIconLink
       to={backTo}
       aria-disabled={isNavigating}
-      aria-label="Back to Chapter"
+      ariaLabel="Back to Chapter"
       title="Back to Chapter"
       onClick={(event) => void handleClick(event)}
     >
       <ArrowLeft size={16} aria-hidden="true" />
-    </Link>
-  );
-}
-
-function TopbarLabel({ label }: { label: string }) {
-  return (
-    <span className="assembly-editor-dropdown-label" title={label}>
-      <span>{label}</span>
-    </span>
+    </CoursePlannerIconLink>
   );
 }
 

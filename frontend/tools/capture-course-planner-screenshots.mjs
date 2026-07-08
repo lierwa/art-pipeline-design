@@ -16,12 +16,30 @@ const outputDir = path.join(workspaceRoot, "output", "verification");
 const designDir = path.join(workspaceRoot, "output", "design");
 const chromePath = findChrome();
 const serveOnly = process.argv.includes("--serve-only");
+const marqueeProbeOnly = process.argv.includes("--marquee-probe-only");
+
+ensureScreenshotWebSocketRuntime();
 
 const screenshotTargets = [
+  {
+    name: "board",
+    path: "board-route-1920x1080.png",
+    url: "/__course-planner-visual?view=board",
+  },
+  {
+    name: "chapter-loading",
+    path: "chapter-loading-1920x1080.png",
+    url: "/__course-planner-visual?view=chapter-loading",
+  },
   {
     name: "chapter",
     path: "chapter-route-1920x1080.png",
     url: "/__course-planner-visual?view=chapter",
+  },
+  {
+    name: "assembly-loading",
+    path: "assembly-loading-1920x1080.png",
+    url: "/__course-planner-visual?view=assembly-loading",
   },
   {
     name: "assembly",
@@ -32,6 +50,21 @@ const screenshotTargets = [
     name: "assembly-drawer",
     path: "assembly-drawer-overlay-1920x1080.png",
     url: "/__course-planner-visual?view=assembly-drawer",
+  },
+  {
+    name: "assembly-multiselect",
+    path: "assembly-multiselect-1920x1080.png",
+    url: "/__course-planner-visual?view=assembly-multiselect",
+  },
+  {
+    name: "assembly-grouping",
+    path: "assembly-grouping-1920x1080.png",
+    url: "/__course-planner-visual?view=assembly-grouping",
+  },
+  {
+    name: "assembly-delete",
+    path: "assembly-delete-dialog-1920x1080.png",
+    url: "/__course-planner-visual?view=assembly-delete",
   },
 ];
 
@@ -70,6 +103,29 @@ const comparisonTargets = [
 
 mkdirSync(outputDir, { recursive: true });
 
+function ensureScreenshotWebSocketRuntime() {
+  if (serveOnly || typeof WebSocket !== "undefined") {
+    return;
+  }
+  if (process.env.COURSE_PLANNER_SCREENSHOT_WEBSOCKET_REEXEC === "1") {
+    return;
+  }
+  // WHY: Task 7 文档要求裸 `node tools/capture-course-planner-screenshots.mjs` 可运行；
+  // Node 21 的 WebSocket 仍需显式 flag，这里用同一 Node 重启，避免把平台细节交给调用者记忆。
+  const result = spawnSync(process.execPath, [
+    ...process.execArgv,
+    "--experimental-websocket",
+    ...process.argv.slice(1),
+  ], {
+    env: {
+      ...process.env,
+      COURSE_PLANNER_SCREENSHOT_WEBSOCKET_REEXEC: "1",
+    },
+    stdio: "inherit",
+  });
+  process.exit(result.status ?? 1);
+}
+
 const server = await createServer({
   root: frontendRoot,
   configFile: path.join(frontendRoot, "vite.config.ts"),
@@ -89,22 +145,52 @@ try {
   }
   console.log(`visual server ${baseUrl}`);
   if (serveOnly) {
+    console.log(`${baseUrl}/__course-planner-visual?view=board`);
+    console.log(`${baseUrl}/__course-planner-visual?view=chapter-loading`);
     console.log(`${baseUrl}/__course-planner-visual?view=chapter`);
+    console.log(`${baseUrl}/__course-planner-visual?view=assembly-loading`);
     console.log(`${baseUrl}/__course-planner-visual?view=assembly`);
     console.log(`${baseUrl}/__course-planner-visual?view=assembly-drawer`);
+    console.log(`${baseUrl}/__course-planner-visual?view=assembly-multiselect`);
+    console.log(`${baseUrl}/__course-planner-visual?view=assembly-grouping`);
+    console.log(`${baseUrl}/__course-planner-visual?view=assembly-delete`);
     await new Promise(() => undefined);
   }
 
-  for (const target of screenshotTargets) {
-    await capture(`${baseUrl}${target.url}`, path.join(outputDir, target.path), 1920, 1080, target.name);
+  const browser = await startBrowser(1920, 1080);
+  try {
+    if (marqueeProbeOnly) {
+      await captureScaledMarqueeProbe(
+        browser,
+        `${baseUrl}/__course-planner-visual?view=assembly`,
+        path.join(outputDir, "assembly-marquee-scaled-drag-1920x1080.png"),
+        1920,
+        1080,
+      );
+    } else {
+      for (const target of screenshotTargets) {
+        await captureWithBrowser(browser, `${baseUrl}${target.url}`, path.join(outputDir, target.path), 1920, 1080, target.name);
+      }
+      await captureScaledMarqueeProbe(
+        browser,
+        `${baseUrl}/__course-planner-visual?view=assembly`,
+        path.join(outputDir, "assembly-marquee-scaled-drag-1920x1080.png"),
+        1920,
+        1080,
+      );
+    }
+  } finally {
+    stopBrowser(browser);
   }
 
-  generateImageArtifacts();
+  if (!marqueeProbeOnly) {
+    generateImageArtifacts();
+  }
 } finally {
   await server.close();
 }
 
-async function capture(url, outputPath, width, height, waitFor) {
+async function startBrowser(width, height) {
   const userDataDir = mkdtempSync(path.join(tmpdir(), "course-planner-chrome-"));
   const debuggingPort = await findFreePort();
   const chrome = spawn(chromePath, [
@@ -129,40 +215,188 @@ async function capture(url, outputPath, width, height, waitFor) {
   });
 
   try {
-    const browserUrl = await waitForBrowserUrl(debuggingPort);
-    const page = await createPage(browserUrl, url);
-    const client = await connectCdp(page.webSocketDebuggerUrl);
-    try {
-      await client.send("Page.enable");
-      await client.send("Runtime.enable");
-      await client.send("Emulation.setDeviceMetricsOverride", {
-        width,
-        height,
-        deviceScaleFactor: 1,
-        mobile: false,
-      });
-      await client.send("Page.navigate", { url });
-      await delay(250);
-      await waitForPageReady(client, waitFor);
-      const screenshot = await client.send("Page.captureScreenshot", {
-        captureBeyondViewport: false,
-        fromSurface: true,
-        format: "png",
-      });
-      writeFileSync(outputPath, Buffer.from(screenshot.data, "base64"));
-    } finally {
-      client.close();
-    }
+    const browserUrl = await waitForBrowserUrl(debuggingPort, chrome);
+    return { browserUrl, chrome, userDataDir };
+  } catch (error) {
+    stopBrowser({ chrome, userDataDir });
+    throw error;
+  }
+}
+
+function stopBrowser(browser) {
+  stopProcessTree(browser.chrome);
+  try {
+    rmSync(browser.userDataDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
+  } catch (error) {
+    console.warn(`could not remove temporary browser profile ${browser.userDataDir}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function captureWithBrowser(browser, url, outputPath, width, height, waitFor) {
+  const page = await createPage(browser.browserUrl, url);
+  const client = await connectCdp(page.webSocketDebuggerUrl);
+  try {
+    await client.send("Page.enable");
+    await client.send("Runtime.enable");
+    await client.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await client.send("Page.navigate", { url });
+    await delay(250);
+    await waitForPageReady(client, waitFor);
+    const screenshot = await client.send("Page.captureScreenshot", {
+      captureBeyondViewport: false,
+      fromSurface: true,
+      format: "png",
+    });
+    writeFileSync(outputPath, Buffer.from(screenshot.data, "base64"));
   } finally {
-    stopProcessTree(chrome);
-    await delay(500);
-    try {
-      rmSync(userDataDir, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
-    } catch (error) {
-      console.warn(`could not remove temporary browser profile ${userDataDir}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    client.close();
   }
   console.log(`captured ${outputPath}`);
+}
+
+async function captureScaledMarqueeProbe(browser, url, outputPath, width, height) {
+  const page = await createPage(browser.browserUrl, url);
+  const client = await connectCdp(page.webSocketDebuggerUrl);
+  let drag = null;
+  try {
+    await client.send("Page.enable");
+    await client.send("Runtime.enable");
+    await client.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await client.send("Page.navigate", { url });
+    await delay(250);
+    await waitForPageReady(client, "assembly");
+    await client.send("Page.bringToFront");
+    await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        document.querySelector('button[aria-label="Zoom out"]')?.click();
+        document.querySelector('button[aria-label="Zoom out"]')?.click();
+        return true;
+      })()`,
+      returnByValue: true,
+    });
+    await delay(300);
+    const dragResult = await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const artboard = document.querySelector('[data-testid="canvas-artboard"]');
+        if (!artboard) {
+          throw new Error("Missing assembly artboard for marquee probe.");
+        }
+        const rect = artboard.getBoundingClientRect();
+        const startX = rect.left + rect.width * 0.18;
+        const startY = rect.top + rect.height * 0.88;
+        const target = document.elementFromPoint(startX, startY);
+        return {
+          startX,
+          startY,
+          endX: rect.left + rect.width * 0.38,
+          endY: rect.top + rect.height * 0.98,
+          targetTag: target?.tagName ?? null,
+          targetClass: typeof target?.className === "string" ? target.className : String(target?.className ?? ""),
+          targetTestId: target?.getAttribute?.("data-testid") ?? null,
+          targetClosestDrawingSurface: Boolean(target?.closest?.(".canvas-drawing-surface"))
+        };
+      })()`,
+      returnByValue: true,
+    });
+    drag = dragResult.result?.value;
+    if (!drag) {
+      throw new Error("Could not compute marquee drag coordinates.");
+    }
+    await client.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      button: "left",
+      clickCount: 1,
+      x: drag.startX,
+      y: drag.startY,
+    });
+    for (let step = 1; step <= 6; step += 1) {
+      await client.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        button: "left",
+        buttons: 1,
+        x: drag.startX + ((drag.endX - drag.startX) * step) / 6,
+        y: drag.startY + ((drag.endY - drag.startY) * step) / 6,
+      });
+      await delay(20);
+    }
+    await delay(120);
+    const verification = await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const artboard = document.querySelector('[data-testid="canvas-artboard"]');
+        const marquee = document.querySelector('.assembly-marquee');
+        if (!artboard) {
+          return { ok: false, reason: "missing artboard", drag: ${JSON.stringify(drag)} };
+        }
+        if (!marquee) {
+          const target = document.elementFromPoint(${drag.startX}, ${drag.startY});
+          return {
+            ok: false,
+            reason: "missing marquee",
+            drag: ${JSON.stringify(drag)},
+            targetAfterDrag: {
+              tag: target?.tagName ?? null,
+              className: typeof target?.className === "string" ? target.className : String(target?.className ?? ""),
+              testId: target?.getAttribute?.("data-testid") ?? null,
+              closestDrawingSurface: Boolean(target?.closest?.(".canvas-drawing-surface"))
+            }
+          };
+        }
+        const rect = marquee.getBoundingClientRect();
+        const expected = {
+          left: Math.min(${drag.startX}, ${drag.endX}),
+          top: Math.min(${drag.startY}, ${drag.endY}),
+          right: Math.max(${drag.startX}, ${drag.endX}),
+          bottom: Math.max(${drag.startY}, ${drag.endY})
+        };
+        const tolerance = 3;
+        const parentOk = marquee.parentElement === artboard;
+        const rectOk = Math.abs(rect.left - expected.left) <= tolerance
+          && Math.abs(rect.top - expected.top) <= tolerance
+          && Math.abs(rect.right - expected.right) <= tolerance
+          && Math.abs(rect.bottom - expected.bottom) <= tolerance;
+        return {
+          ok: parentOk && rectOk,
+          parentOk,
+          rectOk,
+          rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+          expected
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const value = verification.result?.value;
+    if (!value?.ok) {
+      throw new Error(`Scaled marquee probe failed: ${JSON.stringify(value)}`);
+    }
+    const screenshot = await client.send("Page.captureScreenshot", {
+      captureBeyondViewport: false,
+      fromSurface: true,
+      format: "png",
+    });
+    writeFileSync(outputPath, Buffer.from(screenshot.data, "base64"));
+  } finally {
+    if (drag) {
+      await client.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        button: "left",
+        clickCount: 1,
+        x: drag.endX,
+        y: drag.endY,
+      }).catch(() => undefined);
+    }
+    client.close();
+  }
+  console.log(`verified scaled marquee and captured ${outputPath}`);
 }
 
 async function findFreePort() {
@@ -179,10 +413,13 @@ async function findFreePort() {
   return address.port;
 }
 
-async function waitForBrowserUrl(port) {
+async function waitForBrowserUrl(port, chrome) {
   const endpoint = `http://127.0.0.1:${port}/json/version`;
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30000) {
+    if (chrome.exitCode !== null) {
+      throw new Error(`Chrome exited before DevTools endpoint became available (code ${chrome.exitCode}).`);
+    }
     try {
       const response = await fetch(endpoint);
       if (response.ok) {
@@ -227,14 +464,29 @@ async function waitForPageReady(client, waitFor) {
 }
 
 function readyExpression(waitFor) {
+  if (waitFor === "board") {
+    return "document.body.textContent.includes('Scene Pack / Chapter Board') && document.body.textContent.includes('Scene Packs') && document.body.textContent.includes('Chapter List')";
+  }
+  if (waitFor === "chapter-loading" || waitFor === "assembly-loading") {
+    return "document.body.textContent.includes('Loading Scene Package') && document.body.textContent.includes('Loading the latest chapter scene-package snapshot.')";
+  }
   if (waitFor === "chapter") {
-    return "document.body.textContent.includes('Chapter 02 - Breakfast Time') && document.body.textContent.includes('Studio Progress')";
+    return "Boolean(document.querySelector('.chapter-scene-studio')) && document.body.textContent.includes('Prompt Facts') && document.body.textContent.includes('Final')";
   }
   if (waitFor === "assembly") {
     return "document.body.textContent.includes('Assembly') && document.body.textContent.includes('Placement')";
   }
   if (waitFor === "assembly-drawer") {
     return "document.body.textContent.includes('Generated Chapter Assets') && document.body.textContent.includes('Generated cat variant') && Boolean(document.querySelector('.course-planner-drawer-overlay'))";
+  }
+  if (waitFor === "assembly-multiselect") {
+    return "document.body.textContent.includes('2 placements selected') && Array.from(document.querySelectorAll('input')).some((input) => input.getAttribute('placeholder') === 'Mixed') && document.querySelectorAll('.assembly-layer-item.is-selected').length >= 2";
+  }
+  if (waitFor === "assembly-grouping") {
+    return "document.body.textContent.includes('Group 1') && document.body.textContent.includes('2 placements grouped.') && document.querySelectorAll('.assembly-layer-item.is-selected').length >= 1";
+  }
+  if (waitFor === "assembly-delete") {
+    return "Boolean(document.querySelector('[role=\"alertdialog\"]')) && document.body.textContent.includes('Confirm delete')";
   }
   return "Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0)";
 }
@@ -348,17 +600,28 @@ function generateImageArtifacts() {
 }
 
 function findPython() {
+  const venvPython = path.join(
+    workspaceRoot,
+    "backend",
+    ".venv",
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
+  );
   const candidates = process.platform === "win32"
     ? [
+        { command: venvPython, args: [] },
         { command: "py", args: ["-3"] },
         { command: "python", args: [] },
         { command: "python3", args: [] },
       ]
     : [
+        { command: venvPython, args: [] },
         { command: "python3", args: [] },
         { command: "python", args: [] },
       ];
   for (const candidate of candidates) {
+    if (path.isAbsolute(candidate.command) && !existsSync(candidate.command)) {
+      continue;
+    }
     const result = spawnSync(candidate.command, [...candidate.args, "-c", "import PIL"], { stdio: "ignore" });
     if (result.status === 0) {
       return candidate;

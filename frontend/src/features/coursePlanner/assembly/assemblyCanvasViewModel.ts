@@ -1,5 +1,8 @@
 import type { CanvasObjectBox, CanvasObjectView } from "../../canvasObjects";
-import { readablePlacementName } from "../components/assemblyDisplayNames";
+import {
+  readableAssemblyPlacementName,
+  buildReadableAssetPoolAssetNames,
+} from "../components/assemblyDisplayNames";
 import { projectLayerOrderForHitTest } from "../../authoring/layerTreeMoveModel";
 import { scenePackageMediaUrl } from "../scenePackageMedia";
 import type { ChapterSceneAssemblyPlacement, ChapterSceneAssemblyTransform, ChapterScenePackage } from "../types";
@@ -49,6 +52,7 @@ export function buildAssemblyCanvasObjects({
     return [];
   }
   const assetById = new Map(scenePackage.chapter_assets.map((asset) => [asset.id, asset]));
+  const assetNameById = buildReadableAssetPoolAssetNames(scenePackage.chapter_assets);
 
   return orderedPlacements(draft.placements, projectLayerOrderForHitTest(draft.layer_order))
     .reverse()
@@ -59,10 +63,11 @@ export function buildAssemblyCanvasObjects({
       }
       // WHY: Assembly placement 是画布上的真实素材内容；thumbnail 只保留给主画布选中预览，不能承担内容渲染语义。
       const assetImageUrl = scenePackageMediaUrl(scenePackage.chapter_id, "chapter_assets", asset.id);
+      const displayName = readableAssemblyPlacementName(placement, assetNameById);
       return [{
         id: placement.id,
-        displayName: readablePlacementName(placement.display_name, placement.asset_id),
-        editableName: readablePlacementName(placement.display_name, placement.asset_id),
+        displayName,
+        editableName: displayName,
         box: placementToCanvasBox(placement.transform, sceneSize),
         contentImageUrl: assetImageUrl,
         thumbnailUrl: assetImageUrl,

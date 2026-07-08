@@ -1,4 +1,6 @@
 import "./assemblyEditorDependencyMocks";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
@@ -90,6 +92,47 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
     expect(canvasBody).toHaveStyle({ height: "100%" });
     expect(canvasBody).toHaveStyle({ minHeight: "0px" });
     expect(canvasBody.style.height).not.toMatch(/px$/);
+  });
+
+  it("removes rejected toolbar controls and keeps manual save icon-only", () => {
+    const scenePackage = scenePackageWithCanvasSize(1024, 768);
+
+    render(
+      <AssemblyEditorCanvas
+        canTriggerSave
+        draft={scenePackage.assembly}
+        scenePackage={scenePackage}
+        selectedPlacementId={null}
+        onDraftChange={vi.fn()}
+        onSave={vi.fn(async () => undefined)}
+        onSelectPlacement={vi.fn()}
+      />,
+    );
+
+    const toolbar = within(screen.getByRole("region", { name: "Assembly canvas" }))
+      .getByRole("toolbar", { name: "Canvas tools" });
+    expect(within(toolbar).queryByRole("button", { name: "Save Assembly" })).not.toBeInTheDocument();
+    expect(within(toolbar).queryByLabelText("Alignment controls")).not.toBeInTheDocument();
+    expect(within(toolbar).queryByRole("button", { name: "Align left" })).not.toBeInTheDocument();
+    expect(within(toolbar).queryByLabelText("Show boxes")).not.toBeInTheDocument();
+
+    const saveButton = within(toolbar).getByRole("button", { name: /save/i });
+    expect(saveButton).toHaveClass("shared-icon-button");
+    expect(saveButton).not.toHaveClass("shared-icon-button-with-label");
+  });
+
+  it("keeps image content below the selected frame, labels, and edit affordances with standard cursors", () => {
+    const stylesCss = readFileSync(path.join(process.cwd(), "src", "styles.css"), "utf8");
+
+    expect(cssRule(stylesCss, ".canvas-object-image")).toContain("z-index: 1");
+    expect(cssRule(stylesCss, ".overlay-box")).toContain("z-index: 2");
+    expect(cssRule(stylesCss, ".overlay-label,\n.overlay-mask-placeholder")).toContain("z-index: 3");
+    expect(cssRule(stylesCss, ".canvas-edit-region")).toContain("cursor: move");
+    expect(cssRule(stylesCss, ".resize-handle-nw")).toContain("cursor: nwse-resize");
+    expect(cssRule(stylesCss, ".resize-handle-ne")).toContain("cursor: nesw-resize");
+    expect(cssRule(stylesCss, ".resize-handle-e")).toContain("cursor: ew-resize");
+    expect(cssRule(stylesCss, ".resize-handle-s")).toContain("cursor: ns-resize");
+    expect(cssRule(stylesCss, ".rotate-handle")).toContain("cursor: grab");
   });
 
   it("updates placement transform through shared canvas box editing", async () => {
@@ -207,14 +250,14 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
 
     const canvasRegion = screen.getByRole("region", { name: "Assembly canvas" });
     const toolbar = within(canvasRegion).getByRole("toolbar", { name: "Canvas tools" });
-    expect(within(canvasRegion).getByTestId("overlay-label-placement_uuid")).toHaveTextContent("Chapter asset");
+    expect(within(canvasRegion).getByTestId("overlay-label-placement_uuid")).toHaveTextContent("Unnamed target asset");
     expect(canvasRegion).not.toHaveTextContent(uuidAssetId);
 
     await userEvent.click(within(toolbar).getByRole("checkbox", { name: "Show names" }));
     expect(within(canvasRegion).queryByTestId("overlay-label-placement_uuid")).not.toBeInTheDocument();
 
     await userEvent.click(within(toolbar).getByRole("checkbox", { name: "Show names" }));
-    expect(within(canvasRegion).getByTestId("overlay-label-placement_uuid")).toHaveTextContent("Chapter asset");
+    expect(within(canvasRegion).getByTestId("overlay-label-placement_uuid")).toHaveTextContent("Unnamed target asset");
   });
 
   it("renders Assembly placement rotation on shared canvas overlays and edit controls", () => {
@@ -261,6 +304,48 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
       scenePackageMediaUrl(scenePackage.chapter_id, "chapter_assets", "chapter_asset_bowl"),
     );
     expect(overlayRegion.querySelector(".overlay-thumb")).toBeNull();
+    expect(screen.getByTestId("overlay-box-placement_bowl")).toBeVisible();
+    expect(screen.getByTestId("canvas-edit-region-placement_bowl")).toHaveClass("canvas-edit-region");
+    expect(screen.getByTestId("resize-handle-placement_bowl-nw")).toHaveClass("resize-handle-nw");
+    expect(screen.getByTestId("rotate-handle-placement_bowl")).toHaveClass("rotate-handle");
+  });
+
+  it("rotates the selected placement from the canvas handle through the manifest draft", () => {
+    const scenePackage = scenePackageWithTwoPlacements();
+    const onDraftChange = vi.fn();
+
+    render(
+      <AssemblyEditorCanvas
+        draft={scenePackage.assembly}
+        scenePackage={scenePackage}
+        selectedPlacementId="placement_bowl"
+        onDraftChange={onDraftChange}
+        onSelectPlacement={vi.fn()}
+      />,
+    );
+
+    const canvasRegion = screen.getByRole("region", { name: "Assembly canvas" });
+    const artboard = within(canvasRegion).getByTestId("canvas-artboard");
+    mockRect(artboard, { left: 0, top: 0, width: 1024, height: 1024 });
+
+    fireEvent.pointerDown(screen.getByTestId("rotate-handle-placement_bowl"), {
+      clientX: 430,
+      clientY: 300,
+      pointerId: 1,
+      button: 0,
+      buttons: 1,
+    });
+    fireEvent.pointerMove(document, {
+      clientX: 760,
+      clientY: 594,
+      pointerId: 1,
+      buttons: 1,
+    });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+
+    expect(onDraftChange).toHaveBeenCalled();
+    const savedDraft = onDraftChange.mock.calls.at(-1)?.[0];
+    expect(savedDraft.placements.find((placement) => placement.id === "placement_bowl")?.transform.rotation_deg).not.toBe(0);
   });
 
   it("projects placements with the selected Empty Scene image size when draft size is absent", () => {
@@ -359,6 +444,56 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
     });
   });
 
+  it("marquee-selects with source coordinates when the artboard is scaled and offset", async () => {
+    mockScenePackageImages();
+    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
+
+    const canvasRegion = screen.getByRole("region", { name: "Assembly canvas" });
+    const artboard = within(canvasRegion).getByTestId("canvas-artboard");
+    const drawingSurface = within(canvasRegion).getByTestId("canvas-drawing-surface");
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    mockRect(artboard, { left: 120, top: 80, width: 512, height: 512 });
+
+    fireEvent.mouseDown(drawingSurface, { clientX: 280, clientY: 315, button: 0 });
+    fireEvent.mouseMove(drawingSurface, { clientX: 485, clientY: 430, button: 0 });
+    fireEvent.mouseUp(drawingSurface, { clientX: 485, clientY: 430, button: 0 });
+
+    await waitFor(() => {
+      expect(within(layerTree).getByRole("button", { name: /Breakfast bowl target/, pressed: true })).toBeInTheDocument();
+      expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/, pressed: true })).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("Assembly editor status")).toHaveTextContent("2 selected");
+  });
+
+  it("renders the live marquee inside the transformed artboard while dragging", () => {
+    mockScenePackageImages();
+    render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
+
+    const canvasRegion = screen.getByRole("region", { name: "Assembly canvas" });
+    const artboard = within(canvasRegion).getByTestId("canvas-artboard");
+    const drawingSurface = within(canvasRegion).getByTestId("canvas-drawing-surface");
+    mockRect(artboard, { left: 120, top: 80, width: 512, height: 512 });
+
+    fireEvent.mouseDown(drawingSurface, {
+      clientX: 280,
+      clientY: 315,
+      button: 0,
+    });
+    fireEvent.mouseMove(drawingSurface, {
+      clientX: 485,
+      clientY: 430,
+      buttons: 1,
+    });
+
+    const marquee = document.querySelector<HTMLElement>(".assembly-marquee");
+    expect(marquee).toBeInTheDocument();
+    expect(marquee?.parentElement).toBe(artboard);
+    expect(marquee?.style.left).toBe("31.25%");
+    expect(marquee?.style.top).toBe("45.8984375%");
+    expect(marquee?.style.width).toBe("40.0390625%");
+    expect(marquee?.style.height).toBe("22.4609375%");
+  });
+
   it("drops an Asset Pool item at the pointer release point with 25 percent source-aspect sizing", async () => {
     mockScenePackageImages();
     render(<AssemblyEditorHarness initialScenePackage={scenePackageWithOnlyBowlPlacement()} />);
@@ -452,10 +587,8 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
     expect(within(layerTree).queryByRole("button", { name: /Cleanup cloth target/ })).not.toBeInTheDocument();
   });
 
-  it("preserves placement dimensions when aligning selected placements", async () => {
+  it("keeps multi-selection without exposing alignment as an always-visible toolbar group", async () => {
     mockScenePackageImages();
-    const user = userEvent.setup();
-    const saveSpy = vi.fn();
     render(
       <AssemblyEditorHarness
         initialScenePackage={scenePackageWithTwoPlacementsConfig({
@@ -464,27 +597,16 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
             placement_cloth: { transform: { w: 0.11, h: 0.16 } },
           },
         })}
-        onSaveAssemblyManifest={saveSpy}
       />,
     );
 
     fireEvent.keyDown(window, { key: "a", ctrlKey: true });
-    await user.click(screen.getByRole("button", { name: "Align left" }));
-    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    const toolbar = within(screen.getByRole("region", { name: "Assembly canvas" }))
+      .getByRole("toolbar", { name: "Canvas tools" });
 
-    await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
-    expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
-      placements: expect.arrayContaining([
-        expect.objectContaining({
-          id: "placement_bowl",
-          transform: expect.objectContaining({ w: 0.18, h: 0.12 }),
-        }),
-        expect.objectContaining({
-          id: "placement_cloth",
-          transform: expect.objectContaining({ w: 0.11, h: 0.16 }),
-        }),
-      ]),
-    }));
+    expect(screen.getByLabelText("Assembly editor status")).toHaveTextContent("2 selected");
+    expect(within(toolbar).queryByLabelText("Alignment controls")).not.toBeInTheDocument();
+    expect(within(toolbar).queryByRole("button", { name: "Align left" })).not.toBeInTheDocument();
   });
 
   it("auto-fits after Empty Scene changes even after a user zoom", async () => {
@@ -691,6 +813,11 @@ function scenePackageWithCanvasSize(
       empty_scene_size: draftSize,
     },
   });
+}
+
+function cssRule(css: string, selector: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return css.match(new RegExp(`(?:^|\\n)${escapedSelector}\\s*\\{[^}]+}`))?.[0] ?? "";
 }
 
 function scenePackageWithAlternativeEmptyScene() {

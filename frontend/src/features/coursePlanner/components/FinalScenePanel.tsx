@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ImageIcon } from "lucide-react";
 
+import { ConfirmActionDialog } from "../../../shared/ui/ConfirmActionDialog";
 import type { ChapterScenePackage } from "../types";
 import type { AssemblyReadiness } from "../assembly/assemblyReadiness";
 import { scenePackageMediaUrl } from "../scenePackageMedia";
@@ -19,6 +20,17 @@ export function FinalScenePanel({
   const [isLocking, setIsLocking] = useState(false);
   const ready = assemblyReadiness.is_ready;
   const isLocked = Boolean(scenePackage.final_scene);
+  const actionLabel = isLocked ? "Replace Final" : "Lock Final";
+  const actionButton = (
+    <button
+      type="button"
+      className="course-planner-secondary-action"
+      disabled={!ready || isLocking}
+      onClick={isLocked ? undefined : () => void handleLockFinal()}
+    >
+      {isLocking ? "Locking..." : actionLabel}
+    </button>
+  );
 
   async function handleLockFinal() {
     setIsLocking(true);
@@ -36,14 +48,19 @@ export function FinalScenePanel({
           <h2>Final</h2>
           <p>{scenePackage.final_scene ? "Locked" : "Not locked"}</p>
         </div>
-        <button
-          type="button"
-          className="course-planner-secondary-action"
-          disabled={isLocked || !ready || isLocking}
-          onClick={() => void handleLockFinal()}
-        >
-          {isLocked ? "Locked" : "Lock Final"}
-        </button>
+        {isLocked ? (
+          <ConfirmActionDialog
+            trigger={actionButton}
+            title="Replace Final Scene"
+            description="This will overwrite the locked Final Scene snapshot with the current Assembly, prompt, reference, and placed asset facts. Existing exported history is replaced for this Chapter."
+            confirmLabel="Replace Final"
+            onConfirm={() => {
+              // WHY: backend 的 Lock Final 是唯一冻结边界；已有终稿时必须让作者确认覆盖，
+              // 避免把已审过的 prompt/reference/asset snapshot 静默替换掉。
+              void handleLockFinal();
+            }}
+          />
+        ) : actionButton}
       </div>
 
       <div className="chapter-final-body">

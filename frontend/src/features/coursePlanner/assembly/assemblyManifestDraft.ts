@@ -180,6 +180,60 @@ export function movePlacementToGroup(
   };
 }
 
+export function movePlacementOutOfGroup(
+  draft: AssemblyManifestDraft,
+  placementId: string,
+  rootIndex: number,
+): AssemblyManifestDraft {
+  const placement = draft.placements.find((candidate) => candidate.id === placementId);
+  if (!placement?.group_id) {
+    return draft;
+  }
+
+  const currentOrder = normalizeLayerOrder(draft.placements, draft.layer_order);
+  const sourceGroupId = placement.group_id;
+  const rootBlocks = buildRootLayerBlocks(draft, currentOrder)
+    .flatMap((block) => {
+      if (block.kind !== "group" || block.groupId !== sourceGroupId) {
+        return [block];
+      }
+      const remainingPlacementIds = block.placementIds.filter((id) => id !== placementId);
+      return remainingPlacementIds.length >= 2
+        ? [{ ...block, placementIds: remainingPlacementIds }]
+        : remainingPlacementIds.map((id) => ({ kind: "placement" as const, placementIds: [id] }));
+    });
+  const movedBlock = { kind: "placement" as const, placementIds: [placementId] };
+  const nextBlocks = [...rootBlocks];
+  nextBlocks.splice(clampIndex(rootIndex, nextBlocks.length), 0, movedBlock);
+  const remainingSourceGroup = nextBlocks.find((block) => block.kind === "group" && block.groupId === sourceGroupId);
+  const keptSourceGroupPlacementIds = remainingSourceGroup?.kind === "group" && remainingSourceGroup.placementIds.length >= 2
+    ? remainingSourceGroup.placementIds
+    : null;
+
+  // WHY: 单个 placement 脱组会同时改 membership 与 layer_order；若原 group 退化为
+  // 1 个成员，继续保留会违反 manifest validation，所以在协议边界一次性解散。
+  return {
+    ...draft,
+    placements: draft.placements.map((candidate) => {
+      if (candidate.id === placementId) {
+        return { ...candidate, group_id: null };
+      }
+      if (!keptSourceGroupPlacementIds && candidate.group_id === sourceGroupId) {
+        return { ...candidate, group_id: null };
+      }
+      return candidate;
+    }),
+    groups: keptSourceGroupPlacementIds
+      ? draft.groups.map((group) => (
+        group.id === sourceGroupId
+          ? { ...group, placement_ids: keptSourceGroupPlacementIds }
+          : group
+      ))
+      : draft.groups.filter((group) => group.id !== sourceGroupId),
+    layer_order: nextBlocks.flatMap((block) => block.placementIds),
+  };
+}
+
 export function removePlacement(draft: AssemblyManifestDraft, placementId: string): AssemblyManifestDraft {
   const remainingPlacements = draft.placements
     .filter((placement) => placement.id !== placementId)
@@ -396,6 +450,35 @@ function normalizeLayerOrder(
     }
   }
   return normalized;
+}
+
+type RootLayerBlock = {
+  kind: "group" | "placement";
+  groupId?: string;
+  placementIds: string[];
+};
+
+function buildRootLayerBlocks(draft: AssemblyManifestDraft, layerOrder: string[]): RootLayerBlock[] {
+  const placementsById = new Map(draft.placements.map((placement) => [placement.id, placement]));
+  const emittedGroupIds = new Set<string>();
+  return layerOrder.flatMap((placementId): RootLayerBlock[] => {
+    const placement = placementsById.get(placementId);
+    if (!placement) {
+      return [];
+    }
+    if (!placement.group_id) {
+      return [{ kind: "placement", placementIds: [placement.id] }];
+    }
+    if (emittedGroupIds.has(placement.group_id)) {
+      return [];
+    }
+    emittedGroupIds.add(placement.group_id);
+    return [{
+      kind: "group",
+      groupId: placement.group_id,
+      placementIds: layerOrder.filter((candidateId) => placementsById.get(candidateId)?.group_id === placement.group_id),
+    }];
+  });
 }
 
 function nextPlacementId(draft: AssemblyManifestDraft, assetId: string): string {

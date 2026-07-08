@@ -133,7 +133,7 @@ describe("Assembly editor properties and asset actions", () => {
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl initial/ })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth initial/ })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -200,7 +200,7 @@ describe("Assembly editor properties and asset actions", () => {
 
     expect(width).toHaveDisplayValue("162");
     expect(height).toHaveDisplayValue("120");
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
     expect(saveSpy).not.toHaveBeenCalled();
   });
 
@@ -224,7 +224,7 @@ describe("Assembly editor properties and asset actions", () => {
     fireEvent.change(within(properties).getByLabelText("Width"), { target: { value: "180" } });
     fireEvent.change(within(properties).getByLabelText("Rotation"), { target: { value: "-15" } });
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -272,7 +272,7 @@ describe("Assembly editor properties and asset actions", () => {
     fireEvent.change(within(properties).getByLabelText("Position X"), { target: { value: "450" } });
     fireEvent.change(within(properties).getByLabelText("Width"), { target: { value: "180" } });
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -314,7 +314,7 @@ describe("Assembly editor properties and asset actions", () => {
     });
     expect(screen.getByRole("heading", { name: "Breakfast bowl" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -323,6 +323,48 @@ describe("Assembly editor properties and asset actions", () => {
             id: "placement_bowl",
             asset_id: "chapter_asset_bowl",
             display_name: "Hero bowl placement",
+          }),
+        ]),
+      }));
+    });
+  });
+
+  it("keeps placement names typed in properties literal across canvas and layer labels", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithPixelGeometry()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ }));
+
+    const rawPlacementName = "Hero_bowl-placement_01";
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    fireEvent.change(within(properties).getByLabelText("Name"), {
+      target: { value: rawPlacementName },
+    });
+
+    expect(within(properties).getByLabelText("Name")).toHaveDisplayValue(rawPlacementName);
+    await waitFor(() => {
+      expect(within(layerTree).getByRole("button", { name: `${rawPlacementName} target` })).toBeInTheDocument();
+      expect(screen.getByTestId("overlay-label-placement_bowl")).toHaveTextContent(rawPlacementName);
+    });
+    expect(screen.getByRole("heading", { name: "Breakfast bowl" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
+        placements: expect.arrayContaining([
+          expect.objectContaining({
+            id: "placement_bowl",
+            asset_id: "chapter_asset_bowl",
+            display_name: rawPlacementName,
           }),
         ]),
       }));
@@ -348,7 +390,7 @@ describe("Assembly editor properties and asset actions", () => {
 
     const properties = screen.getByRole("region", { name: "Placement properties" });
     expect(within(layerTree).getByRole("button", { name: "Group selected layers" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Align left" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Align left" })).not.toBeInTheDocument();
     await user.click(within(properties).getByRole("button", { name: "Remove selected placements" }));
 
     expect(await screen.findByText("Remove 2 placements?")).toBeInTheDocument();
@@ -357,7 +399,7 @@ describe("Assembly editor properties and asset actions", () => {
     expect(within(layerTree).queryByRole("button", { name: /Breakfast bowl/ })).not.toBeInTheDocument();
     expect(within(layerTree).queryByRole("button", { name: /Cleanup cloth/ })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -405,7 +447,7 @@ describe("Assembly editor properties and asset actions", () => {
     expect(within(layerTree).queryByRole("button", { name: /Breakfast bowl/ })).not.toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(screen.getByRole("button", { name: /save/i }));
 
     await waitFor(() => {
       expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -439,7 +481,7 @@ describe("Assembly editor properties and asset actions", () => {
     expect(screen.queryByText("Remove Breakfast bowl?")).not.toBeInTheDocument();
 
     expect(saveSpy).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
   });
 
   it("keeps preserved placements in alignment review after Empty Scene replacement until the author explicitly saves", async () => {
@@ -463,17 +505,39 @@ describe("Assembly editor properties and asset actions", () => {
 
     expect(screen.getByText("2 placements need alignment review.")).toBeInTheDocument();
     expect(screen.getAllByText("Alignment risk").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
 
     await advanceAutosaveCycle();
     expect(saveSpy).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Save Assembly" }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
     await flushAsyncScenePackage();
 
     expect(saveSpy).toHaveBeenLastCalledWith(expect.objectContaining({
       empty_scene_image_id: "empty_scene_002",
       empty_scene_size: { width: 1536, height: 1024 },
+      placements: expect.arrayContaining([
+        expect.objectContaining({
+          id: "placement_bowl",
+          transform: {
+            cx: 0.42,
+            cy: 0.58,
+            w: 0.18,
+            h: 0.18,
+            rotation_deg: 0,
+          },
+        }),
+        expect.objectContaining({
+          id: "placement_cloth",
+          transform: {
+            cx: 0.62,
+            cy: 0.54,
+            w: 0.14,
+            h: 0.14,
+            rotation_deg: 0,
+          },
+        }),
+      ]),
     }));
     expect(screen.queryByText("2 placements need alignment review.")).not.toBeInTheDocument();
   });
@@ -507,7 +571,7 @@ describe("Assembly editor properties and asset actions", () => {
     await advanceAutosaveCycle();
     expect(saveSpy).not.toHaveBeenCalled();
     expect(screen.getByText("1 placements need alignment review.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /save/i })).toBeEnabled();
   });
 
   it("requires explicit confirmation before clearing placements after Empty Scene replacement", async () => {

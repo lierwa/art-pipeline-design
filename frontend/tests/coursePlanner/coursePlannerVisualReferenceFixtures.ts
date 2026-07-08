@@ -289,8 +289,14 @@ function visualCompleteImages(): ChapterScenePackage["complete_images"] {
 
 function visualChapterAssets(): ChapterScenePackage["chapter_assets"] {
   return [
-    sceneAsset("chapter_asset_cat_mochi", "Mochi target cat", "mochi-target-cat.png", { linkedTargetObjectId: "target_object_cat" }),
-    sceneAsset("chapter_asset_breakfast_bowl", "Breakfast bowl", "breakfast-bowl.png", { linkedTargetObjectId: "target_object_bowl" }),
+    generatedVisualAsset(
+      sceneAsset("chapter_asset_cat_mochi", "Mochi target cat", "mochi-target-cat.png", { linkedTargetObjectId: "target_object_cat" }),
+      "visual_generated_cat_variant",
+    ),
+    generatedVisualAsset(
+      sceneAsset("chapter_asset_breakfast_bowl", "Breakfast bowl", "breakfast-bowl.png", { linkedTargetObjectId: "target_object_bowl" }),
+      "visual_generated_breakfast_bowl",
+    ),
     sceneAsset("chapter_asset_milk_carton", "Milk carton", "milk-carton.png", { linkedTargetObjectId: "target_object_milk" }),
     sceneAsset("chapter_asset_cereal_box", "Cereal box", "cereal-box.png", { linkedTargetObjectId: "target_object_cereal_box" }),
     sceneAsset("chapter_asset_spoon", "Small spoon", "small-spoon.png", { linkedTargetObjectId: "target_object_spoon" }),
@@ -302,6 +308,21 @@ function visualChapterAssets(): ChapterScenePackage["chapter_assets"] {
     sceneAsset("chapter_asset_kitchen_stool", "Kitchen stool", "kitchen-stool.png"),
     sceneAsset("chapter_asset_potted_herb", "Potted herb", "potted-herb.png"),
   ];
+}
+
+function generatedVisualAsset(
+  asset: ChapterScenePackage["chapter_assets"][number],
+  runAssetId: string,
+): ChapterScenePackage["chapter_assets"][number] {
+  return {
+    ...asset,
+    lineage: {
+      source_kind: "generated_asset",
+      complete_scene_image_id: "visual_complete_scene_001",
+      pipeline_run_id: "visual_run_complete_001",
+      run_asset_id: runAssetId,
+    },
+  };
 }
 
 function visualReferenceAssemblyFixture(updatedAt: string | null): ChapterSceneAssemblyManifest {

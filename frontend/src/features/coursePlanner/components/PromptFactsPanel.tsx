@@ -70,11 +70,11 @@ export function PromptFactsPanel({
       <div className="chapter-studio-panel-heading">
         <div>
           <h2>Prompt Facts</h2>
-          <p>{scenePackage.prompt.updated_at ? `Updated ${scenePackage.prompt.updated_at}` : "Draft"}</p>
+          <p>{promptUpdatedLabel(scenePackage.prompt.updated_at)}</p>
         </div>
       </div>
 
-      <dl className="chapter-prompt-summary-grid">
+      <dl className="chapter-prompt-summary-strip">
         <PromptSummaryMetric label="Characters" value={String(characterNames.length)} />
         <PromptSummaryMetric label="Target Objects" value={String(scenePackage.target_objects.length)} />
         <PromptSummaryMetric label="Avoid Objects" value={String(scenePackage.avoid_objects.length)} />
@@ -98,6 +98,18 @@ function PromptSummaryMetric({ label, value }: { label: string; value: string })
       <dd>{value}</dd>
     </div>
   );
+}
+
+function promptUpdatedLabel(updatedAt: string | null) {
+  if (!updatedAt) {
+    return "Draft";
+  }
+  const date = new Date(updatedAt);
+  if (Number.isNaN(date.getTime())) {
+    return "Updated";
+  }
+  // WHY: 原始 ISO 时间戳是数据事实，不适合塞进编辑面板标题；这里只做展示压缩。
+  return `Updated ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
 }
 
 function characterLabel(characterIps: CharacterIpProfile[], characterIpId: string): string {

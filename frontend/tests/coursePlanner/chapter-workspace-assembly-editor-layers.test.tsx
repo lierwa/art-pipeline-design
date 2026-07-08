@@ -27,6 +27,7 @@ import {
   buildLayerTreeData,
   createMovedLayerDraft,
 } from "../../src/features/coursePlanner/components/assemblyLayerTreeModel";
+import { preserveAssemblySelection } from "../../src/features/coursePlanner/components/useAssemblyWorkspaceSaveController";
 import { studioStatusLabel } from "../../src/features/coursePlanner/pages/ChapterWorkspacePage";
 import type {
   AsyncStatusMap,
@@ -44,7 +45,6 @@ import {
   studioScenePackFixture,
 } from "./chapterWorkspaceFixtures";
 import { renderChapterWorkspace } from "./chapterWorkspaceTestHelpers";
-
 import {
   ASSEMBLY_AUTOSAVE_DEBOUNCE_MS,
   AssemblyEditorHarness,
@@ -63,7 +63,6 @@ import {
   scenePackageWithTwoPlacementsConfig,
 } from "./assemblyEditorHarness";
 import { layerLabels } from "./assemblyEditorTestUtils";
-
 beforeEach(() => {
   vi.unstubAllGlobals();
   vi.stubGlobal("requestAnimationFrame", ((callback: FrameRequestCallback) => {
@@ -80,6 +79,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function expectIconOnlySaveButton() {
+  expect(screen.queryByText("Save Assembly")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save Assembly" })).not.toBeInTheDocument();
+  const saveButton = screen.getByRole("button", { name: "Save" });
+  expect(saveButton).toHaveClass("shared-icon-button");
+  expect(saveButton).not.toHaveClass("shared-icon-button-with-label");
+  return saveButton;
+}
 
 describe("Assembly editor layers", () => {
   it("renders the Assembly editor route landmarks", async () => {
@@ -123,15 +130,15 @@ describe("Assembly editor layers", () => {
 
     expect(await screen.findByText("Saving changes")).toBeInTheDocument();
     expect(within(milkCupCard as HTMLElement).getByText("1 use")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Locate Placement" })).toBeInTheDocument();
+    expect(within(milkCupCard as HTMLElement).getByRole("button", { name: "Asset actions for Milk cup" })).toBeInTheDocument();
     expect(screen.getByText("1 placement")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Milk cup target/, pressed: true })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Placement properties" })).toHaveTextContent("Milk cup");
 
-    await user.click(screen.getByRole("button", { name: "Save Assembly" }));
+    await user.click(expectIconOnlySaveButton());
 
     await waitFor(() => expect(screen.getByText("All changes saved")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Save Assembly" })).toBeDisabled();
+    expect(expectIconOnlySaveButton()).toBeDisabled();
   });
 
   it("locates the used asset placement and syncs selection across placement list and property panel", async () => {
@@ -139,7 +146,8 @@ describe("Assembly editor layers", () => {
     const user = userEvent.setup();
     render(<AssemblyEditorHarness initialScenePackage={studioScenePackageFixture()} />);
 
-    await user.click(screen.getByRole("button", { name: "Locate Placement" }));
+    await user.click(screen.getByRole("button", { name: "Asset actions for Breakfast bowl" }));
+    await user.click(screen.getByRole("menuitem", { name: "Locate placement" }));
 
     const layerTree = screen.getByRole("region", { name: "Placement layers" });
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl/, pressed: true })).toBeInTheDocument();
@@ -181,7 +189,8 @@ describe("Assembly editor layers", () => {
     render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
 
     const layerTree = screen.getByRole("region", { name: "Placement layers" });
-    expect(within(layerTree).queryByRole("toolbar", { name: "Layer actions" })).not.toBeInTheDocument();
+    const layerActions = within(layerTree).getByRole("toolbar", { name: "Layer actions" });
+    expect(within(layerActions).getByRole("button", { name: "Delete Breakfast bowl placement" })).toHaveClass("assembly-layer-panel-delete-button");
     expect(within(layerTree).queryByRole("button", { name: "Add layer" })).not.toBeInTheDocument();
     expect(within(layerTree).queryByRole("button", { name: "Duplicate layer" })).not.toBeInTheDocument();
     expect(within(layerTree).queryByRole("button", { name: "Move layer up" })).not.toBeInTheDocument();
@@ -192,15 +201,19 @@ describe("Assembly editor layers", () => {
     expect(within(layerTree).queryByRole("button", { name: "Move Breakfast bowl forward" })).not.toBeInTheDocument();
     expect(within(layerTree).queryByRole("button", { name: "Move Cleanup cloth backward" })).not.toBeInTheDocument();
     expect(within(layerTree).getByRole("tree", { name: "Placement layer order" })).toBeInTheDocument();
-    expect(layerTree.querySelector(".asset-tree-arborist")).toBeInTheDocument();
+    expect(layerTree.querySelector(".assembly-layer-native-tree")).toBeInTheDocument();
     const bowlRow = within(layerTree).getByRole("button", { name: /Breakfast bowl target/ });
     expect(bowlRow).toBeInTheDocument();
     expect(bowlRow.tagName).not.toBe("BUTTON");
     const bowlLayerRow = bowlRow.closest(".assembly-layer-row") as HTMLElement;
     expect(bowlLayerRow).toBeInTheDocument();
     expect(bowlLayerRow.querySelector(".assembly-layer-thumb")).toBeInTheDocument();
-    expect(bowlLayerRow.querySelector(".assembly-layer-drag-affordance")).toBeInTheDocument();
-    expect(within(layerTree).queryByLabelText("Visibility for Breakfast bowl")).not.toBeInTheDocument();
+    expect(bowlLayerRow.querySelector(".assembly-layer-drag-affordance")).not.toBeInTheDocument();
+    expect(bowlLayerRow.querySelector(".assembly-layer-name")).toHaveTextContent("Breakfast bowl");
+    expect(bowlLayerRow.querySelector(".assembly-layer-role")).toHaveTextContent("Target");
+    expectLayerRowOrder(bowlLayerRow);
+    expect(within(bowlLayerRow).getByRole("button", { name: "Hide Breakfast bowl" })).toHaveClass("assembly-layer-visibility-button");
+    expect(within(bowlLayerRow).queryByRole("button", { name: "Delete Breakfast bowl placement" })).not.toBeInTheDocument();
     expect(within(layerTree).queryByLabelText("Lock Breakfast bowl")).not.toBeInTheDocument();
     expect(within(layerTree).queryByLabelText("Drag Breakfast bowl layer")).not.toBeInTheDocument();
     expect(within(layerTree).queryByRole("button", { name: "More actions for Breakfast bowl" })).not.toBeInTheDocument();
@@ -269,9 +282,55 @@ describe("Assembly editor layers", () => {
     expect(layerTree).not.toHaveTextContent(uuidAssetId);
     expect(layerTree).not.toHaveTextContent(dependencyUuidAssetId);
 
-    const primaryRow = within(layerTree).getByRole("button", { name: /Chapter asset target/ }).closest(".assembly-layer-row") as HTMLElement;
+    const primaryRow = within(layerTree).getByRole("button", { name: /Unnamed target asset 1 target/ }).closest(".assembly-layer-row") as HTMLElement;
     expect(primaryRow).toBeInTheDocument();
     expect(primaryRow.querySelector(".assembly-layer-thumb")).toBeInTheDocument();
+    expect(primaryRow.querySelector(".assembly-layer-name")).toHaveTextContent("Unnamed target asset 1");
+    expect(primaryRow.querySelector(".assembly-layer-role")).toHaveTextContent("Target");
+    expectLayerRowOrder(primaryRow);
+    expect(within(layerTree).getByRole("button", { name: /Unnamed target asset 2 initial/ })).toBeInTheDocument();
+  });
+
+  it("keeps long layer names in their own column without swallowing role and visibility actions", () => {
+    mockScenePackageImages();
+    const longName = "Morning sun patch with a very long generated placement name";
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={studioScenePackageFixture({
+          chapter_assets: [
+            sceneAsset("chapter_asset_long_name", longName, "sun-patch.png", { linkedTargetObjectId: "target_object_bowl" }),
+          ],
+          assembly: {
+            ...emptyAssemblyManifest(),
+            placements: [
+              {
+                id: "placement_long_name",
+                asset_id: "chapter_asset_long_name",
+                display_name: longName,
+                runtime_role: "target",
+                transform: { cx: 0.42, cy: 0.58, w: 0.18, h: 0.18, rotation_deg: 0 },
+                group_id: null,
+                requires_placed: [],
+              },
+            ],
+            layer_order: ["placement_long_name"],
+          },
+        })}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    const row = within(layerTree).getByRole("button", { name: /Morning sun patch.*target/ }).closest(".assembly-layer-row") as HTMLElement;
+    const name = row.querySelector(".assembly-layer-name");
+    const role = row.querySelector(".assembly-layer-role");
+    const actions = row.querySelector(".assembly-layer-row-actions");
+
+    expect(name).toHaveTextContent(longName);
+    expect(name?.parentElement).toHaveClass("assembly-layer-row-select");
+    expect(role).toHaveTextContent("Target");
+    expect(actions).toContainElement(role as HTMLElement);
+    expect(within(row).getByRole("button", { name: `Hide ${longName}` })).toHaveClass("assembly-layer-visibility-button");
+    expect(isBefore(name, actions)).toBe(true);
   });
 
   it("duplicates the used asset into a second unused row without copying placement", async () => {
@@ -279,13 +338,14 @@ describe("Assembly editor layers", () => {
     const user = userEvent.setup();
     render(<AssemblyEditorHarness initialScenePackage={studioScenePackageFixture()} />);
 
-    await user.click(screen.getByRole("button", { name: "Duplicate Chapter Asset" }));
+    await user.click(screen.getByRole("button", { name: "Asset actions for Breakfast bowl" }));
+    await user.click(screen.getByRole("menuitem", { name: "Duplicate asset" }));
 
     const rows = within(screen.getByRole("region", { name: "Assembly asset pool" })).getAllByRole("article");
     expect(rows).toHaveLength(2);
     expect(within(rows[0] ?? document.body).getByText("Breakfast bowl")).toBeInTheDocument();
     expect(within(rows[1] ?? document.body).getByText("Breakfast bowl")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Locate Placement" })).toBeInTheDocument();
+    expect(within(rows[0] ?? document.body).getByRole("button", { name: "Asset actions for Breakfast bowl" })).toBeInTheDocument();
     expect(
       screen
         .getAllByRole("button", { name: "Add to Assembly" })
@@ -362,19 +422,71 @@ describe("Assembly editor layers", () => {
     expect(canvasOverlayOrder()).toEqual(["placement_cloth", "placement_bowl"]);
 
     await act(async () => {
-      (globalThis as typeof globalThis & {
-        __mockArboristMove?: (args: { dragIds: string[]; parentId: string | null; index: number }) => void;
-      }).__mockArboristMove?.({
-        dragIds: ["placement_cloth"],
-        parentId: "__REACT_ARBORIST_INTERNAL_ROOT__",
-        index: 0,
-      });
+      dragLayerToDropZone(layerTree, /Cleanup cloth target/, "Drop at root before Breakfast bowl");
     });
 
     expect(layerLabels(layerTree)).toEqual(["Cleanup cloth", "Breakfast bowl"]);
     expect(canvasOverlayOrder()).toEqual(["placement_bowl", "placement_cloth"]);
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/, pressed: true })).toBeInTheDocument();
     expect(screen.getByLabelText("Assembly editor status")).toHaveTextContent("X 635");
+  });
+
+  it("moves a root placement into a group through the draggable layer tree", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const baseScenePackage = scenePackageWithGroupedPlacements();
+    const scenePackage: ChapterScenePackage = {
+      ...baseScenePackage,
+      chapter_assets: [
+        ...baseScenePackage.chapter_assets,
+        sceneAsset("chapter_asset_spoon", "Spoon", "spoon.png"),
+      ],
+    };
+    const saveSpy = vi.fn();
+
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackage}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(
+      within(screen.getByRole("article", { name: "Add Spoon to Assembly" }))
+        .getByRole("button", { name: "Add to Assembly" }),
+    );
+
+    await waitFor(() => expect(layerLabels(layerTree)).toEqual(["Spoon", "Breakfast props", "Breakfast bowl", "Cleanup cloth"]));
+    expect(Array.from(layerTree.querySelectorAll<HTMLElement>("[data-depth]")).map((row) => row.dataset.depth)).toEqual(["0", "0", "1", "1"]);
+    expect(canvasOverlayOrder()).toEqual(["placement_cloth", "placement_bowl", "placement_chapter_asset_spoon"]);
+    expect(within(layerTree).getByLabelText("Drop at root before Spoon")).toHaveAttribute("data-layer-drop-kind", "root");
+    expect(within(layerTree).getByLabelText("Drop at root before Breakfast props")).toHaveAttribute("data-layer-drop-kind", "root");
+    expect(within(layerTree).getByLabelText("Drop into Breakfast props at position 2")).toHaveAttribute("data-layer-drop-kind", "group-child");
+
+    await act(async () => {
+      dragLayerToDropZone(layerTree, /Spoon target/, "Drop into Breakfast props at position 2");
+    });
+
+    expect(layerLabels(layerTree)).toEqual(["Breakfast props", "Breakfast bowl", "Spoon", "Cleanup cloth"]);
+    expect(Array.from(layerTree.querySelectorAll<HTMLElement>("[data-depth]")).map((row) => row.dataset.depth)).toEqual(["0", "1", "1", "1"]);
+    expect(canvasOverlayOrder()).toEqual(["placement_cloth", "placement_chapter_asset_spoon", "placement_bowl"]);
+    expect(within(layerTree).getByRole("button", { name: /Spoon target/, pressed: true })).toBeInTheDocument();
+
+    await user.click(expectIconOnlySaveButton());
+
+    await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const savedManifest = saveSpy.mock.calls.at(-1)?.[0] as ChapterSceneAssemblyManifest;
+    expect(savedManifest.groups).toEqual([
+      expect.objectContaining({
+        id: "group_1",
+        placement_ids: ["placement_bowl", "placement_chapter_asset_spoon", "placement_cloth"],
+      }),
+    ]);
+    expect(savedManifest.placements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "placement_chapter_asset_spoon", group_id: "group_1" }),
+    ]));
+    expect(savedManifest.layer_order).toEqual(["placement_bowl", "placement_chapter_asset_spoon", "placement_cloth"]);
   });
 
   it("keeps multi-selection active in the draggable placement layer tree", async () => {
@@ -393,10 +505,9 @@ describe("Assembly editor layers", () => {
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl target/, pressed: true })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/, pressed: true })).toBeInTheDocument();
     expect(within(layerTree).getByRole("tree", { name: "Placement layer order" })).toBeInTheDocument();
-    expect(within(layerTree).getByRole("button", { name: /Breakfast bowl target/, pressed: true })).toBeInTheDocument();
-    expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/, pressed: true })).toBeInTheDocument();
     expect(screen.getByLabelText("Assembly editor status")).toHaveTextContent("2 selected");
     expect(screen.getByRole("region", { name: "Placement properties" })).toHaveTextContent("2 placements selected");
+    expect(layerTree.querySelector(".assembly-layer-panel-delete-button")).not.toBeInTheDocument();
   });
 
   it("groups selected placement rows and ungroups without deleting child placements", async () => {
@@ -416,13 +527,85 @@ describe("Assembly editor layers", () => {
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ })).toBeInTheDocument();
     expect(layerLabels(layerTree)).toEqual(["Group 1", "Breakfast bowl", "Cleanup cloth"]);
+    const groupRow = within(layerTree).getByRole("button", { name: /Group 1 Group/ }).closest(".assembly-layer-row") as HTMLElement;
+    expect(groupRow.querySelector(".assembly-layer-collapse-button")).toBeInTheDocument();
+    expect(groupRow.querySelector(".assembly-layer-thumb-group")).toBeInTheDocument();
+    expect(groupRow.querySelector(".assembly-layer-name")).toHaveTextContent("Group 1");
+    expect(groupRow.querySelector(".assembly-layer-role")).toHaveTextContent("(2)");
+    expect(within(groupRow).getByRole("button", { name: "Hide Group 1 group" })).toHaveClass("assembly-layer-visibility-button");
+    expect(Array.from(layerTree.querySelectorAll<HTMLElement>("[data-depth]")).map((row) => row.dataset.depth)).toEqual(["0", "1", "1"]);
+    expect(screen.getByLabelText("Assembly editor status")).toHaveTextContent("1 selected");
+    const properties = screen.getByRole("region", { name: "Placement properties" });
+    expect(properties).toHaveTextContent("Group 1");
+    expect(properties).toHaveTextContent("2 placements grouped.");
+    expect(screen.getByTestId("overlay-selection-group_1")).toBeInTheDocument();
+    expect(screen.getByTestId("overlay-selection-label-group_1")).toHaveTextContent("Group 1");
+    expect(screen.queryByTestId("overlay-label-placement_bowl")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("overlay-label-placement_cloth")).not.toBeInTheDocument();
+    expect(within(layerTree).queryByRole("button", { name: "Ungroup selected layer" })).not.toBeInTheDocument();
+    expect(within(groupRow).getByRole("button", { name: "Ungroup Group 1" })).toHaveClass("assembly-layer-ungroup-button");
 
-    await user.click(within(layerTree).getByRole("button", { name: "Ungroup selected layer" }));
+    await user.click(within(groupRow).getByRole("button", { name: "Ungroup Group 1" }));
 
     expect(within(layerTree).queryByRole("button", { name: /Group 1 Group/ })).not.toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Breakfast bowl target/ })).toBeInTheDocument();
     expect(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ })).toBeInTheDocument();
     expect(layerLabels(layerTree)).toEqual(["Breakfast bowl", "Cleanup cloth"]);
+  });
+
+  it("moves a grouped placement back to root through the draggable layer tree", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const baseScenePackage = scenePackageWithGroupedPlacements();
+    const scenePackage: ChapterScenePackage = {
+      ...baseScenePackage,
+      chapter_assets: [
+        ...baseScenePackage.chapter_assets,
+        sceneAsset("chapter_asset_spoon", "Spoon", "spoon.png"),
+      ],
+    };
+    const saveSpy = vi.fn();
+
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackage}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(
+      within(screen.getByRole("article", { name: "Add Spoon to Assembly" }))
+        .getByRole("button", { name: "Add to Assembly" }),
+    );
+
+    await act(async () => {
+      dragLayerToDropZone(layerTree, /Spoon target/, "Drop into Breakfast props at position 2");
+    });
+    expect(Array.from(layerTree.querySelectorAll<HTMLElement>("[data-depth]")).map((row) => row.dataset.depth)).toEqual(["0", "1", "1", "1"]);
+
+    await act(async () => {
+      dragLayerToDropZone(layerTree, /Spoon target/, "Drop at root end");
+    });
+
+    expect(layerLabels(layerTree)).toEqual(["Breakfast props", "Breakfast bowl", "Cleanup cloth", "Spoon"]);
+    expect(Array.from(layerTree.querySelectorAll<HTMLElement>("[data-depth]")).map((row) => row.dataset.depth)).toEqual(["0", "1", "1", "0"]);
+    expect(canvasOverlayOrder()).toEqual(["placement_chapter_asset_spoon", "placement_cloth", "placement_bowl"]);
+
+    await user.click(expectIconOnlySaveButton());
+
+    await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
+    const savedManifest = saveSpy.mock.calls.at(-1)?.[0] as ChapterSceneAssemblyManifest;
+    expect(savedManifest.groups).toEqual([
+      expect.objectContaining({
+        id: "group_1",
+        placement_ids: ["placement_bowl", "placement_cloth"],
+      }),
+    ]);
+    expect(savedManifest.placements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "placement_chapter_asset_spoon", group_id: null }),
+    ]));
+    expect(savedManifest.layer_order).toEqual(["placement_bowl", "placement_cloth", "placement_chapter_asset_spoon"]);
   });
 
   it("confirms group deletion and removes the group with its child placements", async () => {
@@ -431,6 +614,7 @@ describe("Assembly editor layers", () => {
     render(<AssemblyEditorHarness initialScenePackage={scenePackageWithGroupedPlacements()} />);
 
     const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Breakfast props Group/ }));
 
     await user.click(within(layerTree).getByRole("button", { name: "Delete Breakfast props group" }));
 
@@ -452,6 +636,7 @@ describe("Assembly editor layers", () => {
     render(<AssemblyEditorHarness initialScenePackage={scenePackageWithTwoPlacements()} />);
 
     const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    await user.click(within(layerTree).getByRole("button", { name: /Cleanup cloth target/ }));
 
     await user.click(within(layerTree).getByRole("button", { name: "Delete Cleanup cloth placement" }));
 
@@ -485,10 +670,109 @@ describe("Assembly editor layers", () => {
     expect(onSaveAssemblyManifest).not.toHaveBeenCalled();
     expect(screen.getByText("All changes saved")).toBeInTheDocument();
   });
+
+  it("keeps selected group layer after save echo selection pruning", () => {
+    const draft = createAssemblyDraft(scenePackageWithGroupedPlacements());
+
+    expect(
+      preserveAssemblySelection(draft, {
+        selectedPlacementId: null,
+        selectedLayerNodeIds: ["group_1"],
+      }),
+    ).toEqual({
+      selectedPlacementId: null,
+      selectedLayerNodeIds: ["group_1"],
+    });
+  });
+
+  it("toggles placement visibility from the layer tree without saving editor-only state", async () => {
+    mockScenePackageImages();
+    const user = userEvent.setup();
+    const saveSpy = vi.fn();
+    render(
+      <AssemblyEditorHarness
+        initialScenePackage={scenePackageWithTwoPlacements()}
+        onSaveAssemblyManifest={saveSpy}
+      />,
+    );
+
+    const layerTree = screen.getByRole("region", { name: "Placement layers" });
+    expect(screen.getByTestId("overlay-region-placement_bowl")).toBeInTheDocument();
+
+    await user.click(within(layerTree).getByRole("button", { name: "Hide Breakfast bowl" }));
+
+    expect(screen.queryByTestId("overlay-region-placement_bowl")).not.toBeInTheDocument();
+    expect(within(layerTree).getByRole("button", { name: "Show Breakfast bowl" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+    expect(saveSpy).not.toHaveBeenCalled();
+
+    await user.click(within(layerTree).getByRole("button", { name: "Show Breakfast bowl" }));
+
+    expect(screen.getByTestId("overlay-region-placement_bowl")).toBeInTheDocument();
+  });
 });
 
 function canvasOverlayOrder() {
   const overlayLayer = screen.getByTestId("overlay-region-placement_bowl").parentElement;
   return Array.from(overlayLayer?.querySelectorAll<HTMLElement>("[data-testid^='overlay-region-']") ?? [])
     .map((element) => element.dataset.testid?.replace("overlay-region-", "") ?? "");
+}
+
+function expectLayerRowOrder(row: HTMLElement) {
+  const thumbnail = row.querySelector(".assembly-layer-thumb");
+  const name = row.querySelector(".assembly-layer-name");
+  const role = row.querySelector(".assembly-layer-role");
+  const actions = row.querySelector(".assembly-layer-row-actions");
+
+  expect(thumbnail).toBeInTheDocument();
+  expect(name).toBeInTheDocument();
+  expect(role).toBeInTheDocument();
+  expect(actions).toBeInTheDocument();
+  expect(isBefore(thumbnail, name)).toBe(true);
+  expect(isBefore(name, role)).toBe(true);
+  expect(actions?.contains(role)).toBe(true);
+}
+
+function dragLayerToDropZone(
+  layerTree: HTMLElement,
+  rowName: RegExp,
+  dropLabel: string,
+) {
+  const rowSelect = within(layerTree)
+    .getAllByRole("button", { name: rowName })
+    .find((element) => element.classList.contains("assembly-layer-row-select"));
+  const row = rowSelect?.closest(".assembly-layer-row");
+  const dropZone = within(layerTree).getByLabelText(dropLabel);
+
+  expect(row).toBeInTheDocument();
+  mockRect(rowSelect as HTMLElement, { left: 24, top: 24, width: 220, height: 30 });
+  mockRect(dropZone, { left: 24, top: 86, width: 280, height: 12 });
+  fireEvent.mouseDown(rowSelect as HTMLElement, {
+    button: 0,
+    buttons: 1,
+    clientX: 34,
+    clientY: 34,
+  });
+  fireEvent.mouseMove(window, {
+    buttons: 1,
+    clientX: 44,
+    clientY: 44,
+  });
+  fireEvent.mouseMove(window, {
+    buttons: 1,
+    clientX: 70,
+    clientY: 92,
+  });
+  fireEvent.mouseUp(window, {
+    button: 0,
+    clientX: 70,
+    clientY: 92,
+  });
+}
+
+function isBefore(left: Element | null, right: Element | null) {
+  if (!left || !right) {
+    return false;
+  }
+  return Boolean(left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING);
 }

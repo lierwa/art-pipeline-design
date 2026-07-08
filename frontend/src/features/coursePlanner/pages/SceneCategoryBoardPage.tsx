@@ -6,8 +6,9 @@ import { CandidateChapterBoard } from "../components/CandidateChapterBoard";
 import {
   CoursePlannerDialog,
   CoursePlannerDrawer,
-  CoursePlannerPageHeader,
+  CoursePlannerResizableColumns,
   CoursePlannerStatusBadge,
+  CoursePlannerWorkspaceHeader,
 } from "../components/CoursePlannerChrome";
 import "../components/coursePlanner.css";
 import "../components/coursePlannerPanels.css";
@@ -135,7 +136,7 @@ export function SceneCategoryBoardPage() {
 
       <main className={inlineError ? "scene-category-board-page has-inline-error" : "scene-category-board-page"}>
         <div className="scene-category-board-page__header">
-          <CoursePlannerPageHeader
+          <CoursePlannerWorkspaceHeader
             title="Scene Pack / Chapter Board"
             description={activeScenePack?.title ?? "Select a Scene Pack to start Chapter planning."}
             status={<CoursePlannerStatusBadge label={operationLabel(planner.asyncStatus)} tone={operationTone(planner.asyncStatus)} />}
@@ -143,69 +144,99 @@ export function SceneCategoryBoardPage() {
         </div>
         {inlineError ? <p className="course-planner-inline-error" role="alert">{inlineError}</p> : null}
 
-        <div className="scene-category-board-layout">
-          <SceneCategoryList
-            isBusy={isAnyPending(planner.asyncStatus)}
-            scenePacks={planner.scenePacks}
-            selectedScenePackId={activeScenePackId}
-            onArchiveScenePack={(scenePack) => void archiveScenePack(scenePack)}
-            onCreateScenePack={openCreateScenePack}
-            onDeleteScenePack={(scenePack) => void deleteScenePack(scenePack)}
-            onEditScenePack={openEditScenePack}
-            onSelectScenePack={planner.setActiveScenePackId}
-          />
-          <div className="scene-category-board-main">
-            <PlanningBriefPanel
-              activeScenePack={activeScenePack}
-              candidateCount={candidates.length}
-              chapterCount={chapters.length}
-              isGenerating={isPending(planner.asyncStatus, `generateCandidates:${activeScenePackId}`)}
-              isRevising={isPending(planner.asyncStatus, `reviseCandidates:${activeScenePackId}`)}
-              onGenerate={() => {
-                if (activeScenePackId) {
-                  void planner.generateChapterCandidates(activeScenePackId, {}, { mode: "replace" });
-                }
-              }}
-              onGenerateMore={() => {
-                if (activeScenePackId && candidates.length > 0) {
-                  void planner.generateChapterCandidates(activeScenePackId);
-                }
-              }}
-              onOpenBatchRevision={() => setIsBatchRevisionOpen(true)}
-            />
-            <CandidateChapterBoard
-              acceptingCandidateId={pendingId(planner.asyncStatus, "acceptCandidate")}
-              activeScenePack={activeScenePack}
-              candidates={candidates}
-              deletingCandidateId={pendingId(planner.asyncStatus, "deleteCandidate")}
-              onAccept={(candidateId) => {
-                if (activeScenePackId) {
-                  void planner.acceptChapterCandidate(activeScenePackId, candidateId);
-                }
-              }}
-              onDelete={(candidateId) => {
-                if (activeScenePackId) {
-                  void planner.deleteChapterCandidate(activeScenePackId, candidateId);
-                }
-              }}
-            />
-          </div>
-          <SelectedChapterSequence
-            chapters={chapters}
-            deletingChapterId={pendingId(planner.asyncStatus, "deleteChapter")}
-            isReordering={isPending(planner.asyncStatus, `reorderChapters:${activeScenePackId}`)}
-            onDeleteChapter={(chapterId) => {
-              if (activeScenePackId) {
-                void planner.deleteChapter(activeScenePackId, chapterId);
-              }
-            }}
-            onReorderChapters={(chapterIds) => {
-              if (activeScenePackId) {
-                void planner.reorderChapters(activeScenePackId, chapterIds);
-              }
-            }}
-          />
-        </div>
+        <CoursePlannerResizableColumns
+          ariaLabel="Scene Pack board columns"
+          className="scene-category-board-layout"
+          groupId="scene-category-board-layout"
+          storageKey="course-planner:scene-category-board-layout"
+          left={{
+            id: "scene-packs",
+            defaultSize: "19%",
+            minSize: "300px",
+            maxSize: "460px",
+            className: "scene-category-board-layout__left",
+            children: (
+              <SceneCategoryList
+                isBusy={isAnyPending(planner.asyncStatus)}
+                scenePacks={planner.scenePacks}
+                selectedScenePackId={activeScenePackId}
+                onArchiveScenePack={(scenePack) => void archiveScenePack(scenePack)}
+                onCreateScenePack={openCreateScenePack}
+                onDeleteScenePack={(scenePack) => void deleteScenePack(scenePack)}
+                onEditScenePack={openEditScenePack}
+                onSelectScenePack={planner.setActiveScenePackId}
+              />
+            ),
+          }}
+          center={{
+            id: "chapter-board",
+            defaultSize: "56%",
+            minSize: "560px",
+            className: "scene-category-board-layout__center",
+            children: (
+              <div className="scene-category-board-main">
+                <PlanningBriefPanel
+                  activeScenePack={activeScenePack}
+                  candidateCount={candidates.length}
+                  chapterCount={chapters.length}
+                  isGenerating={isPending(planner.asyncStatus, `generateCandidates:${activeScenePackId}`)}
+                  isRevising={isPending(planner.asyncStatus, `reviseCandidates:${activeScenePackId}`)}
+                  onGenerate={() => {
+                    if (activeScenePackId) {
+                      void planner.generateChapterCandidates(activeScenePackId, {}, { mode: "replace" });
+                    }
+                  }}
+                  onGenerateMore={() => {
+                    if (activeScenePackId && candidates.length > 0) {
+                      void planner.generateChapterCandidates(activeScenePackId);
+                    }
+                  }}
+                  onOpenBatchRevision={() => setIsBatchRevisionOpen(true)}
+                />
+                <CandidateChapterBoard
+                  acceptingCandidateId={pendingId(planner.asyncStatus, "acceptCandidate")}
+                  activeScenePack={activeScenePack}
+                  candidates={candidates}
+                  deletingCandidateId={pendingId(planner.asyncStatus, "deleteCandidate")}
+                  onAccept={(candidateId) => {
+                    if (activeScenePackId) {
+                      void planner.acceptChapterCandidate(activeScenePackId, candidateId);
+                    }
+                  }}
+                  onDelete={(candidateId) => {
+                    if (activeScenePackId) {
+                      void planner.deleteChapterCandidate(activeScenePackId, candidateId);
+                    }
+                  }}
+                />
+              </div>
+            ),
+          }}
+          right={{
+            id: "chapter-sequence",
+            defaultSize: "25%",
+            minSize: "360px",
+            maxSize: "560px",
+            className: "scene-category-board-layout__right",
+            children: (
+              <SelectedChapterSequence
+                chapters={chapters}
+                deletingChapterId={pendingId(planner.asyncStatus, "deleteChapter")}
+                isReordering={isPending(planner.asyncStatus, `reorderChapters:${activeScenePackId}`)}
+                onDeleteChapter={(chapterId) => {
+                  if (activeScenePackId) {
+                    void planner.deleteChapter(activeScenePackId, chapterId);
+                  }
+                }}
+                onReorderChapters={(chapterIds) => {
+                  if (activeScenePackId) {
+                    void planner.reorderChapters(activeScenePackId, chapterIds);
+                  }
+                }}
+              />
+            ),
+          }}
+        />
 
         {scenePackEditor ? (
           <CoursePlannerDialog

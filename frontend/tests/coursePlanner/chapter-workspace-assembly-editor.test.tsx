@@ -53,6 +53,58 @@ describe("Assembly editor navigation shell", () => {
       expect(pageRule).toContain("min-height: 0");
       expect(pageRule).not.toContain("height: 100vh");
     }
+
+    const routePageRule = shellCss.match(/\.chapter-assembly-editor-page\s*\{[^}]+}/)?.[0] ?? "";
+    expect(routePageRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
+
+    const productShellRule = shellCss.match(/\.assembly-product-shell\s*\{[^}]+}/)?.[0] ?? "";
+    expect(productShellRule).toContain("grid-template-rows: auto minmax(0, 1fr) 44px");
+  });
+
+  it("keeps the inspector rail split into fixed properties and scrollable layers", () => {
+    const workspaceCss = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyWorkspace.css"),
+      "utf8",
+    );
+    const rightRailCss = readFileSync(
+      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "assemblyRightRail.css"),
+      "utf8",
+    );
+
+    const inspectorRule = workspaceCss.match(
+      /\.assembly-editor-inspector-column\s*\{[^}]*grid-template-rows:[^}]+}/,
+    )?.[0] ?? "";
+    expect(inspectorRule).toContain("grid-template-rows: clamp(320px, 38%, 440px) minmax(0, 1fr)");
+    expect(inspectorRule).toContain("overflow: hidden");
+
+    const propertiesRule = rightRailCss.match(/\.assembly-placement-properties-panel\s*\{[^}]+}/)?.[0] ?? "";
+    expect(propertiesRule).toContain("height: 100%");
+    expect(propertiesRule).toContain("overflow: hidden");
+
+    const layersBodyRule = rightRailCss.match(/\.assembly-placement-list-panel > \.asset-tree-body\s*\{[^}]+}/)?.[0] ?? "";
+    expect(layersBodyRule).toContain("overflow-x: hidden");
+    expect(layersBodyRule).toContain("overflow-y: auto");
+
+    expect(rightRailCss).toContain(".assembly-layer-native-tree");
+    expect(rightRailCss).toContain(".assembly-layer-drop-zone");
+    expect(rightRailCss).toContain(".assembly-layer-drop-zone.is-over::before");
+    expect(rightRailCss).toContain(".assembly-layer-drag-overlay");
+    const rowRule = rightRailCss.match(/\.assembly-layer-item \.asset-tree-row\s*\{[^}]+}/)?.[0] ?? "";
+    expect(rowRule).toContain("grid-template-columns: minmax(0, 1fr) max-content");
+    const depthRule = rightRailCss.match(/\.assembly-layer-item \.asset-tree-row-depth\s*\{[^}]+}/)?.[0] ?? "";
+    expect(depthRule).toContain("padding-left: var(--assembly-layer-depth-offset, 0)");
+    const selectRule = rightRailCss.match(/\.assembly-layer-row-select\s*\{[^}]+}/)?.[0] ?? "";
+    expect(selectRule).toContain("grid-template-columns: 24px minmax(0, 1fr)");
+    expect(selectRule).toContain("width: 100%");
+    const nameRule = rightRailCss.match(/\.assembly-layer-name\s*\{[^}]+}/)?.[0] ?? "";
+    expect(nameRule).toContain("display: block");
+    expect(nameRule).toContain("width: 100%");
+    const actionsRule = rightRailCss.match(/\.assembly-layer-row-actions\s*\{[^}]+}/)?.[0] ?? "";
+    expect(actionsRule).not.toContain("\n  width: 52px;");
+    expect(actionsRule).toContain("min-width: max-content");
+    expect(actionsRule).toContain("flex: 0 0 auto");
+    expect(actionsRule).toContain("overflow: hidden");
+    expect(actionsRule).toContain("justify-content: flex-end");
   });
 
   it("renders local Assembly header and Back to Chapter context", async () => {

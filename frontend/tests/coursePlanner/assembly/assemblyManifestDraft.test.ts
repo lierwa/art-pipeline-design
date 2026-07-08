@@ -10,6 +10,7 @@ import {
   getPlacementDependencyOptionState,
   createAssemblyDraft,
   groupPlacements,
+  movePlacementOutOfGroup,
   movePlacementLayer,
   projectManifestForSave,
   removePlacement,
@@ -408,6 +409,34 @@ describe("assemblyManifestDraft", () => {
       { id: "placement_bowl", group_id: null },
       { id: "placement_chapter_asset_cloth", group_id: null },
     ]);
+  });
+
+  it("moves a grouped placement back to the root layer and dissolves a degenerate group", () => {
+    const scenePackage = studioScenePackageFixture({
+      chapter_assets: [
+        ...studioScenePackageFixture().chapter_assets,
+        sceneAsset("chapter_asset_cloth", "Cleanup cloth", "cloth.png", { linkedTargetObjectId: "target_object_cloth" }),
+      ],
+    });
+    const draftWithSecondPlacement = addAssetPlacement(createAssemblyDraft(scenePackage), "chapter_asset_cloth");
+    const groupedDraft = groupPlacements(
+      draftWithSecondPlacement,
+      ["placement_chapter_asset_cloth", "placement_bowl"],
+      "Breakfast props",
+    );
+
+    const ungroupedPlacementDraft = movePlacementOutOfGroup(groupedDraft, "placement_bowl", 1);
+
+    expect(ungroupedPlacementDraft.groups).toEqual([]);
+    expect(ungroupedPlacementDraft.layer_order).toEqual([
+      "placement_chapter_asset_cloth",
+      "placement_bowl",
+    ]);
+    expect(ungroupedPlacementDraft.placements.map((placement) => ({ id: placement.id, group_id: placement.group_id }))).toEqual([
+      { id: "placement_bowl", group_id: null },
+      { id: "placement_chapter_asset_cloth", group_id: null },
+    ]);
+    expect(validateAssemblyDraft(ungroupedPlacementDraft, scenePackage).is_valid).toBe(true);
   });
 
   it("never emits editor-only records when projecting a manifest", () => {
