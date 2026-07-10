@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>猫角色画法参考板</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 1600px;
+      min-height: 1200px;
+      background: #f6eddb;
+      color: #352818;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    .page {
+      padding: 34px;
+    }
+    .title {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      border-bottom: 4px solid #3a2a16;
+      padding-bottom: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 38px;
+      letter-spacing: 0;
+    }
+    .subtitle {
+      font-size: 20px;
+      font-weight: 700;
+      color: #815a25;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+    .card {
+      background: #fffaf0;
+      border: 3px solid #3a2a16;
+      border-radius: 18px;
+      overflow: hidden;
+      min-height: 345px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 0 rgba(58, 42, 22, 0.12);
+    }
+    .image-wrap {
+      height: 245px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff5df;
+      border-bottom: 2px solid rgba(58, 42, 22, 0.18);
+      padding: 12px;
+    }
+    .image-wrap.dark {
+      background: #efe5cb;
+    }
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .crop img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .body {
+      padding: 12px 14px 14px;
+    }
+    .tag {
+      display: inline-block;
+      padding: 3px 9px;
+      border: 2px solid #3a2a16;
+      border-radius: 999px;
+      background: #ffe08a;
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+    .caption {
+      font-size: 20px;
+      line-height: 1.28;
+      font-weight: 800;
+    }
+    .note {
+      margin-top: 6px;
+      font-size: 15px;
+      line-height: 1.35;
+      color: #6d5737;
+      font-weight: 650;
+    }
+    .rules {
+      margin-top: 20px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+    .rule {
+      background: #3a2a16;
+      color: #fff8e8;
+      border-radius: 14px;
+      padding: 14px 16px;
+      min-height: 98px;
+    }
+    .rule strong {
+      display: block;
+      font-size: 20px;
+      margin-bottom: 6px;
+    }
+    .rule span {
+      display: block;
+      font-size: 16px;
+      line-height: 1.35;
+      color: #f7d994;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="title">
+      <h1>团团下一版猫画法参考板</h1>
+      <div class="subtitle">先看别人怎么画猫：胡须、尾巴、挎包、平面线条</div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="image-wrap crop">
+          <img src="./最新版-主角团.png" />
+        </div>
+        <div class="body">
+          <div class="tag">身份源</div>
+          <div class="caption">团团必须保留：黄花、黄包、点状背带、胡须</div>
+          <div class="note">不能因为平面化就把猫的胡须和角色识别点删掉。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap crop">
+          <img src="file:///var/folders/sw/ltswvbpd55s5g88xywtg42jr0000gn/T/codex-clipboard-ba60b196-21d6-4022-b5ee-692142cd43df.png" />
+        </div>
+        <div class="body">
+          <div class="tag">目标场景</div>
+          <div class="caption">场景里的猫是平面符号，不是体块结构图</div>
+          <div class="note">线条少、轮廓大、细节只保留能在小尺寸读出的部分。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://www.kindpng.com/picc/m/166-1662995_neko-atsume-sprite-sheet-hd-png-download.png" />
+        </div>
+        <div class="body">
+          <div class="tag">小尺寸动作</div>
+          <div class="caption">Neko Atsume：胡须是符号，动作靠大形变化</div>
+          <div class="note">尾巴和身体都是块面，不靠复杂穿插线表达。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://img.craftpix.net/2024/08/Cute-Cats-Game-Character-Sprites-720x480.webp" />
+        </div>
+        <div class="body">
+          <div class="tag">Sprite Sheet</div>
+          <div class="caption">动作参考：大头短身，腿脚只是小符号</div>
+          <div class="note">如果动作多，仍然是外轮廓变化，不堆结构线。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap dark">
+          <img src="https://img.cdn-worldsapps.com/apps/1581431235/iphone-0.jpg" />
+        </div>
+        <div class="body">
+          <div class="tag">游戏气质</div>
+          <div class="caption">Cats & Soup：圆头、低重心、松弛动作</div>
+          <div class="note">可爱来自比例和姿态，不是毛边和复杂表情。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap dark">
+          <img src="https://img.cdn-worldsapps.com/apps/1581431235/iphone-2.jpg" />
+        </div>
+        <div class="body">
+          <div class="tag">场景融合</div>
+          <div class="caption">角色在场景里要读成“一个图标化小生命”</div>
+          <div class="note">不用让每个配饰都转透视，先保证整体亲和。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://p.kindpng.com/picc/s/26-263832_neko-atsume-png-neko-atsume-cat-drawing-transparent.png" />
+        </div>
+        <div class="body">
+          <div class="tag">脸部符号</div>
+          <div class="caption">胡须短而清楚，眼鼻嘴集中，不抢轮廓</div>
+          <div class="note">团团每边 2 条胡须就够，线要比外轮廓细。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://p.kindpng.com/picc/s/26-263870_neko-atsume-wallpaper-neko-atsume-cat-head-hd.png" />
+        </div>
+        <div class="body">
+          <div class="tag">猫脸比例</div>
+          <div class="caption">脸部大留白 + 小五官，才有呆萌空间</div>
+          <div class="note">不是死板，而是五官少、位置软、表情留白。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://p.kindpng.com/picc/s/26-268077_kasai-neko-sprite-sheet-v-cartoon-hd-png.png" />
+        </div>
+        <div class="body">
+          <div class="tag">尾巴处理</div>
+          <div class="caption">尾巴用一根清楚大轮廓，不要波浪毛边</div>
+          <div class="note">尾巴可以圆、短、翘，但不能变成毛发曲线展示。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="./11_tuantuan_flat_2d_whisker_reference.png" />
+        </div>
+        <div class="body">
+          <div class="tag">上一版问题</div>
+          <div class="caption">胡须回来了，但尾巴和挎包仍没想明白</div>
+          <div class="note">下一版要把尾巴平面化，把包当贴片，不再绕体。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="./09_tuantuan_scene_ready_reference.png" />
+        </div>
+        <div class="body">
+          <div class="tag">反例</div>
+          <div class="caption">这张太想保留结构信息，线条穿插过多</div>
+          <div class="note">下一版不能再画头部侧线、身体侧线和复杂包带。</div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="image-wrap">
+          <img src="https://img.craftpix.net/2024/08/Cute-Cats-Game-Character-Sprites-768x512.webp" />
+        </div>
+        <div class="body">
+          <div class="tag">动作归纳</div>
+          <div class="caption">动作可以多，但每张都应该是干净剪影</div>
+          <div class="note">先做轮廓和符号，再考虑配饰变化。</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="rules">
+      <div class="rule"><strong>胡须</strong><span>每边 2 条短线，细于外轮廓；它是猫脸识别点。</span></div>
+      <div class="rule"><strong>尾巴</strong><span>圆弧或团块轮廓，不再使用波浪线和毛边。</span></div>
+      <div class="rule"><strong>挎包</strong><span>按平面贴片画，一条斜带 + 一个小包，少穿插。</span></div>
+      <div class="rule"><strong>画法</strong><span>外轮廓优先，内部结构线能删就删。</span></div>
+    </section>
+  </main>
+</body>
+</html>
