@@ -19,27 +19,33 @@ A copy-ready text rendering derived from Chapter Scene Package facts such as Cha
 
 ## Character IP
 
-A reusable character identity with stable visual and personality invariants. It is selected into chapter work; it is not defined from scratch inside a single Chapter Scene Prompt.
+A globally reusable character identity defined by a name and one Character Model Sheet. It is selected into chapter work; it is not defined from scratch inside a Chapter Scene Prompt.
+
+## Character Model Sheet
+
+The single authoritative image for one Character IP, showing multiple views of that same character in one image. Individual views are not separate authoritative reference assets.
+_Avoid_: Character reference gallery, per-view reference set.
 
 ## Character IP Library
 
-The shared catalog of Character IPs available across chapters. The library owns the identity facts for characters such as names, visual invariants, personality cues, and character reference images.
+The shared catalog of Character IPs available across all Scene Categories and Chapters. It owns each character's name and Character Model Sheet.
 
 ## Chapter Cast Assignment
 
 The chapter-specific assignment of a Character IP to a role and action intent inside a Chapter Scene Package. It may add scene-local direction, but it must reference a Character IP rather than restating the character identity as free text.
 
-## Reference Image
+## Scene Style Reference
 
-A reusable image asset used as visual evidence for character identity, style, or scene composition. A Reference Image can be selected into a Chapter Scene Package, but its asset facts are not authored inside prompt text.
+A globally reusable named image that provides the visual style reference when a Chapter generates its prompt package. It is visual input for generation, not a text-based style profile or ruleset.
+_Avoid_: Scene Style Profile, Style Rules, generic Reference Image.
 
-## Reference Library
+## Scene Style Reference Library
 
-The shared catalog of Reference Images available to course-planning work. It owns reusable visual assets such as Character IP references, style references, and scene references.
+The shared catalog of Scene Style References available across all Scene Categories and Chapters. Each entry owns only its name and one reference image.
 
-## Chapter Reference Selection
+## Chapter Scene Style Selection
 
-The chapter-specific selection of Reference Images used by a Chapter Scene Package. It records which library images participate in the current chapter prompt and what role each image plays for that chapter.
+The Chapter-specific selection of one Scene Style Reference for its prompt package. The Chapter references the global asset instead of copying or redefining it.
 
 ## Prompt Ready
 
