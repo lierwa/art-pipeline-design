@@ -293,7 +293,7 @@ describe("Assembly editor final export helpers", () => {
     const canvasToolbar = screen.getByRole("toolbar", { name: "Canvas tools" });
     await user.click(within(canvasToolbar).getByRole("button", { name: "Zoom in" }));
     await user.click(screen.getByRole("button", { name: "Import generated assets" }));
-    expect(await screen.findByRole("complementary", { name: "Generated Chapter Assets" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Generated Chapter Assets" })).toBeInTheDocument();
 
     expect(controlsRef.current?.getLockFinalState()?.readiness.is_ready).toBe(true);
   });

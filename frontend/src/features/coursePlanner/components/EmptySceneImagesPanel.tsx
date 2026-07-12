@@ -26,9 +26,7 @@ export function EmptySceneImagesPanel({
     if (!file) {
       return;
     }
-    await onUploadEmptySceneImage(file, {
-      referenceImageIds: scenePackage.reference_selections.map((selection) => selection.reference_image_id),
-    });
+    await onUploadEmptySceneImage(file, {});
     event.target.value = "";
   }
 

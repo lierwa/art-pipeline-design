@@ -2,8 +2,7 @@
 .course-planner-page-frame,
 .scene-category-board-page,
 .chapter-workspace-page,
-.course-planner-dialog,
-.course-planner-drawer {
+.course-planner-dialog {
   --course-surface: #0b141e;
   --course-surface-raised: #101c28;
   --course-surface-muted: #071018;
@@ -89,8 +88,7 @@
 .chapter-studio-card-header,
 .candidate-card-header,
 .chapter-card-header,
-.course-planner-dialog-header,
-.course-planner-drawer-header {
+.course-planner-dialog-header {
   min-width: 0;
   display: flex;
   align-items: flex-start;
@@ -479,24 +477,6 @@
 .assembly-layer-delete-button:hover,
 .assembly-layer-delete-button:focus-visible {
   opacity: 1;
-}
-
-.course-planner-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 24;
-  background: rgb(0 0 0 / 0.52);
-}
-
-.course-planner-drawer-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 25;
-  pointer-events: none;
-}
-
-.course-planner-drawer-overlay > .course-planner-drawer {
-  pointer-events: auto;
 }
 
 .course-planner-inline-action.is-destructive,

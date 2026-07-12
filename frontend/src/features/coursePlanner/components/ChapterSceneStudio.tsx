@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import type {
@@ -6,35 +6,34 @@ import type {
   Chapter,
   ChapterScenePackage,
   CharacterIpProfile,
-  ReferenceLibraryImage,
+  SceneStyleReference,
 } from "../types";
 import type {
   ChapterCastAssignmentInput,
-  ChapterReferenceSelectionInput,
   ChapterScenePromptInput,
   CompleteImageUploadInput,
   EmptySceneImageUploadInput,
-  ReferenceLibraryImageUploadInput,
 } from "../api";
 import { buildAssemblyReadiness } from "../assembly/assemblyReadiness";
 import { exportAssemblyPreviewFile } from "../assembly/assemblyExport";
 import { CompleteSceneImagesPanel } from "./CompleteSceneImagesPanel";
-import { CoursePlannerDrawer, CoursePlannerResizableColumns } from "./CoursePlannerChrome";
+import { CoursePlannerResizableColumns } from "./CoursePlannerChrome";
 import { EmptySceneImagesPanel } from "./EmptySceneImagesPanel";
 import { FinalScenePanel } from "./FinalScenePanel";
-import { CharacterBindingPanel, LibrarySelectionPanel, ReferenceImagesPanel } from "./LibrarySelectionPanel";
+import { LibrarySelectionPanel } from "./LibrarySelectionPanel";
 import { PromptFactsPanel } from "./PromptFactsPanel";
 
 type ChapterSceneStudioProps = {
   chapter: Chapter;
   scenePackage: ChapterScenePackage;
   characterIps: CharacterIpProfile[];
-  referenceImages: ReferenceLibraryImage[];
+  sceneStyles: SceneStyleReference[];
   asyncStatus: AsyncStatusMap;
   onAssignCharacterIp: (input: ChapterCastAssignmentInput) => Promise<ChapterScenePackage | null>;
-  onSelectReferenceImage: (input: ChapterReferenceSelectionInput) => Promise<ChapterScenePackage | null>;
+  onRemoveCharacterIp: (characterIpId: string) => Promise<ChapterScenePackage | null>;
+  onSelectSceneStyle: (sceneStyleId: string) => Promise<ChapterScenePackage | null>;
+  onClearSceneStyle: () => Promise<ChapterScenePackage | null>;
   onUpdatePrompt: (input: ChapterScenePromptInput) => Promise<ChapterScenePackage | null>;
-  onUploadReferenceImage: (file: File, input: ReferenceLibraryImageUploadInput) => Promise<ReferenceLibraryImage | null>;
   onUploadEmptySceneImage: (file: File, input: EmptySceneImageUploadInput) => Promise<ChapterScenePackage | null>;
   onSelectEmptySceneImage: (imageId: string) => Promise<ChapterScenePackage | null>;
   onUploadCompleteSceneImage: (file: File, input: CompleteImageUploadInput) => Promise<ChapterScenePackage | null>;
@@ -50,27 +49,24 @@ type StudioStep = {
   stateLabel: string;
 };
 
-type LibraryDrawerKey = "character" | "reference";
-
 export function ChapterSceneStudio({
   chapter,
   characterIps,
-  referenceImages,
+  sceneStyles,
   onAssignCharacterIp,
+  onClearSceneStyle,
   onImportCompleteImage,
   onLockFinal,
   onDeleteCompleteSceneImage,
   onSelectEmptySceneImage,
-  onSelectReferenceImage,
+  onRemoveCharacterIp,
+  onSelectSceneStyle,
   onUpdatePrompt,
   onUploadCompleteSceneImage,
   onUploadEmptySceneImage,
-  onUploadReferenceImage,
   scenePackage,
 }: ChapterSceneStudioProps) {
   const [localScenePackage, setLocalScenePackage] = useState(scenePackage);
-  const [activeLibraryDrawer, setActiveLibraryDrawer] = useState<LibraryDrawerKey | null>(null);
-  const libraryDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const assemblyReadiness = useMemo(() => buildAssemblyReadiness(localScenePackage), [localScenePackage]);
   const steps = useMemo(
     () => buildStudioSteps(localScenePackage, assemblyReadiness.is_ready),
@@ -106,26 +102,6 @@ export function ChapterSceneStudio({
     return nextScenePackage;
   }, [localScenePackage, onLockFinal]);
 
-  const openCharacterBindingDrawer = useCallback((trigger: HTMLButtonElement) => {
-    libraryDrawerTriggerRef.current = trigger;
-    setActiveLibraryDrawer("character");
-  }, []);
-
-  const openReferenceImagesDrawer = useCallback((trigger: HTMLButtonElement) => {
-    libraryDrawerTriggerRef.current = trigger;
-    setActiveLibraryDrawer("reference");
-  }, []);
-
-  const closeLibraryDrawer = useCallback(() => {
-    const trigger = libraryDrawerTriggerRef.current;
-    setActiveLibraryDrawer(null);
-    if (trigger) {
-      window.setTimeout(() => {
-        trigger.focus();
-      }, 0);
-    }
-  }, []);
-
   return (
     <>
       <CoursePlannerResizableColumns
@@ -148,19 +124,16 @@ export function ChapterSceneStudio({
           className: "chapter-scene-studio__preparation",
           children: (
             <ChapterPreparationColumn
-              activeLibraryDrawer={activeLibraryDrawer}
               assemblyReadiness={assemblyReadiness}
               chapter={chapter}
               characterIps={characterIps}
               localScenePackage={localScenePackage}
               onAssignCharacterIp={onAssignCharacterIp}
-              onCloseLibraryDrawer={closeLibraryDrawer}
-              onOpenCharacterBindingDrawer={openCharacterBindingDrawer}
-              onOpenReferenceImagesDrawer={openReferenceImagesDrawer}
-              onSelectReferenceImage={onSelectReferenceImage}
+              onClearSceneStyle={onClearSceneStyle}
+              onRemoveCharacterIp={onRemoveCharacterIp}
+              onSelectSceneStyle={onSelectSceneStyle}
               onUpdatePrompt={onUpdatePrompt}
-              onUploadReferenceImage={onUploadReferenceImage}
-              referenceImages={referenceImages}
+              sceneStyles={sceneStyles}
             />
           ),
         }}
@@ -214,61 +187,44 @@ function StudioProgressRail({
 }
 
 function ChapterPreparationColumn({
-  activeLibraryDrawer,
   assemblyReadiness,
   chapter,
   characterIps,
   localScenePackage,
   onAssignCharacterIp,
-  onCloseLibraryDrawer,
-  onOpenCharacterBindingDrawer,
-  onOpenReferenceImagesDrawer,
-  onSelectReferenceImage,
+  onClearSceneStyle,
+  onRemoveCharacterIp,
+  onSelectSceneStyle,
   onUpdatePrompt,
-  onUploadReferenceImage,
-  referenceImages,
+  sceneStyles,
 }: {
-  activeLibraryDrawer: LibraryDrawerKey | null;
   assemblyReadiness: ReturnType<typeof buildAssemblyReadiness>;
   chapter: Chapter;
   characterIps: CharacterIpProfile[];
   localScenePackage: ChapterScenePackage;
   onAssignCharacterIp: ChapterSceneStudioProps["onAssignCharacterIp"];
-  onCloseLibraryDrawer: () => void;
-  onOpenCharacterBindingDrawer: (trigger: HTMLButtonElement) => void;
-  onOpenReferenceImagesDrawer: (trigger: HTMLButtonElement) => void;
-  onSelectReferenceImage: ChapterSceneStudioProps["onSelectReferenceImage"];
+  onClearSceneStyle: ChapterSceneStudioProps["onClearSceneStyle"];
+  onRemoveCharacterIp: ChapterSceneStudioProps["onRemoveCharacterIp"];
+  onSelectSceneStyle: ChapterSceneStudioProps["onSelectSceneStyle"];
   onUpdatePrompt: ChapterSceneStudioProps["onUpdatePrompt"];
-  onUploadReferenceImage: ChapterSceneStudioProps["onUploadReferenceImage"];
-  referenceImages: ReferenceLibraryImage[];
+  sceneStyles: SceneStyleReference[];
 }) {
   return (
     <div className="chapter-studio-column">
       <PromptFactsPanel
         characterIps={characterIps}
-        referenceImages={referenceImages}
+        sceneStyles={sceneStyles}
         scenePackage={localScenePackage}
         onUpdatePrompt={onUpdatePrompt}
       />
       <LibrarySelectionPanel
         characterIps={characterIps}
-        referenceImages={referenceImages}
+        sceneStyles={sceneStyles}
         scenePackage={localScenePackage}
         onAssignCharacterIp={onAssignCharacterIp}
-        onOpenCharacterBindingDrawer={onOpenCharacterBindingDrawer}
-        onOpenReferenceImagesDrawer={onOpenReferenceImagesDrawer}
-        onSelectReferenceImage={onSelectReferenceImage}
-        onUploadReferenceImage={onUploadReferenceImage}
-      />
-      <LibraryActionDrawer
-        activeDrawer={activeLibraryDrawer}
-        availableCharacterIps={characterIps.filter((item) => item.status === "available")}
-        availableReferences={referenceImages.filter((item) => item.status === "available")}
-        onAssignCharacterIp={onAssignCharacterIp}
-        onClose={onCloseLibraryDrawer}
-        onSelectReferenceImage={onSelectReferenceImage}
-        onUploadReferenceImage={onUploadReferenceImage}
-        scenePackage={localScenePackage}
+        onClearSceneStyle={onClearSceneStyle}
+        onRemoveCharacterIp={onRemoveCharacterIp}
+        onSelectSceneStyle={onSelectSceneStyle}
       />
       <ChapterAssemblySummary
         assemblyReadiness={assemblyReadiness}
@@ -276,56 +232,6 @@ function ChapterPreparationColumn({
         scenePackage={localScenePackage}
       />
     </div>
-  );
-}
-
-function LibraryActionDrawer({
-  activeDrawer,
-  availableCharacterIps,
-  availableReferences,
-  onAssignCharacterIp,
-  onClose,
-  onSelectReferenceImage,
-  onUploadReferenceImage,
-  scenePackage,
-}: {
-  activeDrawer: LibraryDrawerKey | null;
-  availableCharacterIps: CharacterIpProfile[];
-  availableReferences: ReferenceLibraryImage[];
-  onAssignCharacterIp: ChapterSceneStudioProps["onAssignCharacterIp"];
-  onClose: () => void;
-  onSelectReferenceImage: ChapterSceneStudioProps["onSelectReferenceImage"];
-  onUploadReferenceImage: ChapterSceneStudioProps["onUploadReferenceImage"];
-  scenePackage: ChapterScenePackage;
-}) {
-  if (activeDrawer === null) {
-    return null;
-  }
-
-  const isCharacterDrawer = activeDrawer === "character";
-  return (
-    <CoursePlannerDrawer
-      ariaLabel={isCharacterDrawer ? "Bind Character IP" : "Upload Reference"}
-      backdrop
-      description={isCharacterDrawer ? "Bind an available character profile into this chapter scene package." : "Upload or select reference images for prompt grounding."}
-      isOpen
-      onClose={onClose}
-      title={isCharacterDrawer ? "Bind Character IP" : "Upload Reference"}
-    >
-      {isCharacterDrawer ? (
-        <CharacterBindingPanel
-          availableCharacterIps={availableCharacterIps}
-          onAssignCharacterIp={onAssignCharacterIp}
-          scenePackage={scenePackage}
-        />
-      ) : (
-        <ReferenceImagesPanel
-          availableReferences={availableReferences}
-          onSelectReferenceImage={onSelectReferenceImage}
-          onUploadReferenceImage={onUploadReferenceImage}
-        />
-      )}
-    </CoursePlannerDrawer>
   );
 }
 
@@ -466,12 +372,10 @@ function promptReadinessState(scenePackage: ChapterScenePackage): StudioStepStat
   const hasSpatialContract = Boolean(scenePackage.prompt.scene_spatial_contract.trim());
   const hasCharacter = scenePackage.cast_assignments.length > 0 && scenePackage.cast_assignments.every((assignment) =>
     Boolean(assignment.character_ip_id.trim()) &&
-    Boolean(assignment.action_intent.trim()) &&
-    assignment.reference_image_ids.length > 0
+    Boolean(assignment.action_intent.trim())
   );
   const hasTargetObjects = scenePackage.target_objects.length > 0;
-  const hasStyleResolution = scenePackage.reference_selections.some((selection) => selection.prompt_role === "style") ||
-    scenePackage.prompt_confirmations.style_reference_mode === "confirmed_empty";
+  const hasStyleResolution = Boolean(scenePackage.scene_style_reference_id);
   return hasPromptText &&
     hasSpatialContract &&
     hasCharacter &&

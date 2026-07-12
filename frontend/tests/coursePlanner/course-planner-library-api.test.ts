@@ -1,188 +1,165 @@
-import {
-  describe,
-  expect,
-  it,
-  vi,
-} from "../app/appTestHarness";
+import { describe, expect, it, vi } from "../app/appTestHarness";
 
 import {
   assignCharacterIpToChapter,
-  importCompleteSceneImageToPipeline,
+  characterModelSheetUrl,
+  clearChapterSceneStyleReference,
+  createCharacterIp,
+  createSceneStyleReference,
+  deleteCharacterIp,
+  deleteSceneStyleReference,
   listCharacterIps,
-  listReferenceLibraryImages,
-  selectChapterReferenceImage,
-  uploadReferenceLibraryImage,
+  listSceneStyleReferences,
+  sceneStyleReferenceImageUrl,
+  selectChapterSceneStyleReference,
+  updateCharacterIp,
+  updateSceneStyleReference,
 } from "../../src/features/coursePlanner/api";
 
-describe("course planner library API client", () => {
-  it("uses library and chapter selection routes as the only writable fact sources", async () => {
+describe("course planner global library API client", () => {
+  it("uses minimal multipart CRUD contracts for both global libraries", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ input: String(input), init });
-      return new Response(JSON.stringify(responseFor(String(input), init)), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return responseFor(String(input), init);
     }) as typeof fetch;
+    const image = new File(["png"], "reference.png", { type: "image/png" });
 
-    const characterIps = await listCharacterIps(fetcher);
-    const referenceImages = await listReferenceLibraryImages(fetcher);
-    const referenceFile = new File(["png"], "style.png", { type: "image/png" });
-    const referenceImage = await uploadReferenceLibraryImage(referenceFile, {
-      tags: ["style", "团团"],
-      notes: "soft storybook style",
-    }, fetcher);
-    const referenceSelection = await selectChapterReferenceImage("chapter_001", {
-      referenceImageId: "reference_style_001",
-      promptRole: "style",
-    }, fetcher);
-    const castAssignment = await assignCharacterIpToChapter("chapter_001", {
-      characterIpId: "character_ip_001",
-      roleLabel: "main",
-      actionIntent: "sorts breakfast items",
-      referenceImageIds: ["reference_style_001"],
-    }, fetcher);
+    await listCharacterIps(fetcher);
+    await createCharacterIp({ displayName: "团团", file: image }, fetcher);
+    await updateCharacterIp("character_ip_001", { displayName: "团团 v2", file: image }, fetcher);
+    await deleteCharacterIp("character_ip_001", fetcher);
+    await listSceneStyleReferences(fetcher);
+    await createSceneStyleReference({ displayName: "暖色绘本室内", file: image }, fetcher);
+    await updateSceneStyleReference("scene_style_001", { displayName: "暖色室内 v2" }, fetcher);
+    await deleteSceneStyleReference("scene_style_001", fetcher);
 
     expect(calls.map((call) => [call.input, call.init?.method ?? "GET"])).toEqual([
       ["/api/course-planner/character-ips", "GET"],
-      ["/api/course-planner/reference-library/images", "GET"],
-      ["/api/course-planner/reference-library/images", "POST"],
-      ["/api/course-planner/chapters/chapter_001/scene-package/reference-selections", "POST"],
-      ["/api/course-planner/chapters/chapter_001/scene-package/cast-assignments", "POST"],
+      ["/api/course-planner/character-ips", "POST"],
+      ["/api/course-planner/character-ips/character_ip_001", "PATCH"],
+      ["/api/course-planner/character-ips/character_ip_001", "DELETE"],
+      ["/api/course-planner/scene-style-references", "GET"],
+      ["/api/course-planner/scene-style-references", "POST"],
+      ["/api/course-planner/scene-style-references/scene_style_001", "PATCH"],
+      ["/api/course-planner/scene-style-references/scene_style_001", "DELETE"],
     ]);
-    expect(characterIps[0]?.display_name).toBe("团团");
-    expect(referenceImages[0]?.original_filename).toBe("style.png");
-    expect(referenceImage.id).toBe("reference_style_001");
-    expect((calls[2].init?.body as FormData).getAll("tags")).toEqual(["style", "团团"]);
-    expect(referenceSelection.reference_selections[0]?.prompt_role).toBe("style");
-    expect(castAssignment.cast_assignments[0]?.character_ip_id).toBe("character_ip_001");
+    expect(formEntries(calls[1].init?.body)).toEqual([
+      ["displayName", "团团"],
+      ["file", "reference.png"],
+    ]);
+    expect(formEntries(calls[5].init?.body)).toEqual([
+      ["displayName", "暖色绘本室内"],
+      ["file", "reference.png"],
+    ]);
+    expect(characterModelSheetUrl("character ip/001")).toBe(
+      "/api/course-planner/character-ips/character%20ip%2F001/model-sheet",
+    );
+    expect(sceneStyleReferenceImageUrl("style/001")).toBe(
+      "/api/course-planner/scene-style-references/style%2F001/image",
+    );
   });
 
-  it("imports complete images through the scene-package import route", async () => {
+  it("binds only character IDs and one scene style ID at Chapter scope", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ input: String(input), init });
-      return new Response(JSON.stringify(responseFor(String(input), init)), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return responseFor(String(input), init);
     }) as typeof fetch;
 
-    const importResult = await importCompleteSceneImageToPipeline("chapter_001", "complete_scene_001", fetcher);
+    await assignCharacterIpToChapter("chapter_001", {
+      characterIpId: "character_ip_001",
+      roleLabel: "main",
+      actionIntent: "sorts breakfast items",
+    }, fetcher);
+    await selectChapterSceneStyleReference("chapter_001", "scene_style_001", fetcher);
+    await clearChapterSceneStyleReference("chapter_001", fetcher);
 
-    expect(calls.map((call) => [call.input, call.init?.method ?? "GET"])).toEqual([
-      ["/api/course-planner/chapters/chapter_001/scene-package/complete-images/complete_scene_001/import", "POST"],
+    expect(calls.map((call) => [call.input, call.init?.method])).toEqual([
+      ["/api/course-planner/chapters/chapter_001/scene-package/cast-assignments", "POST"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/scene-style-reference", "PUT"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/scene-style-reference", "DELETE"],
     ]);
-    expect(importResult.run.id).toBe("run_complete_001");
-    expect(importResult.scenePackage.complete_images[0]?.pipeline_run_id).toBe("run_complete_001");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      characterIpId: "character_ip_001",
+      roleLabel: "main",
+      actionIntent: "sorts breakfast items",
+    });
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({
+      sceneStyleReferenceId: "scene_style_001",
+    });
   });
 });
 
-function responseFor(input: string, init?: RequestInit): unknown {
+function responseFor(input: string, init?: RequestInit): Response {
+  if (init?.method === "DELETE" && !input.includes("scene-package")) {
+    return new Response(null, { status: 204 });
+  }
+  let payload: unknown;
   if (input.endsWith("/character-ips") && (!init || init.method === "GET")) {
-    return { characterIps: [characterIpFixture()] };
+    payload = { characterIps: [characterIpFixture()] };
+  } else if (input.includes("/character-ips") && init?.method !== "DELETE") {
+    payload = { characterIp: characterIpFixture() };
+  } else if (input.endsWith("/scene-style-references") && (!init || init.method === "GET")) {
+    payload = { sceneStyleReferences: [sceneStyleFixture()] };
+  } else if (input.includes("/scene-style-references") && init?.method !== "DELETE") {
+    payload = { sceneStyleReference: sceneStyleFixture() };
+  } else {
+    payload = { scenePackage: scenePackageFixture() };
   }
-  if (input.endsWith("/reference-library/images") && (!init || init.method === "GET")) {
-    return { referenceImages: [referenceImageFixture()] };
-  }
-  if (input.endsWith("/reference-library/images") && init?.method === "POST") {
-    return { referenceImage: referenceImageFixture() };
-  }
-  if (input.endsWith("/reference-selections") && init?.method === "POST") {
-    return { scenePackage: scenePackageFixture() };
-  }
-  if (input.endsWith("/cast-assignments") && init?.method === "POST") {
-    return { scenePackage: scenePackageFixture() };
-  }
-  if (input.endsWith("/complete-images/complete_scene_001/import") && init?.method === "POST") {
-    return { run: workspaceRunFixture(), scenePackage: scenePackageWithRun() };
-  }
-  return null;
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
-function characterIpFixture(overrides = {}) {
+function formEntries(body: BodyInit | null | undefined): string[][] {
+  return [...(body as FormData).entries()].map(([key, value]) => [
+    key,
+    value instanceof File ? value.name : value,
+  ]);
+}
+
+function characterIpFixture() {
   return {
-    id: "child_ip_001",
+    id: "character_ip_001",
     display_name: "团团",
-    visual_invariants: "yellow pajama top",
-    personality_cues: "curious",
-    reference_image_ids: ["reference_style_001"],
-    status: "available",
+    current_model_sheet_id: "character_model_sheet_001",
     created_at: "2026-07-03T12:00:00Z",
     updated_at: null,
-    ...overrides,
   };
 }
 
-function referenceImageFixture() {
+function sceneStyleFixture() {
   return {
-    id: "reference_style_001",
-    original_filename: "style.png",
-    storage_path: "reference_library/style.png",
-    media_type: "image/png",
-    width: 512,
-    height: 512,
-    tags: ["style"],
-    notes: "storybook style",
+    id: "scene_style_001",
+    display_name: "暖色绘本室内",
+    current_image_id: "scene_style_image_001",
     created_at: "2026-07-03T12:01:00Z",
-    status: "available",
+    updated_at: null,
   };
 }
 
 function scenePackageFixture() {
   return {
     chapter_id: "chapter_001",
-    current_empty_scene_image_id: "empty_scene_001",
+    current_empty_scene_image_id: null,
     prompt: { prompt_text: "Breakfast scene.", scene_spatial_contract: "", updated_at: null },
-    prompt_confirmations: { avoid_objects_reviewed: true, style_reference_mode: "selected" },
+    prompt_confirmations: { avoid_objects_reviewed: true },
     cast_assignments: [{
       id: "cast_assignment_001",
       character_ip_id: "character_ip_001",
       role_label: "main",
       action_intent: "sorts breakfast items",
-      reference_image_ids: ["reference_style_001"],
     }],
-    reference_selections: [{ id: "reference_selection_001", reference_image_id: "reference_style_001", prompt_role: "style" }],
-    target_objects: [{ id: "target_object_001", label: "bowl", description: "", priority: "required" }],
+    scene_style_reference_id: "scene_style_001",
+    target_objects: [],
+    target_object_exemptions: [],
     avoid_objects: [],
     empty_scene_images: [],
     complete_images: [],
     chapter_assets: [],
     assembly: { schema_version: 1, empty_scene_image_id: null, empty_scene_size: null, placements: [], groups: [], layer_order: [], updated_at: null },
     final_scene: null,
-  };
-}
-
-function scenePackageWithRun() {
-  return {
-    ...scenePackageFixture(),
-    complete_images: [{
-      id: "complete_scene_001",
-      original_filename: "complete.png",
-      storage_path: "complete_images/complete_scene_001.png",
-      media_type: "image/png",
-      width: 512,
-      height: 512,
-      empty_scene_image_id: "empty_scene_001",
-      status: "active",
-      prompt_snapshot: "Breakfast scene.",
-      reference_snapshot: { reference_image_ids: [], current_empty_scene_image_id: "empty_scene_001", notes: "" },
-      generation_note: "",
-      pipeline_run_id: "run_complete_001",
-      pipeline_run_status: "ready",
-      created_at: "2026-07-03T12:02:00Z",
-    }],
-  };
-}
-
-function workspaceRunFixture() {
-  return {
-    id: "run_complete_001",
-    title: "chapter_001 complete_scene_001",
-    sourceFilename: "chapter_001_complete_scene_001.png",
-    createdAt: "2026-07-03T12:04:00Z",
-    updatedAt: "2026-07-03T12:04:00Z",
-    status: "ready",
-    elementCount: 0,
   };
 }

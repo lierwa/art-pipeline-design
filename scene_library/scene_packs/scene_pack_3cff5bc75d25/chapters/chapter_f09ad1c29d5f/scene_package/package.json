@@ -1,0 +1,50 @@
+{
+  "chapter_id": "chapter_f09ad1c29d5f",
+  "current_empty_scene_image_id": "empty_scene_001",
+  "prompt": {
+    "prompt_text": "",
+    "scene_spatial_contract": "",
+    "updated_at": null
+  },
+  "prompt_confirmations": {
+    "avoid_objects_reviewed": false
+  },
+  "cast_assignments": [],
+  "scene_style_reference_id": null,
+  "target_objects": [],
+  "target_object_exemptions": [],
+  "avoid_objects": [],
+  "assembly": {
+    "schema_version": 1,
+    "empty_scene_image_id": "empty_scene_001",
+    "empty_scene_size": {
+      "width": 1254,
+      "height": 1254
+    },
+    "placements": [],
+    "groups": [],
+    "layer_order": [],
+    "updated_at": "2026-07-11T17:40:44.954811+00:00"
+  },
+  "empty_scene_images": [
+    {
+      "original_filename": "c6d9f00b-308f-4d6e-ab3c-a3d4d626d424.png",
+      "storage_path": "empty_scene_images/empty_scene_001.png",
+      "media_type": "image/png",
+      "id": "empty_scene_001",
+      "width": 1254,
+      "height": 1254,
+      "status": "available",
+      "prompt_snapshot": "",
+      "reference_snapshot": {
+        "reference_image_ids": [],
+        "current_empty_scene_image_id": null,
+        "notes": ""
+      },
+      "created_at": "2026-07-11T17:40:25.909292+00:00"
+    }
+  ],
+  "complete_images": [],
+  "chapter_assets": [],
+  "final_scene": null
+}

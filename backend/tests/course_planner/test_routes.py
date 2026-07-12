@@ -226,7 +226,6 @@ def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path)
             "avoidObjects": [],
             "promptConfirmations": {
                 "avoidObjectsReviewed": True,
-                "styleReferenceMode": "confirmed_empty",
             },
         },
     )

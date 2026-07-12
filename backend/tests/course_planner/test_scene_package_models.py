@@ -14,7 +14,6 @@ from art_pipeline.course_planner.scene_package_models import (
     AssemblyTransform,
     ChapterAsset,
     ChapterAssetLineage,
-    ChapterReferenceSelection,
     ChapterScenePackage,
     CompleteSceneImage,
     EmptySceneImage,
@@ -38,7 +37,7 @@ def test_scene_package_defaults_to_clean_studio_state() -> None:
     assert package.assembly.empty_scene_image_id is None
     assert package.final_scene is None
     assert package.cast_assignments == []
-    assert package.reference_selections == []
+    assert package.scene_style_reference_id is None
     assert package.avoid_objects == []
     assert package.target_object_exemptions == []
 
@@ -191,15 +190,10 @@ def test_target_object_references_prune_stale_exemptions_and_asset_links() -> No
     assert package.chapter_assets[0].linked_target_object_id is None
 
 
-def test_chapter_reference_selection_rejects_notes_lane() -> None:
+def test_scene_package_rejects_legacy_generic_reference_selection_lane() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        ChapterReferenceSelection.model_validate(
-            {
-                "id": "selection_001",
-                "reference_image_id": "reference_style_001",
-                "prompt_role": "style",
-                "notes": "warm palette",
-            }
+        ChapterScenePackage.model_validate(
+            {"chapter_id": "chapter_001", "reference_selections": []}
         )
 
 @pytest.mark.parametrize(

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "empty_scene_image_id": "empty_scene_001",
+  "empty_scene_size": {
+    "width": 1254,
+    "height": 1254
+  },
+  "placements": [],
+  "groups": [],
+  "layer_order": [],
+  "updated_at": "2026-07-11T17:40:44.954811+00:00"
+}

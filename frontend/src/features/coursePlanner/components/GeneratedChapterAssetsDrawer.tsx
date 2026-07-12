@@ -51,7 +51,6 @@ export function GeneratedChapterAssetsDrawer({
 
   return (
     <CoursePlannerDrawer
-      ariaLabel="Generated Chapter Assets"
       footer={(
         <>
           <p className="generated-assets-footer-note">
@@ -62,8 +61,8 @@ export function GeneratedChapterAssetsDrawer({
         </>
       )}
       isOpen={isOpen}
+      modal={false}
       onClose={onClose}
-      overlay
       title="Generated Chapter Assets"
     >
       <div className="generated-assets-drawer-content">

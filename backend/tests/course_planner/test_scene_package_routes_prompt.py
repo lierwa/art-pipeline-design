@@ -47,7 +47,6 @@ def test_patch_scene_package_prompt_updates_new_model_surface(
             "avoidObjects": [{"label": "shattered glass", "description": "unsafe prop"}],
             "promptConfirmations": {
                 "avoidObjectsReviewed": True,
-                "styleReferenceMode": "confirmed_empty",
             },
         },
     )
@@ -59,7 +58,7 @@ def test_patch_scene_package_prompt_updates_new_model_surface(
     assert payload["target_objects"][0]["label"] == "book"
     assert payload["avoid_objects"][0]["label"] == "shattered glass"
     assert payload["prompt_confirmations"]["avoid_objects_reviewed"] is True
-    assert payload["reference_selections"] == []
+    assert payload["scene_style_reference_id"] is None
 
 
 def test_patch_scene_package_prompt_rejects_reference_selections_before_library_validation(
@@ -152,13 +151,13 @@ def test_patch_scene_package_prompt_preserves_omitted_metadata_and_lists(
             "description": "",
         }
     ]
-    assert preserved_payload["reference_selections"] == []
+    assert preserved_payload["scene_style_reference_id"] is None
 
     assert clear_response.status_code == 200
     cleared_payload = clear_response.json()["scenePackage"]
     assert cleared_payload["prompt"]["scene_spatial_contract"] == ""
     assert cleared_payload["avoid_objects"] == []
-    assert cleared_payload["reference_selections"] == []
+    assert cleared_payload["scene_style_reference_id"] is None
 
 
 def test_prompt_patch_default_snapshots_support_empty_complete_and_final_scene(
@@ -175,7 +174,6 @@ def test_prompt_patch_default_snapshots_support_empty_complete_and_final_scene(
             "avoidObjects": [{"label": "broken glass"}],
             "promptConfirmations": {
                 "avoidObjectsReviewed": True,
-                "styleReferenceMode": "confirmed_empty",
             },
         },
     )

@@ -54,17 +54,14 @@ class ScenePack(CoursePlannerModel):
     chapter_list_locked: bool = False
 
 
-class ReferenceLibraryImage(CoursePlannerModel):
+class LibraryImageAsset(CoursePlannerModel):
     id: str = Field(min_length=1)
     original_filename: str = Field(min_length=1)
     storage_path: str = Field(min_length=1)
     media_type: Literal["image/png"]
     width: int = Field(ge=1)
     height: int = Field(ge=1)
-    tags: list[str] = Field(default_factory=list)
-    notes: str = ""
     created_at: str = Field(min_length=1)
-    status: Literal["available", "deleted"] = "available"
 
     @field_validator("storage_path")
     @classmethod
@@ -72,7 +69,7 @@ class ReferenceLibraryImage(CoursePlannerModel):
         return validate_relative_media_storage_path_value(
             value,
             error_factory=lambda: ValueError(
-                "Reference library image storage_path must be a relative POSIX path."
+                "Library image storage_path must be a relative POSIX path."
             ),
         )
 
@@ -80,12 +77,33 @@ class ReferenceLibraryImage(CoursePlannerModel):
 class CharacterIpProfile(CoursePlannerModel):
     id: str = Field(min_length=1)
     display_name: str = Field(min_length=1)
-    visual_invariants: str = ""
-    personality_cues: str = ""
-    reference_image_ids: list[str] = Field(default_factory=list)
-    status: Literal["available", "archived"] = "available"
+    current_model_sheet_id: str = Field(min_length=1)
     created_at: str = Field(min_length=1)
     updated_at: str | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _normalize_display_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Character IP display_name must not be empty.")
+        return normalized
+
+
+class SceneStyleReference(CoursePlannerModel):
+    id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    current_image_id: str = Field(min_length=1)
+    created_at: str = Field(min_length=1)
+    updated_at: str | None = None
+
+    @field_validator("display_name")
+    @classmethod
+    def _normalize_display_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Scene Style Reference display_name must not be empty.")
+        return normalized
 
 
 class CharacterConceptHint(CoursePlannerModel):

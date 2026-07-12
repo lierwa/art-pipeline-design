@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from art_pipeline.course_planner.models import CharacterIpProfile, ReferenceLibraryImage
+from art_pipeline.course_planner.models import (
+    CharacterIpProfile,
+    LibraryImageAsset,
+    SceneStyleReference,
+)
 from art_pipeline.course_planner.scene_package_models import (
     AssemblyGroup,
     AssemblyPlacement,
@@ -9,7 +13,6 @@ from art_pipeline.course_planner.scene_package_models import (
     ChapterAsset,
     ChapterAssetLineage,
     ChapterCastAssignment,
-    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterScenePackage,
     ChapterScenePrompt,
@@ -28,7 +31,6 @@ def make_prompt_ready_package() -> ChapterScenePackage:
         ),
         prompt_confirmations=PromptReadinessConfirmation(
             avoid_objects_reviewed=True,
-            style_reference_mode="confirmed_empty",
         ),
         cast_assignments=[
             ChapterCastAssignment(
@@ -36,74 +38,70 @@ def make_prompt_ready_package() -> ChapterScenePackage:
                 character_ip_id="character_tuantuan",
                 role_label="child",
                 action_intent="整理抱枕",
-                reference_image_ids=["reference_character_001"],
             )
         ],
-        reference_selections=[
-            ChapterReferenceSelection(
-                id="selection_character_001",
-                reference_image_id="reference_character_001",
-                prompt_role="character",
-            ),
-            ChapterReferenceSelection(
-                id="selection_style_001",
-                reference_image_id="reference_style_001",
-                prompt_role="style",
-            ),
-        ],
+        scene_style_reference_id="scene_style_warm",
         target_objects=[TargetObjectItem(id="target_001", label="抱枕", priority="core")],
         avoid_objects=[AvoidObjectItem(id="avoid_001", label="破碎杯子")],
     )
 
 
-def make_library_payload() -> tuple[list[CharacterIpProfile], list[ReferenceLibraryImage]]:
+def make_library_payload() -> tuple[
+    list[CharacterIpProfile],
+    list[SceneStyleReference],
+    dict[str, LibraryImageAsset],
+]:
     return (
         [
             CharacterIpProfile(
                 id="character_tuantuan",
                 display_name="团团",
-                visual_invariants="圆脸，小学生，浅色睡衣",
-                personality_cues="认真但轻松",
-                reference_image_ids=["reference_character_001"],
+                current_model_sheet_id="character_model_sheet_001",
                 created_at="2026-07-03T09:00:00Z",
             )
         ],
         [
-            ReferenceLibraryImage(
-                id="reference_character_001",
+            SceneStyleReference(
+                id="scene_style_warm",
+                display_name="暖色低冲突室内",
+                current_image_id="scene_style_image_001",
+                created_at="2026-07-03T09:01:00Z",
+            )
+        ],
+        {
+            "character_model_sheet_001": LibraryImageAsset(
+                id="character_model_sheet_001",
                 original_filename="tuantuan.png",
-                storage_path="reference_library/images/reference_character_001/image.png",
+                storage_path="global_reference_library/character_ips/character_tuantuan/media/character_model_sheet_001.png",
                 media_type="image/png",
                 width=96,
                 height=96,
-                tags=["character"],
-                notes="主角正面参考",
                 created_at="2026-07-03T09:00:00Z",
             ),
-            ReferenceLibraryImage(
-                id="reference_style_001",
+            "scene_style_image_001": LibraryImageAsset(
+                id="scene_style_image_001",
                 original_filename="style.png",
-                storage_path="reference_library/images/reference_style_001/image.png",
+                storage_path="global_reference_library/scene_style_references/scene_style_warm/media/scene_style_image_001.png",
                 media_type="image/png",
                 width=96,
                 height=96,
-                tags=["style"],
-                notes="暖色低冲突室内",
                 created_at="2026-07-03T09:01:00Z",
             ),
-        ],
+        },
     )
 
 
 def make_library_payload_with_missing_style_reference() -> tuple[
     list[CharacterIpProfile],
-    list[ReferenceLibraryImage],
+    list[SceneStyleReference],
+    dict[str, LibraryImageAsset],
 ]:
-    characters, reference_images = make_library_payload()
-    filtered_reference_images = [
-        image for image in reference_images if image.id != "reference_style_001"
-    ]
-    return characters, filtered_reference_images
+    characters, styles, assets = make_library_payload()
+    return characters, styles, {
+        media_id: asset
+        for media_id, asset in assets.items()
+        if media_id != "scene_style_image_001"
+    }
 
 
 def make_package_with_selected_empty_scene(

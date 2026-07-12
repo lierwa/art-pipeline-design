@@ -77,33 +77,24 @@ export type TargetObjectExemption = {
   reason: string;
 };
 
-export type ReferenceLibraryImage = {
-  id: string;
-  original_filename: string;
-  storage_path: string;
-  media_type: "image/png";
-  width: number;
-  height: number;
-  tags: string[];
-  notes: string;
-  created_at: string;
-  status: "available" | "deleted";
-};
-
 export type CharacterIpProfile = {
   id: string;
   display_name: string;
-  visual_invariants: string;
-  personality_cues: string;
-  reference_image_ids: string[];
-  status: "available" | "archived";
+  current_model_sheet_id: string;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type SceneStyleReference = {
+  id: string;
+  display_name: string;
+  current_image_id: string;
   created_at: string;
   updated_at: string | null;
 };
 
 export type PromptReadinessConfirmation = {
   avoid_objects_reviewed: boolean;
-  style_reference_mode: "unreviewed" | "selected" | "confirmed_empty";
 };
 
 export type ChapterCastAssignment = {
@@ -111,13 +102,6 @@ export type ChapterCastAssignment = {
   character_ip_id: string;
   role_label: string;
   action_intent: string;
-  reference_image_ids: string[];
-};
-
-export type ChapterReferenceSelection = {
-  id: string;
-  reference_image_id: string;
-  prompt_role: "character" | "style" | "scene" | "other";
 };
 
 export type ImageReferenceSnapshot = {
@@ -259,7 +243,7 @@ export type ChapterScenePackage = {
   prompt: ChapterScenePrompt;
   prompt_confirmations: PromptReadinessConfirmation;
   cast_assignments: ChapterCastAssignment[];
-  reference_selections: ChapterReferenceSelection[];
+  scene_style_reference_id: string | null;
   target_objects: TargetObjectItem[];
   target_object_exemptions: TargetObjectExemption[];
   avoid_objects: AvoidObjectItem[];

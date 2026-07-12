@@ -62,7 +62,6 @@ def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
         avoid_objects=[{"label": "shattered glass", "description": "unsafe prop"}],
         prompt_confirmations={
             "avoid_objects_reviewed": True,
-            "style_reference_mode": "confirmed_empty",
         },
     )
 
@@ -79,8 +78,8 @@ def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
         ("shattered glass", "unsafe prop")
     ]
     assert reloaded.prompt_confirmations.avoid_objects_reviewed is True
-    assert reloaded.prompt_confirmations.style_reference_mode == "confirmed_empty"
-    assert reloaded.reference_selections == []
+    assert reloaded.prompt_confirmations.avoid_objects_reviewed
+    assert reloaded.scene_style_reference_id is None
 
 
 def test_update_scene_package_prompt_preserves_target_ids_across_reorder(
@@ -132,7 +131,6 @@ def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explici
         avoid_objects=[{"label": "shattered glass"}],
         prompt_confirmations={
             "avoid_objects_reviewed": True,
-            "style_reference_mode": "confirmed_empty",
         },
     )
 
@@ -152,7 +150,7 @@ def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explici
     assert preserved.avoid_objects == seeded.avoid_objects
     assert cleared.prompt.scene_spatial_contract == ""
     assert cleared.avoid_objects == []
-    assert cleared.reference_selections == []
+    assert cleared.scene_style_reference_id is None
 
 
 def test_write_chapter_scene_package_round_trips_assembly(tmp_path: Path) -> None:

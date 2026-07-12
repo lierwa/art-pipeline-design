@@ -1,0 +1,49 @@
+{
+  "id": "chapter_f09ad1c29d5f",
+  "scene_pack_id": "scene_pack_3cff5bc75d25",
+  "title": "雨天回家的玄关",
+  "summary": "孩子抱着滴水的雨伞走进玄关，父亲蹲下帮她脱湿雨靴，母亲从墙边递来干毛巾，小狗好奇地嗅着地上的水迹。",
+  "seed": {
+    "scene_pack_id": "scene_pack_3cff5bc75d25",
+    "scene_pack_title": "室内家庭篇",
+    "chapter_id": "chapter_f09ad1c29d5f",
+    "chapter_title": "雨天回家的玄关",
+    "chapter_intent": "表现家庭成员从室外进入室内后脱雨具、换鞋和收纳湿物的连续动作。",
+    "scene_domain": "玄关",
+    "daily_moment": "雨天傍晚回家",
+    "event_seed": "孩子抱着滴水的雨伞走进玄关，父亲蹲下帮她脱湿雨靴，母亲从墙边递来干毛巾，小狗好奇地嗅着地上的水迹。",
+    "spatial_seed": "入户门在画面后侧半开，门边立着伞筒；鞋柜沿右墙展开，换鞋凳位于中央偏右；湿雨靴放在吸水地垫上，挂钩与雨衣位于角色上方，装毛巾的藤篮置于鞋柜下层。",
+    "object_coverage_hint": [
+      "入户门",
+      "门锁",
+      "吸水地垫",
+      "雨伞",
+      "伞筒",
+      "雨衣",
+      "雨靴",
+      "换鞋凳",
+      "鞋柜",
+      "拖鞋",
+      "墙面挂钩",
+      "干毛巾",
+      "藤篮",
+      "小狗",
+      "水迹"
+    ],
+    "character_concept_hint": {
+      "cast_mode": "main_cast_and_supporting_cast",
+      "main_cast_hint": "短发小女孩，穿黄色雨衣和条纹上衣，刚从雨中回家，动作活泼但略显手忙脚乱。",
+      "supporting_cast_hint": "耐心帮忙的父亲、拿毛巾的母亲，以及一只好奇的小型家庭犬。",
+      "reference_asset_ids": [],
+      "constraints": [
+        "角色全身动作必须清晰可辨",
+        "湿衣物与室内干燥区域要有明确视觉区分",
+        "家庭成员互动温暖自然",
+        "避免角色遮挡换鞋与收纳关键物件"
+      ]
+    },
+    "style_notes": "温暖写实的家庭绘本质感，以室内暖光对比门外冷灰雨色。"
+  },
+  "sort_order": 2,
+  "status": "draft"
+}

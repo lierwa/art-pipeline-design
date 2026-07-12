@@ -4,50 +4,40 @@ import type { ChapterScenePromptInput } from "../api";
 import type {
   CharacterIpProfile,
   ChapterScenePackage,
-  ReferenceLibraryImage,
+  SceneStyleReference,
 } from "../types";
 
 type PromptFactsPanelProps = {
   characterIps: CharacterIpProfile[];
-  referenceImages: ReferenceLibraryImage[];
+  sceneStyles: SceneStyleReference[];
   scenePackage: ChapterScenePackage;
   onUpdatePrompt: (input: ChapterScenePromptInput) => Promise<ChapterScenePackage | null>;
 };
 
 export function PromptFactsPanel({
   characterIps,
-  referenceImages,
+  sceneStyles,
   scenePackage,
   onUpdatePrompt,
 }: PromptFactsPanelProps) {
   const [promptText, setPromptText] = useState(scenePackage.prompt.prompt_text);
   const [spatialContract, setSpatialContract] = useState(scenePackage.prompt.scene_spatial_contract);
   const [avoidReviewed, setAvoidReviewed] = useState(scenePackage.prompt_confirmations.avoid_objects_reviewed);
-  const [styleReferenceMode, setStyleReferenceMode] = useState(scenePackage.prompt_confirmations.style_reference_mode);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setPromptText(scenePackage.prompt.prompt_text);
     setSpatialContract(scenePackage.prompt.scene_spatial_contract);
     setAvoidReviewed(scenePackage.prompt_confirmations.avoid_objects_reviewed);
-    setStyleReferenceMode(scenePackage.prompt_confirmations.style_reference_mode);
   }, [scenePackage]);
 
-  const styleSelections = useMemo(
-    () => scenePackage.reference_selections.filter((selection) => selection.prompt_role === "style"),
-    [scenePackage.reference_selections],
-  );
   const characterNames = useMemo(
     () => scenePackage.cast_assignments.map((assignment) => characterLabel(characterIps, assignment.character_ip_id)),
     [characterIps, scenePackage.cast_assignments],
   );
-  const styleReferenceNames = useMemo(
-    () => styleSelections.map((selection) => referenceLabel(referenceImages, selection.reference_image_id)),
-    [referenceImages, styleSelections],
-  );
-  const styleSummary = styleReferenceNames.length > 0
-    ? `${styleReferenceNames.length} selected`
-    : styleReferenceMode === "confirmed_empty" ? "Confirmed empty" : "Unreviewed";
+  const styleSummary = scenePackage.scene_style_reference_id
+    ? sceneStyles.find((item) => item.id === scenePackage.scene_style_reference_id)?.display_name ?? "Selected"
+    : "Not selected";
 
   async function handleSave() {
     setIsSaving(true);
@@ -57,7 +47,6 @@ export function PromptFactsPanel({
         sceneSpatialContract: spatialContract,
         promptConfirmations: {
           avoidObjectsReviewed: avoidReviewed,
-          styleReferenceMode,
         },
       });
     } finally {
@@ -114,14 +103,4 @@ function promptUpdatedLabel(updatedAt: string | null) {
 
 function characterLabel(characterIps: CharacterIpProfile[], characterIpId: string): string {
   return characterIps.find((item) => item.id === characterIpId)?.display_name ?? characterIpId;
-}
-
-function referenceLabel(referenceImages: ReferenceLibraryImage[], referenceImageId: string): string {
-  const image = referenceImages.find((item) => item.id === referenceImageId);
-  if (!image) {
-    return referenceImageId;
-  }
-  return image.tags.length > 0
-    ? `${image.original_filename} (${image.tags.join(", ")})`
-    : image.original_filename;
 }

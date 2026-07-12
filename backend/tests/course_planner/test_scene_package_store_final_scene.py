@@ -99,6 +99,68 @@ def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:
     assert locked.final_scene.storage_path.startswith("final_scene/")
 
 
+def test_generated_result_snapshot_keeps_media_ids_used_before_library_replacement(
+    tmp_path: Path,
+) -> None:
+    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
+    character = store.create_character_ip(
+        display_name="团团",
+        image_bytes=make_png_bytes(width=320, height=180),
+        original_filename="tuantuan-v1.png",
+    )
+    style = store.create_scene_style_reference(
+        display_name="暖色绘本室内",
+        image_bytes=make_png_bytes(width=320, height=180),
+        original_filename="warm-v1.png",
+    )
+    store.write_chapter_cast_assignment(
+        chapter.id,
+        character_ip_id=character.id,
+        role_label="child",
+        action_intent="整理房间",
+    )
+    store.set_chapter_scene_style_reference(
+        chapter.id,
+        scene_style_reference_id=style.id,
+    )
+    first = store.add_complete_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=96, height=64),
+        original_filename="generated-v1.png",
+        prompt_snapshot=None,
+        generation_note="",
+    ).complete_images[-1]
+
+    updated_character = store.update_character_ip(
+        character.id,
+        display_name=None,
+        image_bytes=make_png_bytes(width=640, height=360),
+        original_filename="tuantuan-v2.png",
+    )
+    updated_style = store.update_scene_style_reference(
+        style.id,
+        display_name=None,
+        image_bytes=make_png_bytes(width=640, height=360),
+        original_filename="warm-v2.png",
+    )
+    second = store.add_complete_scene_image(
+        chapter.id,
+        image_bytes=make_png_bytes(width=96, height=64),
+        original_filename="generated-v2.png",
+        prompt_snapshot=None,
+        generation_note="",
+    ).complete_images[-1]
+
+    assert first.reference_snapshot.reference_image_ids == [
+        character.current_model_sheet_id,
+        style.current_image_id,
+    ]
+    assert second.reference_snapshot.reference_image_ids == [
+        updated_character.current_model_sheet_id,
+        updated_style.current_image_id,
+    ]
+
+
 def test_lock_final_scene_rejects_missing_target_coverage_in_saved_manifest(
     tmp_path: Path,
 ) -> None:

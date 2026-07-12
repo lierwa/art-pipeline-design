@@ -32,7 +32,7 @@ describe("Scene Category Board", () => {
 
       const pageHeading = await screen.findByRole("heading", { name: "Scene Pack / Chapter Board" });
       expect(pageHeading).toBeInTheDocument();
-      const pageHeader = pageHeading.closest(".course-planner-page-header");
+      const pageHeader = pageHeading.closest(".course-planner-workspace-header");
       expect(pageHeader).not.toBeNull();
       expect(await within(pageHeader as HTMLElement).findByText("室内家庭篇")).toBeInTheDocument();
       expect(screen.getByRole("navigation", { name: "Scene Pack list" })).toHaveTextContent("室内家庭篇");
@@ -146,7 +146,7 @@ describe("Scene Category Board", () => {
       await screen.findByRole("heading", { name: "Scene Pack / Chapter Board" });
       await user.click(screen.getByRole("button", { name: "调整整批" }));
 
-      const drawer = await screen.findByRole("complementary", { name: "Revise candidate batch" });
+      const drawer = await screen.findByRole("dialog", { name: "调整整批" });
       expect(drawer).toHaveClass("course-planner-drawer");
       expect(within(drawer).queryByRole("dialog")).not.toBeInTheDocument();
       expect(within(drawer).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
@@ -177,7 +177,7 @@ describe("Scene Category Board", () => {
       expect(await screen.findByRole("dialog", { name: "Edit Scene Pack" })).toBeInTheDocument();
       expect(within(primaryPack).getByRole("button", { current: "page" })).toHaveTextContent("室内家庭篇");
       expect(within(secondaryPack).queryByRole("button", { current: "page" })).not.toBeInTheDocument();
-      expect(screen.getByRole("heading", { name: "Scene Pack / Chapter Board" }).closest(".course-planner-page-header")).toHaveTextContent("室内家庭篇");
+      expect(screen.getByRole("heading", { name: "Scene Pack / Chapter Board" }).closest(".course-planner-workspace-header")).toHaveTextContent("室内家庭篇");
     } finally {
       restoreFetch();
       window.history.pushState({}, "", "/");

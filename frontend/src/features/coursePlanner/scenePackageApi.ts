@@ -4,34 +4,27 @@ import type {
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
   GeneratedChapterAsset,
-  ReferenceLibraryImage,
+  SceneStyleReference,
   TargetObjectItem,
   WorkspaceRunImportSummary,
 } from "./types";
 import {
   API_ROOT,
   appendOptionalStringField,
-  appendStringListField,
   encodePathPart,
   jsonRequest,
   payloadValue,
   requestJson,
+  requestVoid,
 } from "./apiClient";
 import type { CoursePlannerFetcher } from "./apiClient";
 
-export type ReferenceLibraryImageUploadInput = {
-  tags?: string[];
-  notes?: string;
-};
-export type ChapterReferenceSelectionInput = {
-  referenceImageId: string;
-  promptRole: "character" | "style" | "scene" | "other";
-};
+export type GlobalLibraryCreateInput = { displayName: string; file: File };
+export type GlobalLibraryUpdateInput = { displayName?: string; file?: File };
 export type ChapterCastAssignmentInput = {
   characterIpId: string;
   roleLabel: string;
   actionIntent: string;
-  referenceImageIds?: string[];
 };
 export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label" | "description" | "priority"> & {
   id?: string;
@@ -39,7 +32,6 @@ export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label"
 export type ChapterScenePromptAvoidObjectInput = Pick<AvoidObjectItem, "label" | "description">;
 export type PromptReadinessConfirmationInput = {
   avoidObjectsReviewed: boolean;
-  styleReferenceMode: "unreviewed" | "selected" | "confirmed_empty";
 };
 export type ChapterScenePromptInput = {
   promptText: string;
@@ -48,11 +40,8 @@ export type ChapterScenePromptInput = {
   avoidObjects?: ChapterScenePromptAvoidObjectInput[];
   promptConfirmations?: PromptReadinessConfirmationInput;
 };
-export type EmptySceneImageUploadInput = {
-  referenceImageIds?: string[];
-};
+export type EmptySceneImageUploadInput = Record<string, never>;
 export type CompleteImageUploadInput = {
-  referenceImageIds?: string[];
   generationNote?: string;
 };
 export type DirectChapterAssetUploadInput = {
@@ -79,44 +68,71 @@ export async function listCharacterIps(fetcher: CoursePlannerFetcher = fetch): P
   return Array.isArray(value) ? value : [];
 }
 
-export async function listReferenceLibraryImages(fetcher: CoursePlannerFetcher = fetch): Promise<ReferenceLibraryImage[]> {
-  const payload = await requestJson(fetcher, `${API_ROOT}/reference-library/images`, { method: "GET" }, "Could not load Reference Library.");
-  const value = payloadValue<ReferenceLibraryImage[]>(payload, "referenceImages");
+export async function createCharacterIp(
+  input: GlobalLibraryCreateInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<CharacterIpProfile> {
+  return writeLibraryRecord(fetcher, `${API_ROOT}/character-ips`, "POST", input, "characterIp");
+}
+
+export async function updateCharacterIp(
+  characterIpId: string,
+  input: GlobalLibraryUpdateInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<CharacterIpProfile> {
+  return writeLibraryRecord(fetcher, `${API_ROOT}/character-ips/${encodePathPart(characterIpId)}`, "PATCH", input, "characterIp");
+}
+
+export async function deleteCharacterIp(characterIpId: string, fetcher: CoursePlannerFetcher = fetch): Promise<void> {
+  return requestVoid(fetcher, `${API_ROOT}/character-ips/${encodePathPart(characterIpId)}`, { method: "DELETE" }, "Could not delete Character IP.");
+}
+
+export function characterModelSheetUrl(characterIpId: string): string {
+  return `${API_ROOT}/character-ips/${encodePathPart(characterIpId)}/model-sheet`;
+}
+
+export async function listSceneStyleReferences(fetcher: CoursePlannerFetcher = fetch): Promise<SceneStyleReference[]> {
+  const payload = await requestJson(fetcher, `${API_ROOT}/scene-style-references`, { method: "GET" }, "Could not load Scene Style References.");
+  const value = payloadValue<SceneStyleReference[]>(payload, "sceneStyleReferences");
   return Array.isArray(value) ? value : [];
 }
 
-export async function uploadReferenceLibraryImage(
-  file: File,
-  input: ReferenceLibraryImageUploadInput = {},
+export async function createSceneStyleReference(
+  input: GlobalLibraryCreateInput,
   fetcher: CoursePlannerFetcher = fetch,
-): Promise<ReferenceLibraryImage> {
-  const body = new FormData();
-  body.append("file", file);
-  appendStringListField(body, "tags", input.tags);
-  appendOptionalStringField(body, "notes", input.notes);
-  const payload = await requestJson(
-    fetcher,
-    `${API_ROOT}/reference-library/images`,
-    { method: "POST", body },
-    "Could not upload Reference Library image.",
-  );
-  return payloadValue<ReferenceLibraryImage>(payload, "referenceImage");
+): Promise<SceneStyleReference> {
+  return writeLibraryRecord(fetcher, `${API_ROOT}/scene-style-references`, "POST", input, "sceneStyleReference");
 }
 
-export async function selectChapterReferenceImage(
+export async function updateSceneStyleReference(
+  styleId: string,
+  input: GlobalLibraryUpdateInput,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<SceneStyleReference> {
+  return writeLibraryRecord(fetcher, `${API_ROOT}/scene-style-references/${encodePathPart(styleId)}`, "PATCH", input, "sceneStyleReference");
+}
+
+export async function deleteSceneStyleReference(styleId: string, fetcher: CoursePlannerFetcher = fetch): Promise<void> {
+  return requestVoid(fetcher, `${API_ROOT}/scene-style-references/${encodePathPart(styleId)}`, { method: "DELETE" }, "Could not delete Scene Style Reference.");
+}
+
+export function sceneStyleReferenceImageUrl(styleId: string): string {
+  return `${API_ROOT}/scene-style-references/${encodePathPart(styleId)}/image`;
+}
+
+export async function selectChapterSceneStyleReference(
   chapterId: string,
-  input: ChapterReferenceSelectionInput,
+  sceneStyleReferenceId: string,
   fetcher: CoursePlannerFetcher = fetch,
 ): Promise<ChapterScenePackage> {
-  return requestScenePackage(
-    fetcher,
-    `${scenePackagePath(chapterId)}/reference-selections`,
-    jsonRequest("POST", {
-      referenceImageId: input.referenceImageId,
-      promptRole: input.promptRole,
-    }),
-    "Could not select reference image.",
-  );
+  return requestScenePackage(fetcher, `${scenePackagePath(chapterId)}/scene-style-reference`, jsonRequest("PUT", { sceneStyleReferenceId }), "Could not select Scene Style Reference.");
+}
+
+export async function clearChapterSceneStyleReference(
+  chapterId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(fetcher, `${scenePackagePath(chapterId)}/scene-style-reference`, { method: "DELETE" }, "Could not clear Scene Style Reference.");
 }
 
 export async function assignCharacterIpToChapter(
@@ -131,9 +147,21 @@ export async function assignCharacterIpToChapter(
       characterIpId: input.characterIpId,
       roleLabel: input.roleLabel,
       actionIntent: input.actionIntent,
-      referenceImageIds: input.referenceImageIds ?? [],
     }),
     "Could not bind Character IP to Chapter.",
+  );
+}
+
+export async function removeCharacterIpFromChapter(
+  chapterId: string,
+  characterIpId: string,
+  fetcher: CoursePlannerFetcher = fetch,
+): Promise<ChapterScenePackage> {
+  return requestScenePackage(
+    fetcher,
+    `${scenePackagePath(chapterId)}/cast-assignments/${encodePathPart(characterIpId)}`,
+    { method: "DELETE" },
+    "Could not unbind Character IP from Chapter.",
   );
 }
 
@@ -165,7 +193,6 @@ export async function uploadEmptySceneImage(
 ): Promise<ChapterScenePackage> {
   const body = new FormData();
   body.append("file", file);
-  appendStringListField(body, "referenceImageIds", input.referenceImageIds);
   return requestScenePackage(
     fetcher,
     `${scenePackagePath(chapterId)}/empty-scene-images`,
@@ -195,7 +222,6 @@ export async function uploadCompleteSceneImage(
 ): Promise<ChapterScenePackage> {
   const body = new FormData();
   body.append("file", file);
-  appendStringListField(body, "referenceImageIds", input.referenceImageIds);
   appendOptionalStringField(body, "generationNote", input.generationNote);
   return requestScenePackage(
     fetcher,
@@ -364,6 +390,26 @@ function chapterScenePromptPatchBody(input: ChapterScenePromptInput): Record<str
 
 function scenePackagePath(chapterId: string): string {
   return `${API_ROOT}/chapters/${encodePathPart(chapterId)}/scene-package`;
+}
+
+async function writeLibraryRecord<T>(
+  fetcher: CoursePlannerFetcher,
+  path: string,
+  method: "POST" | "PATCH",
+  input: GlobalLibraryCreateInput | GlobalLibraryUpdateInput,
+  payloadKey: string,
+): Promise<T> {
+  const body = new FormData();
+  if (input.displayName !== undefined) {
+    body.append("displayName", input.displayName);
+  }
+  if (input.file !== undefined) {
+    body.append("file", input.file);
+  }
+  // WHY: 角色与风格共用完全相同的 multipart 媒体边界；这里集中协议拼装，
+  // 避免两个资料库各自演化出额外字段或不同的重试行为。
+  const payload = await requestJson(fetcher, path, { method, body }, "Could not save global library item.");
+  return payloadValue<T>(payload, payloadKey);
 }
 
 async function requestScenePackage(

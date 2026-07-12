@@ -49,9 +49,6 @@ class PromptReadinessConfirmationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     avoid_objects_reviewed: bool = Field(alias="avoidObjectsReviewed")
-    style_reference_mode: Literal["unreviewed", "selected", "confirmed_empty"] = Field(
-        alias="styleReferenceMode"
-    )
 
 
 class ChapterScenePromptPatchRequest(BaseModel):
@@ -76,25 +73,10 @@ class ChapterScenePromptPatchRequest(BaseModel):
     )
 
 
-class CharacterIpCreateRequest(BaseModel):
+class ChapterSceneStyleReferenceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    display_name: str = Field(alias="displayName", min_length=1)
-    visual_invariants: str = Field(default="", alias="visualInvariants")
-    personality_cues: str = Field(default="", alias="personalityCues")
-    reference_image_ids: list[str] = Field(
-        default_factory=list,
-        alias="referenceImageIds",
-    )
-
-
-class ChapterReferenceSelectionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    reference_image_id: str = Field(alias="referenceImageId", min_length=1)
-    prompt_role: Literal["character", "style", "scene", "other"] = Field(
-        alias="promptRole"
-    )
+    scene_style_reference_id: str = Field(alias="sceneStyleReferenceId", min_length=1)
 
 
 class ChapterCastAssignmentRequest(BaseModel):
@@ -103,10 +85,6 @@ class ChapterCastAssignmentRequest(BaseModel):
     character_ip_id: str = Field(alias="characterIpId", min_length=1)
     role_label: str = Field(alias="roleLabel", min_length=1)
     action_intent: str = Field(alias="actionIntent", min_length=1)
-    reference_image_ids: list[str] | None = Field(
-        default=None,
-        alias="referenceImageIds",
-    )
 
 
 class ChapterSeedRequest(BaseModel):

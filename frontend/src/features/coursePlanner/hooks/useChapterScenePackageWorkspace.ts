@@ -9,28 +9,27 @@ import {
   importCompleteSceneImageToPipeline,
   listGeneratedChapterAssets,
   listCharacterIps,
-  listReferenceLibraryImages,
+  listSceneStyleReferences,
   lockFinalChapterScene,
   materializeGeneratedChapterAsset,
   saveChapterSceneAssembly,
-  selectChapterReferenceImage,
+  clearChapterSceneStyleReference,
+  removeCharacterIpFromChapter,
+  selectChapterSceneStyleReference,
   selectEmptySceneImage,
   updateChapterScenePrompt,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
-  uploadReferenceLibraryImage,
 } from "../api";
 import type {
   ChapterCastAssignmentInput,
-  ChapterReferenceSelectionInput,
   ChapterScenePromptInput,
   CompleteImageUploadInput,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
   GeneratedChapterAssetMaterializeInput,
   GeneratedChapterAssetMaterializeResult,
-  ReferenceLibraryImageUploadInput,
 } from "../api";
 import { useCoursePlannerState } from "./useCoursePlannerState";
 import type {
@@ -39,7 +38,7 @@ import type {
   CharacterIpProfile,
   CoursePlannerState,
   GeneratedChapterAsset,
-  ReferenceLibraryImage,
+  SceneStyleReference,
 } from "../types";
 
 type ScenePackageLoadState = "idle" | "loading" | "ready" | "error";
@@ -53,7 +52,7 @@ type ChapterStudioLoadInput = {
   setCharacterIps: Dispatch<SetStateAction<CharacterIpProfile[]>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
   setLoadState: Dispatch<SetStateAction<ScenePackageLoadState>>;
-  setReferenceImages: Dispatch<SetStateAction<ReferenceLibraryImage[]>>;
+  setSceneStyles: Dispatch<SetStateAction<SceneStyleReference[]>>;
   setScenePackage: Dispatch<SetStateAction<ChapterScenePackage | null>>;
 };
 
@@ -72,7 +71,7 @@ export function useChapterScenePackageWorkspace(chapterId: string | null) {
     errorMessage: studioData.errorMessage,
     handlers,
     loadState: studioData.loadState,
-    referenceImages: studioData.referenceImages,
+    sceneStyles: studioData.sceneStyles,
     scenePack,
     scenePackage: studioData.scenePackage,
   };
@@ -105,7 +104,7 @@ function useChapterContext(planner: CoursePlannerController, chapterId: string |
 function useChapterStudioData(chapter: Chapter | null, runAsyncOperation: AsyncOperationRunner) {
   const [scenePackage, setScenePackage] = useState<ChapterScenePackage | null>(null);
   const [characterIps, setCharacterIps] = useState<CharacterIpProfile[]>([]);
-  const [referenceImages, setReferenceImages] = useState<ReferenceLibraryImage[]>([]);
+  const [sceneStyles, setSceneStyles] = useState<SceneStyleReference[]>([]);
   const [loadState, setLoadState] = useState<ScenePackageLoadState>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const activeChapterId = chapter?.id ?? null;
@@ -132,7 +131,7 @@ function useChapterStudioData(chapter: Chapter | null, runAsyncOperation: AsyncO
     setCharacterIps,
     setErrorMessage,
     setLoadState,
-    setReferenceImages,
+    setSceneStyles,
     setScenePackage,
   });
 
@@ -156,10 +155,10 @@ function useChapterStudioData(chapter: Chapter | null, runAsyncOperation: AsyncO
     characterIps,
     errorMessage,
     loadState,
-    referenceImages,
+    sceneStyles,
     scenePackage: exposedScenePackage,
     setLoadState,
-    setReferenceImages,
+    setSceneStyles,
   };
 }
 
@@ -171,7 +170,7 @@ function useLoadChapterStudioData({
   setCharacterIps,
   setErrorMessage,
   setLoadState,
-  setReferenceImages,
+  setSceneStyles,
   setScenePackage,
 }: ChapterStudioLoadInput) {
   useEffect(() => {
@@ -180,7 +179,7 @@ function useLoadChapterStudioData({
     if (!chapter) {
       setScenePackage(null);
       setCharacterIps([]);
-      setReferenceImages([]);
+      setSceneStyles([]);
       setLoadState("idle");
       setErrorMessage(null);
       return;
@@ -197,7 +196,7 @@ function useLoadChapterStudioData({
       () => Promise.all([
         fetchChapterScenePackage(expectedChapterId),
         listCharacterIps(),
-        listReferenceLibraryImages(),
+        listSceneStyleReferences(),
       ]),
     ).then((nextStudioData) => {
       if (cancelled || activeChapterIdRef.current !== expectedChapterId) {
@@ -209,12 +208,12 @@ function useLoadChapterStudioData({
         setErrorMessage("Could not load Chapter Scene Package.");
         return;
       }
-      const [nextScenePackage, nextCharacterIps, nextReferenceImages] = nextStudioData;
+      const [nextScenePackage, nextCharacterIps, nextSceneStyles] = nextStudioData;
       if (!applyScenePackageIfCurrent(expectedChapterId, nextScenePackage)) {
         return;
       }
       setCharacterIps(nextCharacterIps);
-      setReferenceImages(nextReferenceImages);
+      setSceneStyles(nextSceneStyles);
     }).catch((error: unknown) => {
       if (cancelled || activeChapterIdRef.current !== expectedChapterId) {
         return;
@@ -235,7 +234,7 @@ function useLoadChapterStudioData({
     setCharacterIps,
     setErrorMessage,
     setLoadState,
-    setReferenceImages,
+    setSceneStyles,
     setScenePackage,
   ]);
 }
@@ -245,7 +244,7 @@ function useChapterStudioMutations(
   runAsyncOperation: AsyncOperationRunner,
   studioData: ReturnType<typeof useChapterStudioData>,
 ) {
-  const { applyScenePackage, applyScenePackageIfCurrent, setReferenceImages } = studioData;
+  const { applyScenePackage, applyScenePackageIfCurrent } = studioData;
   const withChapter = useCallback(
     (key: string, operation: (chapter: Chapter) => Promise<ChapterScenePackage>) =>
       chapter ? applyScenePackage(chapter.id, `scenePackage:${key}:${chapter.id}`, () => operation(chapter)) : Promise.resolve(null),
@@ -255,12 +254,20 @@ function useChapterStudioMutations(
     (input: ChapterScenePromptInput) => withChapter("prompt", (item) => updateChapterScenePrompt(item.id, input)),
     [withChapter],
   );
-  const handleSelectReferenceImage = useCallback(
-    (input: ChapterReferenceSelectionInput) => withChapter("referenceSelect", (item) => selectChapterReferenceImage(item.id, input)),
+  const handleSelectSceneStyle = useCallback(
+    (sceneStyleId: string) => withChapter("styleSelect", (item) => selectChapterSceneStyleReference(item.id, sceneStyleId)),
+    [withChapter],
+  );
+  const handleClearSceneStyle = useCallback(
+    () => withChapter("styleClear", (item) => clearChapterSceneStyleReference(item.id)),
     [withChapter],
   );
   const handleAssignCharacterIp = useCallback(
     (input: ChapterCastAssignmentInput) => withChapter("castAssign", (item) => assignCharacterIpToChapter(item.id, input)),
+    [withChapter],
+  );
+  const handleRemoveCharacterIp = useCallback(
+    (characterIpId: string) => withChapter("castRemove", (item) => removeCharacterIpFromChapter(item.id, characterIpId)),
     [withChapter],
   );
   const handleUploadEmptySceneImage = useCallback(
@@ -326,13 +333,6 @@ function useChapterStudioMutations(
     (file: File) => withChapter("final", (item) => lockFinalChapterScene(item.id, file)),
     [withChapter],
   );
-  const handleUploadReferenceImage = useCallback(async (file: File, input: ReferenceLibraryImageUploadInput) => {
-    const referenceImage = await runAsyncOperation("scenePackage:referenceUpload", () => uploadReferenceLibraryImage(file, input));
-    if (referenceImage) {
-      setReferenceImages((current) => [...current.filter((item) => item.id !== referenceImage.id), referenceImage]);
-    }
-    return referenceImage;
-  }, [runAsyncOperation, setReferenceImages]);
   const handleImportCompleteImage = useCallback(async (completeImageId: string) => {
     if (!chapter) {
       return null;
@@ -349,6 +349,7 @@ function useChapterStudioMutations(
 
   return {
     handleAssignCharacterIp,
+    handleClearSceneStyle,
     handleDeleteChapterAsset,
     handleDeleteCompleteSceneImage,
     handleDuplicateChapterAsset,
@@ -356,14 +357,14 @@ function useChapterStudioMutations(
     handleListGeneratedAssets,
     handleLockFinal,
     handleMaterializeGeneratedAsset,
+    handleRemoveCharacterIp,
     handleSaveAssembly,
     handleSelectEmptySceneImage,
-    handleSelectReferenceImage,
+    handleSelectSceneStyle,
     handleUpdatePrompt,
     handleUploadCompleteSceneImage,
     handleUploadDirectAsset,
     handleUploadEmptySceneImage,
-    handleUploadReferenceImage,
   };
 }
 

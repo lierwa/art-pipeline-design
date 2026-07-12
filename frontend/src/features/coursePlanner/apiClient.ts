@@ -38,8 +38,13 @@ export function extractErrorMessage(payload: unknown): string | null {
     return publicErrorMessage(detail);
   }
   if (detail && typeof detail === "object") {
-    const message = (detail as { message?: unknown }).message;
-    return typeof message === "string" ? publicErrorMessage(message) : null;
+    const typedDetail = detail as { code?: unknown; message?: unknown; referencedChapterCount?: unknown };
+    if (typedDetail.code === "library_item_in_use" && typeof typedDetail.referencedChapterCount === "number") {
+      // WHY: 引用冲突是资料库删除的稳定业务错误；在 HTTP 边界投影成用户文案，
+      // UI 不重复解析后端 detail 对象，也不会丢失需要先解绑的 Chapter 数量。
+      return `该资料正在被 ${typedDetail.referencedChapterCount} 个 Chapter 使用，请先解除绑定。`;
+    }
+    return typeof typedDetail.message === "string" ? publicErrorMessage(typedDetail.message) : null;
   }
   return null;
 }

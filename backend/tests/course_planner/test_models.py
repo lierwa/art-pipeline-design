@@ -10,7 +10,8 @@ from art_pipeline.course_planner.models import (
     Chapter,
     ChapterSeed,
     CourseProject,
-    ReferenceLibraryImage,
+    LibraryImageAsset,
+    SceneStyleReference,
     SceneKeywords,
     ScenePack,
     Space,
@@ -178,26 +179,25 @@ def test_chapter_seed_rejects_target_level_and_chapter_count() -> None:
         ChapterSeed(**payload)
 
 
-def test_reference_library_image_defaults_to_available_png_asset() -> None:
-    image = ReferenceLibraryImage(
-        id="reference_image_001",
+def test_library_image_asset_keeps_only_media_protocol_metadata() -> None:
+    image = LibraryImageAsset(
+        id="scene_style_image_001",
         original_filename="living-room-style.png",
-        storage_path="reference_library/images/reference_image_001/image.png",
+        storage_path="global_reference_library/scene_style_references/style_001/media/scene_style_image_001.png",
         media_type="image/png",
         width=96,
         height=64,
-        tags=["style", "living-room"],
-        notes="暖色低冲突室内",
         created_at="2026-07-03T10:00:00Z",
     )
 
-    assert image.status == "available"
-    assert image.tags == ["style", "living-room"]
+    assert set(image.model_dump()) == {
+        "id", "original_filename", "storage_path", "media_type", "width", "height", "created_at"
+    }
 
 
 def test_reference_library_image_rejects_invalid_storage_path() -> None:
     with pytest.raises(ValidationError, match="relative POSIX path"):
-        ReferenceLibraryImage(
+        LibraryImageAsset(
             id="reference_image_001",
             original_filename="living-room-style.png",
             storage_path="../escape.png",
@@ -208,18 +208,22 @@ def test_reference_library_image_rejects_invalid_storage_path() -> None:
         )
 
 
-def test_character_ip_profile_defaults_to_available_with_reference_links() -> None:
+def test_character_ip_and_scene_style_models_have_one_current_image_pointer() -> None:
     character = CharacterIpProfile(
         id="character_tuantuan",
         display_name="团团",
-        visual_invariants="圆脸，小学生，浅色睡衣",
-        personality_cues="认真但轻松",
-        reference_image_ids=["reference_image_001"],
+        current_model_sheet_id="character_model_sheet_001",
+        created_at="2026-07-03T10:00:00Z",
+    )
+    style = SceneStyleReference(
+        id="scene_style_warm",
+        display_name="暖色绘本室内",
+        current_image_id="scene_style_image_001",
         created_at="2026-07-03T10:00:00Z",
     )
 
-    assert character.status == "available"
-    assert character.reference_image_ids == ["reference_image_001"]
+    assert character.current_model_sheet_id == "character_model_sheet_001"
+    assert style.current_image_id == "scene_style_image_001"
     assert character.updated_at is None
 
 

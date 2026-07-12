@@ -344,7 +344,7 @@ export function buildLockedFinalScene(
     assembly_snapshot: current.assembly,
     prompt_snapshot: current.prompt.prompt_text,
     reference_snapshot: snapshot(
-      current.reference_selections.map((selection) => selection.reference_image_id),
+      current.complete_images.at(-1)?.reference_snapshot.reference_image_ids ?? [],
       current.current_empty_scene_image_id,
     ),
     created_at: "2026-07-04T08:11:00Z",

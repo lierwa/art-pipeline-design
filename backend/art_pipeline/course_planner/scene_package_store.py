@@ -15,7 +15,6 @@ from art_pipeline.course_planner.scene_package_media_store import (
 from art_pipeline.course_planner.scene_package_models import (
     AvoidObjectItem,
     ChapterCastAssignment,
-    ChapterReferenceSelection,
     ChapterSceneAssembly,
     ChapterSceneAssemblyManifest,
     ChapterScenePackage,
@@ -78,8 +77,8 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             if prompt_confirmations is None
             else PromptReadinessConfirmation.model_validate(prompt_confirmations)
         )
-        # WHY: prompt PATCH 只更新文字与 readiness；角色和参考图选择必须走库路由，
-        # 这样 Chapter 的 cast/reference 事实不会和 prompt 文本编辑分叉成两套权威来源。
+        # WHY: prompt PATCH 只更新文字与 readiness；角色和风格选择必须走各自路由，
+        # 这样 Chapter 的选择事实不会和 prompt 文本编辑分叉成两套权威来源。
         return self.write_chapter_scene_package(
             current.model_copy(
                 update={
@@ -92,49 +91,25 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             validate_assembly=False,
         )
 
-    def write_chapter_reference_selection(
+    def set_chapter_scene_style_reference(
         self,
         chapter_id: str,
         *,
-        reference_image_id: str,
-        prompt_role: str,
+        scene_style_reference_id: str,
     ) -> ChapterScenePackage:
         current, _ = self._load_scene_package_for_write(chapter_id)
-        self._require_reference_image_ids(
-            [reference_image_id],
-            singular_message=True,
-        )
-        existing = next(
-            (
-                selection
-                for selection in current.reference_selections
-                if selection.reference_image_id == reference_image_id
-            ),
-            None,
-        )
-        selection = ChapterReferenceSelection(
-            id=(
-                existing.id
-                if existing is not None
-                else _next_reference_selection_id(current)
-            ),
-            reference_image_id=reference_image_id,
-            prompt_role=prompt_role,
-        )
-        updated_selections = (
-            [
-                selection
-                if item.reference_image_id == reference_image_id
-                else item
-                for item in current.reference_selections
-            ]
-            if existing is not None
-            else [*current.reference_selections, selection]
-        )
-        # WHY: reference_selections 是 Chapter 对库图片用途的唯一事实源；
-        # prompt PATCH 不接收裸引用 id，避免文字编辑和库选择分叉出两套权威状态。
+        self._require_scene_style_reference(scene_style_reference_id)
         return self.write_chapter_scene_package(
-            current.model_copy(update={"reference_selections": updated_selections}),
+            current.model_copy(
+                update={"scene_style_reference_id": scene_style_reference_id}
+            ),
+            validate_assembly=False,
+        )
+
+    def clear_chapter_scene_style_reference(self, chapter_id: str) -> ChapterScenePackage:
+        current, _ = self._load_scene_package_for_write(chapter_id)
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"scene_style_reference_id": None}),
             validate_assembly=False,
         )
 
@@ -145,16 +120,9 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         character_ip_id: str,
         role_label: str,
         action_intent: str,
-        reference_image_ids: list[str] | None,
     ) -> ChapterScenePackage:
         current, _ = self._load_scene_package_for_write(chapter_id)
-        character = self._require_character_ip(character_ip_id)
-        resolved_reference_ids = (
-            list(character.reference_image_ids)
-            if reference_image_ids is None
-            else list(reference_image_ids)
-        )
-        self._require_reference_image_ids(resolved_reference_ids)
+        self._require_character_ip(character_ip_id)
         existing = next(
             (
                 assignment
@@ -173,7 +141,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             character_ip_id=character_ip_id,
             role_label=role_label,
             action_intent=action_intent,
-            reference_image_ids=resolved_reference_ids,
         )
         updated_assignments = (
             [
@@ -188,6 +155,22 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         )
         return self.write_chapter_scene_package(
             current.model_copy(update={"cast_assignments": updated_assignments}),
+            validate_assembly=False,
+        )
+
+    def remove_chapter_cast_assignment(
+        self,
+        chapter_id: str,
+        character_ip_id: str,
+    ) -> ChapterScenePackage:
+        current, _ = self._load_scene_package_for_write(chapter_id)
+        updated = [
+            assignment
+            for assignment in current.cast_assignments
+            if assignment.character_ip_id != character_ip_id
+        ]
+        return self.write_chapter_scene_package(
+            current.model_copy(update={"cast_assignments": updated}),
             validate_assembly=False,
         )
 
@@ -369,10 +352,6 @@ def _validate_scene_package_assembly_structure(package: ChapterScenePackage) -> 
     raise ScenePackageValidationError(
         "Invalid assembly manifest: " + "; ".join(errors)
     )
-
-
-def _next_reference_selection_id(package: ChapterScenePackage) -> str:
-    return f"reference_selection_{len(package.reference_selections) + 1:03d}"
 
 
 def _next_cast_assignment_id(package: ChapterScenePackage) -> str:

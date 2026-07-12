@@ -31,6 +31,7 @@ import {
 import { PlanningBriefPanel } from "../src/features/coursePlanner/components/PlanningBriefPanel";
 import { SceneCategoryList } from "../src/features/coursePlanner/components/SceneCategoryList";
 import { SelectedChapterSequence } from "../src/features/coursePlanner/components/SelectedChapterSequence";
+import { GlobalReferenceLibraryDrawer } from "../src/features/coursePlanner/components/GlobalReferenceLibraryDrawer";
 import { coursePlannerVisualReferenceFixture } from "../tests/coursePlanner/coursePlannerVisualReferenceFixtures";
 
 type VisualView =
@@ -42,11 +43,28 @@ type VisualView =
   | "assembly-multiselect"
   | "board"
   | "chapter"
-  | "chapter-loading";
+  | "chapter-loading"
+  | "library"
+  | "library-create"
+  | "library-edit"
+  | "library-style";
 
 const SAVE_TIMESTAMP_BASE_MS = Date.parse("2026-07-05T08:00:00Z");
 const fixture = coursePlannerVisualReferenceFixture();
 const view = resolveView();
+
+if (isLibraryView(view)) {
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith("/character-ips")) {
+      return Response.json({ characterIps: fixture.characterIps });
+    }
+    if (path.endsWith("/scene-style-references")) {
+      return Response.json({ sceneStyleReferences: fixture.sceneStyles });
+    }
+    return new Response(null, { status: 404 });
+  };
+}
 
 function CoursePlannerVisualHarness() {
   const [scenePackage, setScenePackage] = useState(fixture.scenePackage);
@@ -90,6 +108,7 @@ function CoursePlannerVisualHarness() {
           title="Course Planner"
         />
         {view === "board" ? <BoardVisualPage /> : null}
+        {isLibraryView(view) ? <LibraryVisualPage mode={view} /> : null}
         {view === "chapter-loading" ? <ChapterLoadingVisualPage /> : null}
         {view === "chapter" ? (
           <main className="chapter-workspace-page visual-screenshot-page">
@@ -104,18 +123,19 @@ function CoursePlannerVisualHarness() {
                 asyncStatus={{}}
                 chapter={fixture.chapter}
                 characterIps={fixture.characterIps}
-                referenceImages={fixture.referenceImages}
+                sceneStyles={fixture.sceneStyles}
                 scenePackage={scenePackage}
                 onAssignCharacterIp={() => resolveScenePackage()}
+                onClearSceneStyle={() => resolveScenePackage()}
                 onDeleteCompleteSceneImage={() => resolveScenePackage()}
                 onImportCompleteImage={() => resolveScenePackage()}
                 onLockFinal={() => resolveScenePackage()}
                 onSelectEmptySceneImage={() => resolveScenePackage()}
-                onSelectReferenceImage={() => resolveScenePackage()}
+                onRemoveCharacterIp={() => resolveScenePackage()}
+                onSelectSceneStyle={() => resolveScenePackage()}
                 onUpdatePrompt={() => resolveScenePackage()}
                 onUploadCompleteSceneImage={() => resolveScenePackage()}
                 onUploadEmptySceneImage={() => resolveScenePackage()}
-                onUploadReferenceImage={async () => fixture.referenceImages[0] ?? null}
               />
             </div>
           </main>
@@ -217,6 +237,29 @@ function BoardVisualPage() {
         }}
       />
     </main>
+  );
+}
+
+function LibraryVisualPage({ mode }: { mode: Extract<VisualView, `library${string}`> }) {
+  useEffect(() => {
+    if (mode === "library-create") {
+      retryVisualAction(() => clickVisualButtonByText("创建角色 IP"));
+      return;
+    }
+    if (mode === "library-edit") {
+      retryVisualAction(() => clickVisualButtonByText("编辑"));
+      return;
+    }
+    if (mode === "library-style") {
+      retryVisualAction(() => activateVisualTab("场景风格"));
+    }
+  }, [mode]);
+
+  return (
+    <>
+      <BoardVisualPage />
+      <GlobalReferenceLibraryDrawer isOpen onClose={() => undefined} />
+    </>
   );
 }
 
@@ -337,6 +380,30 @@ function clickVisualButton(selector: string) {
   return true;
 }
 
+function clickVisualButtonByText(label: string) {
+  const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+    .find((candidate) => candidate.textContent?.trim() === label);
+  if (!button) {
+    return false;
+  }
+  button.click();
+  return true;
+}
+
+function activateVisualTab(label: string) {
+  const tab = Array.from(document.querySelectorAll<HTMLButtonElement>("[role='tab']"))
+    .find((candidate) => candidate.textContent?.trim() === label);
+  if (!tab) {
+    return false;
+  }
+  // WHY: Radix Tabs 在 pointer-down/focus 阶段切换；裸 `.click()` 不包含完整用户指针序列。
+  tab.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+  tab.focus();
+  tab.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+  tab.click();
+  return true;
+}
+
 function retryVisualAction(action: () => boolean | undefined | void, attempt = 0) {
   const result = action();
   if (result !== false) {
@@ -385,10 +452,21 @@ function resolveView(): VisualView {
     || requestedView === "board"
     || requestedView === "chapter"
     || requestedView === "chapter-loading"
+    || requestedView === "library"
+    || requestedView === "library-create"
+    || requestedView === "library-edit"
+    || requestedView === "library-style"
   ) {
     return requestedView;
   }
   return "chapter";
+}
+
+function isLibraryView(value: VisualView): value is Extract<VisualView, `library${string}`> {
+  return value === "library"
+    || value === "library-create"
+    || value === "library-edit"
+    || value === "library-style";
 }
 
 function isAssemblyView(value: VisualView): value is Extract<VisualView, `assembly${string}`> {

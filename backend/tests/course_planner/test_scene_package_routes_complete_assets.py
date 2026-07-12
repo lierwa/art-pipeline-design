@@ -87,7 +87,7 @@ def test_upload_complete_image_invalid_png_returns_400(client: TestClient) -> No
     assert "valid PNG" in response.json()["detail"]
 
 
-def test_upload_complete_image_unknown_reference_ids_returns_400(
+def test_upload_complete_image_does_not_accept_reference_override_as_snapshot_source(
     client: TestClient,
 ) -> None:
     chapter_id, _ = _create_selected_empty_scene(client)
@@ -98,8 +98,9 @@ def test_upload_complete_image_unknown_reference_ids_returns_400(
         files={"file": ("complete.png", _png_bytes(width=96, height=64), "image/png")},
     )
 
-    assert response.status_code == 400
-    assert "Unknown scene package reference image ids" in response.json()["detail"]
+    assert response.status_code == 200
+    complete = response.json()["scenePackage"]["complete_images"][0]
+    assert complete["reference_snapshot"]["reference_image_ids"] == []
 
 
 def test_direct_scene_asset_upload_materializes_asset_without_run_lineage(

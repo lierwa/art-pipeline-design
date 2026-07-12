@@ -2,6 +2,7 @@ import "./assemblyEditorDependencyMocks";
 import {
   describe,
   expect,
+  fireEvent,
   it,
   screen,
   userEvent,
@@ -11,7 +12,9 @@ import {
 } from "../app/appTestHarness";
 
 import {
+  characterIpFixture,
   renderChapterWorkspace,
+  referenceImageFixture,
   studioScenePackageFixture,
 } from "./chapterWorkspaceTestHelpers";
 import {
@@ -94,40 +97,28 @@ describe("Chapter Scene Studio library and run actions", () => {
     }
   });
 
-  it("opens Bind Character IP and Upload Reference inside the shared drawer and restores focus on close", async () => {
+  it("only consumes global library records and can bind a second character", async () => {
     const user = userEvent.setup();
     const view = renderChapterWorkspace({
       scenePackage: studioScenePackageFixture(),
+      characterIps: [
+        characterIpFixture(),
+        characterIpFixture({ id: "parent_ip_001", display_name: "妈妈", current_model_sheet_id: "character_model_sheet_002" }),
+      ],
+      sceneStyles: [referenceImageFixture()],
     });
 
     try {
       const libraryPanel = await screen.findByRole("region", { name: "Library selection" });
-      const bindButton = within(libraryPanel).getByRole("button", { name: "Bind Character IP" });
-      const uploadButton = within(libraryPanel).getByRole("button", { name: "Upload Reference" });
+      expect(within(libraryPanel).queryByRole("button", { name: /创建|上传|编辑|删除/i })).not.toBeInTheDocument();
+      expect(within(libraryPanel).getByText("暖色绘本室内")).toBeInTheDocument();
+      expect(within(libraryPanel).getByRole("option", { name: "妈妈" })).toBeInTheDocument();
 
-      expect(libraryPanel.querySelector("details")).toBeNull();
-      expect(screen.queryByRole("complementary", { name: "Bind Character IP" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("complementary", { name: "Upload Reference" })).not.toBeInTheDocument();
+      fireEvent.change(within(libraryPanel).getByLabelText("Action"), { target: { value: "整理餐桌" } });
+      await user.click(within(libraryPanel).getByRole("button", { name: "Bind Character IP" }));
 
-      await user.click(bindButton);
-
-      const bindDrawer = await screen.findByRole("complementary", { name: "Bind Character IP" });
-      expect(bindDrawer).toHaveClass("course-planner-drawer");
-      expect(within(bindDrawer).getByRole("heading", { name: "Character IP" })).toBeInTheDocument();
-
-      await user.click(within(bindDrawer).getByRole("button", { name: "Close" }));
-      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Bind Character IP" })).not.toBeInTheDocument());
-      await waitFor(() => expect(bindButton).toHaveFocus());
-
-      await user.click(uploadButton);
-
-      const uploadDrawer = await screen.findByRole("complementary", { name: "Upload Reference" });
-      expect(uploadDrawer).toHaveClass("course-planner-drawer");
-      expect(within(uploadDrawer).getByRole("heading", { name: "Reference Images" })).toBeInTheDocument();
-
-      await user.click(within(uploadDrawer).getByRole("button", { name: "Close" }));
-      await waitFor(() => expect(screen.queryByRole("complementary", { name: "Upload Reference" })).not.toBeInTheDocument());
-      await waitFor(() => expect(uploadButton).toHaveFocus());
+      await waitFor(() => expect(within(libraryPanel).getByRole("heading", { name: "妈妈" })).toBeInTheDocument());
+      expect(within(libraryPanel).getAllByRole("button", { name: "解除" })).toHaveLength(2);
     } finally {
       view.restore();
     }
@@ -219,14 +210,14 @@ describe("Chapter Scene Studio library and run actions", () => {
       uploadEmptySceneImage: (_input, init) => {
         const body = init?.body as FormData;
         expect(body.get("promptSnapshot")).toBeNull();
-        expect(body.getAll("referenceImageIds")).toEqual(["reference_style_001"]);
+        expect(body.getAll("referenceImageIds")).toEqual([]);
         seenUploads.empty = true;
         return scenePackageResponse(scenePackage);
       },
       uploadCompleteSceneImage: (_input, init) => {
         const body = init?.body as FormData;
         expect(body.get("promptSnapshot")).toBeNull();
-        expect(body.getAll("referenceImageIds")).toEqual(["reference_style_001"]);
+        expect(body.getAll("referenceImageIds")).toEqual([]);
         expect(body.get("generationNote")).toBe("");
         seenUploads.complete = true;
         return scenePackageResponse(scenePackage);

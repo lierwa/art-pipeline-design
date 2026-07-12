@@ -36,7 +36,6 @@ def _create_chapter_with_complete_run(
             "avoidObjects": [{"label": "shattered glass"}],
             "promptConfirmations": {
                 "avoidObjectsReviewed": True,
-                "styleReferenceMode": "confirmed_empty",
             },
         },
     )

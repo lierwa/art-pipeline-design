@@ -34,4 +34,23 @@ describe("Course Planner visual screenshot tool", () => {
     expect(script).not.toContain("placement-editor-reference-imagegen.png");
     expect(harness).toContain("[aria-label='Import generated assets']");
   });
+
+  it("captures the global reference library list, create, edit, and style states", () => {
+    const script = readFileSync(
+      path.join(process.cwd(), "tools", "capture-course-planner-screenshots.mjs"),
+      "utf8",
+    );
+    const harness = readFileSync(
+      path.join(process.cwd(), "tools", "course-planner-visual-harness.tsx"),
+      "utf8",
+    );
+
+    expect(script).toContain("global-reference-library-drawer-1920x1080.png");
+    expect(script).toContain("global-reference-library-create-character-1920x1080.png");
+    expect(script).toContain("global-reference-library-edit-character-1920x1080.png");
+    expect(script).toContain("global-reference-library-scene-style-1920x1080.png");
+    expect(harness).toContain('"library-create"');
+    expect(harness).toContain('"library-edit"');
+    expect(harness).toContain('"library-style"');
+  });
 });

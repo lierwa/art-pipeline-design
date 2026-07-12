@@ -42,8 +42,7 @@
   background: rgb(0 0 0 / 0.68);
 }
 
-.course-planner-dialog,
-.course-planner-drawer {
+.course-planner-dialog {
   border: 1px solid var(--course-border-strong);
   background: var(--course-surface);
   color: var(--course-text);
@@ -60,33 +59,17 @@
 }
 
 .course-planner-dialog-body,
-.course-planner-dialog-form,
-.course-planner-drawer-body {
+.course-planner-dialog-form {
   min-height: 0;
   overflow: auto;
 }
 
-.course-planner-dialog-footer,
-.course-planner-drawer-footer {
+.course-planner-dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   padding-top: 16px;
   border-top: 1px solid var(--course-border-subtle);
-}
-
-.course-planner-drawer {
-  position: fixed;
-  inset: 0 0 0 auto;
-  z-index: 25;
-  width: min(560px, 100vw);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 0.75rem;
-  padding: 0.9rem;
-  overflow: hidden;
-  border-left: 1px solid #244056;
-  box-shadow: -20px 0 60px rgb(0 0 0 / 0.38);
 }
 
 .chapter-scene-studio {

@@ -242,8 +242,8 @@ function installCoursePlannerRoutingFetchMock(
     if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
       return jsonResponse({ characterIps: [characterIpFixture()] });
     }
-    if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
-      return jsonResponse({ referenceImages: [referenceImageFixture()] });
+    if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+      return jsonResponse({ sceneStyleReferences: [referenceImageFixture()] });
     }
     if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package`) && (!init || init.method === "GET")) {
       return options.fetchScenePackage?.(input, init) ?? jsonResponse({ scenePackage });

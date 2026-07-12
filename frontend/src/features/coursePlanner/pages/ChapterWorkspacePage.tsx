@@ -20,7 +20,7 @@ type ScenePackageLoadState = ReturnType<typeof useChapterScenePackageWorkspace>[
 export function ChapterWorkspacePage() {
   const { chapterId } = useParams();
   const workspace = useChapterScenePackageWorkspace(chapterId ?? null);
-  const { asyncStatus, chapter, characterIps, errorMessage, handlers, loadState, referenceImages, scenePackage, scenePack } = workspace;
+  const { asyncStatus, chapter, characterIps, errorMessage, handlers, loadState, scenePackage, scenePack, sceneStyles } = workspace;
 
   if (!chapter || !scenePack) {
     return (
@@ -62,12 +62,13 @@ export function ChapterWorkspacePage() {
             chapter={chapter}
             scenePackage={scenePackage}
             characterIps={characterIps}
-            referenceImages={referenceImages}
+            sceneStyles={sceneStyles}
             asyncStatus={asyncStatus}
             onAssignCharacterIp={handlers.handleAssignCharacterIp}
-            onSelectReferenceImage={handlers.handleSelectReferenceImage}
+            onClearSceneStyle={handlers.handleClearSceneStyle}
+            onRemoveCharacterIp={handlers.handleRemoveCharacterIp}
+            onSelectSceneStyle={handlers.handleSelectSceneStyle}
             onUpdatePrompt={handlers.handleUpdatePrompt}
-            onUploadReferenceImage={handlers.handleUploadReferenceImage}
             onUploadEmptySceneImage={handlers.handleUploadEmptySceneImage}
             onSelectEmptySceneImage={handlers.handleSelectEmptySceneImage}
             onUploadCompleteSceneImage={handlers.handleUploadCompleteSceneImage}

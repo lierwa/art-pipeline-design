@@ -57,7 +57,6 @@ def make_store_with_empty_scene_image(
         image_bytes=make_png_bytes(width=72, height=48),
         original_filename="empty.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
     )
     return store, chapter, package.empty_scene_images[0]
 
@@ -80,7 +79,6 @@ def make_store_with_complete_image(
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
         generation_note="brighter morning light",
     )
     complete = package.complete_images[0]
@@ -111,14 +109,12 @@ def make_store_with_two_empty_scene_images_and_assembly(
         image_bytes=make_png_bytes(width=72, height=48),
         original_filename="empty-old.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
     )
     second_package = store.add_empty_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=144, height=96),
         original_filename="empty-new.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
     )
     old_image, new_image = second_package.empty_scene_images
     store.select_empty_scene_image(chapter.id, old_image.id)
@@ -142,7 +138,6 @@ def make_store_with_two_empty_scene_images_and_assembly(
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
         generation_note="brighter morning light",
     )
     assert complete_package.complete_images[0].empty_scene_image_id == old_image.id

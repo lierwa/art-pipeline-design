@@ -33,7 +33,6 @@ def test_add_empty_scene_image_captures_prompt_and_reference_snapshot(
         image_bytes=make_png_bytes(width=120, height=80),
         original_filename="empty.png",
         prompt_snapshot="Custom empty scene prompt snapshot.",
-        reference_image_ids=[],
     )
 
     image = package.empty_scene_images[0]
@@ -141,7 +140,6 @@ def test_add_complete_scene_image_without_selected_empty_scene_is_allowed(
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
         generation_note="",
     )
 
@@ -162,7 +160,6 @@ def test_add_complete_scene_image_uses_selected_empty_scene_snapshot(
         image_bytes=image_bytes,
         original_filename="complete.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
         generation_note="brighter morning light",
     )
 
@@ -199,26 +196,6 @@ def test_add_complete_scene_image_rejects_invalid_png_as_validation_error(
             image_bytes=b"not-a-png",
             original_filename="complete.png",
             prompt_snapshot=None,
-            reference_image_ids=[],
-            generation_note="",
-        )
-
-
-def test_add_complete_scene_image_rejects_unknown_reference_ids_as_validation_error(
-    tmp_path: Path,
-) -> None:
-    store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
-
-    with pytest.raises(
-        ScenePackageValidationError,
-        match="Unknown scene package reference image ids",
-    ):
-        store.add_complete_scene_image(
-            chapter.id,
-            image_bytes=make_png_bytes(width=96, height=64),
-            original_filename="complete.png",
-            prompt_snapshot="Custom complete prompt snapshot.",
-            reference_image_ids=["reference_missing"],
             generation_note="",
         )
 
@@ -323,7 +300,6 @@ def test_upload_methods_sanitize_original_filename_metadata(tmp_path: Path) -> N
         image_bytes=make_png_bytes(width=72, height=48),
         original_filename=r"C:\foo\bar.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
     ).empty_scene_images[0]
     store.select_empty_scene_image(chapter.id, empty_scene.id)
     complete = store.add_complete_scene_image(
@@ -331,7 +307,6 @@ def test_upload_methods_sanitize_original_filename_metadata(tmp_path: Path) -> N
         image_bytes=make_png_bytes(width=96, height=64),
         original_filename="nested/final/scene.png",
         prompt_snapshot=None,
-        reference_image_ids=[],
         generation_note="brighter morning light",
     ).complete_images[0]
     direct_asset = store.add_direct_chapter_asset(

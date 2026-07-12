@@ -1,7 +1,9 @@
-import { forwardRef, useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { ArrowLeft, X } from "lucide-react";
 import { Link, type LinkProps } from "react-router";
 import { Group, Panel, Separator } from "react-resizable-panels";
+
+export { CoursePlannerDrawer, type CoursePlannerDrawerProps } from "./CoursePlannerDrawer";
 
 export type CoursePlannerStatusTone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -40,18 +42,6 @@ export type CoursePlannerDialogProps = {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-};
-
-export type CoursePlannerDrawerProps = {
-  title: string;
-  description?: string;
-  isOpen: boolean;
-  onClose: () => void;
-  children: ReactNode;
-  footer?: ReactNode;
-  ariaLabel?: string;
-  backdrop?: boolean;
-  overlay?: boolean;
 };
 
 export type InlineItemAction = {
@@ -109,15 +99,6 @@ type CoursePlannerPageHeaderComponentProps = CoursePlannerPageHeaderProps & Lega
 type CoursePlannerDialogComponentProps = Omit<CoursePlannerDialogProps, "isOpen"> & {
   isOpen?: boolean;
 };
-
-type LegacyCoursePlannerDrawerProps = {
-  closeButton?: ReactNode;
-  isOpen?: boolean;
-  kicker?: string;
-  onClose?: () => void;
-};
-
-type CoursePlannerDrawerComponentProps = Omit<CoursePlannerDrawerProps, "isOpen"> & LegacyCoursePlannerDrawerProps;
 
 type CoursePlannerStatusBadgeComponentProps = Omit<CoursePlannerStatusBadgeProps, "label" | "tone"> & {
   children?: ReactNode;
@@ -374,89 +355,6 @@ export function CoursePlannerDialog({
         {footer ? <div className="course-planner-dialog-footer">{footer}</div> : null}
       </div>
     </section>
-  );
-}
-
-export function CoursePlannerDrawer({
-  ariaLabel,
-  backdrop = false,
-  children,
-  closeButton,
-  description,
-  footer,
-  isOpen = true,
-  kicker,
-  onClose = () => {},
-  overlay = false,
-  title,
-}: CoursePlannerDrawerComponentProps) {
-  const titleId = `course-planner-drawer-${slugFromTitle(title)}`;
-  const descriptionId = description ? `${titleId}-description` : undefined;
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-
-  useEffect(() => {
-    if (!isOpen || !backdrop) {
-      return undefined;
-    }
-
-    closeButtonRef.current?.focus();
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [backdrop, isOpen, onClose]);
-
-  if (!isOpen) {
-    return null;
-  }
-
-  const drawerContent = (
-    <aside
-      className="course-planner-drawer"
-      aria-describedby={descriptionId}
-      aria-label={ariaLabel}
-      aria-labelledby={ariaLabel ? undefined : titleId}
-      role="complementary"
-    >
-      <div className="course-planner-drawer-header">
-        <div>
-          {kicker ? <span>{kicker}</span> : null}
-          <h2 id={titleId}>{title}</h2>
-          {description ? <p id={descriptionId}>{description}</p> : null}
-        </div>
-        {closeButton ?? (
-          <CoursePlannerIconButton
-            ref={closeButtonRef}
-            ariaLabel="Close"
-            onClick={onClose}
-          >
-            <X size={16} aria-hidden="true" />
-          </CoursePlannerIconButton>
-        )}
-      </div>
-      <div className="course-planner-drawer-body">{children}</div>
-      {footer ? <div className="course-planner-drawer-footer">{footer}</div> : null}
-    </aside>
-  );
-
-  if (overlay && !backdrop) {
-    return <div className="course-planner-drawer-overlay">{drawerContent}</div>;
-  }
-
-  if (!backdrop) {
-    return drawerContent;
-  }
-
-  return (
-    <>
-      <div className="course-planner-drawer-backdrop" aria-hidden="true" onClick={onClose} />
-      {overlay ? <div className="course-planner-drawer-overlay">{drawerContent}</div> : drawerContent}
-    </>
   );
 }
 

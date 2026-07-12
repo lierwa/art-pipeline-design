@@ -5,7 +5,6 @@ import pytest
 from art_pipeline.course_planner.scene_package_errors import ScenePackageValidationError
 from art_pipeline.course_planner.scene_package_models import (
     ChapterCastAssignment,
-    ChapterReferenceSelection,
     ChapterScenePackage,
     ChapterScenePrompt,
     PromptReadinessConfirmation,
@@ -41,19 +40,11 @@ def test_prompt_not_ready_without_target_objects() -> None:
                 character_ip_id="character_tuantuan",
                 role_label="child",
                 action_intent="整理抱枕",
-                reference_image_ids=["reference_character_001"],
             )
         ],
-        reference_selections=[
-            ChapterReferenceSelection(
-                id="selection_001",
-                reference_image_id="reference_character_001",
-                prompt_role="character",
-            )
-        ],
+        scene_style_reference_id="scene_style_warm",
         prompt_confirmations=PromptReadinessConfirmation(
             avoid_objects_reviewed=True,
-            style_reference_mode="confirmed_empty",
         ),
     )
 
@@ -78,7 +69,7 @@ def test_empty_scene_prompt_requires_library_records_for_selected_cast_and_libra
 
     with pytest.raises(
         ScenePackageValidationError,
-        match="requires library records",
+        match="requires global library records",
     ):
         build_empty_scene_prompt(package)
 
@@ -91,7 +82,7 @@ def test_complete_prompt_rejects_missing_selected_library_ids() -> None:
 
     with pytest.raises(
         ScenePackageValidationError,
-        match="Missing reference library record for selection selection_style_001: reference_style_001",
+        match="Missing Scene Style Reference image: scene_style_image_001",
     ):
         build_complete_prompt(package, libraries=libraries)
 

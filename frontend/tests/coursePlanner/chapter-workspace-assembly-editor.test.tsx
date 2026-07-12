@@ -153,7 +153,7 @@ describe("Assembly editor navigation shell", () => {
     );
 
     const workspace = await screen.findByRole("region", { name: "Assembly workspace" });
-    const topbar = within(workspace).getByRole("banner", { name: "Assembly editor top bar" });
+    const topbar = within(workspace).getByRole("banner");
     const editorLayout = within(workspace).getByTestId("assembly-editor-layout");
 
     expect(topbar.compareDocumentPosition(editorLayout) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -209,8 +209,8 @@ describe("Assembly editor navigation shell", () => {
     const panelCountBeforeOpen = within(editorLayout).getAllByTestId(/assembly-editor-(assets|canvas|inspector)-panel/).length;
     await user.click(screen.getByRole("button", { name: "Import generated assets" }));
 
-    const drawer = await screen.findByRole("complementary", { name: "Generated Chapter Assets" });
-    expect(drawer.closest(".course-planner-drawer-overlay")).toBeInTheDocument();
+    const drawer = await screen.findByRole("dialog", { name: "Generated Chapter Assets" });
+    expect(document.querySelector(".course-planner-drawer-backdrop")).toBeNull();
     expect(drawer.closest(".assembly-editor-layout")).toBeNull();
     expect(within(editorLayout).getAllByTestId(/assembly-editor-(assets|canvas|inspector)-panel/)).toHaveLength(panelCountBeforeOpen);
   });

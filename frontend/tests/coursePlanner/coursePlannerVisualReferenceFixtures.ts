@@ -3,7 +3,7 @@ import type {
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
   CharacterIpProfile,
-  ReferenceLibraryImage,
+  SceneStyleReference,
   ScenePack,
 } from "../../src/features/coursePlanner/types";
 import {
@@ -18,7 +18,7 @@ export const VISUAL_REFERENCE_SELECTED_TARGET_PLACEMENT_ID = "placement_target_c
 export type CoursePlannerVisualReferenceFixture = {
   chapter: Chapter;
   characterIps: CharacterIpProfile[];
-  referenceImages: ReferenceLibraryImage[];
+  sceneStyles: SceneStyleReference[];
   scenePack: ScenePack;
   scenePackage: ChapterScenePackage;
   selectedTargetPlacementId: string;
@@ -53,7 +53,7 @@ export function coursePlannerVisualReferenceFixture(): CoursePlannerVisualRefere
   return {
     chapter: visualReferenceChapterFixture(),
     characterIps: [visualReferenceCharacterIpFixture()],
-    referenceImages: visualReferenceImages(),
+    sceneStyles: visualSceneStyles(),
     scenePack: visualReferenceScenePackFixture(),
     scenePackage,
     selectedTargetPlacementId: VISUAL_REFERENCE_SELECTED_TARGET_PLACEMENT_ID,
@@ -113,32 +113,14 @@ function visualReferenceScenePackageFixture(
     prompt: visualPrompt(),
     prompt_confirmations: {
       avoid_objects_reviewed: true,
-      style_reference_mode: "selected",
     },
     cast_assignments: [{
       id: "visual_cast_cat_mochi",
       character_ip_id: "character_ip_mochi_cat",
       role_label: "target cat",
       action_intent: "Sit alert beside the breakfast island and look toward the cereal bowl.",
-      reference_image_ids: ["reference_visual_cat_character"],
     }],
-    reference_selections: [
-      {
-        id: "visual_reference_selection_character",
-        reference_image_id: "reference_visual_cat_character",
-        prompt_role: "character",
-      },
-      {
-        id: "visual_reference_selection_style",
-        reference_image_id: "reference_visual_storybook_style",
-        prompt_role: "style",
-      },
-      {
-        id: "visual_reference_selection_scene",
-        reference_image_id: "reference_visual_kitchen_scene",
-        prompt_role: "scene",
-      },
-    ],
+    scene_style_reference_id: "scene_style_storybook_kitchen",
     target_objects: [
       {
         id: "target_object_cat",
@@ -405,52 +387,20 @@ function visualReferenceCharacterIpFixture(): CharacterIpProfile {
   return {
     id: "character_ip_mochi_cat",
     display_name: "Mochi",
-    visual_invariants: "Small cream cat, orange ears, green collar, rounded storybook silhouette.",
-    personality_cues: "Patient, curious, watching the breakfast bowl closely.",
-    reference_image_ids: ["reference_visual_cat_character"],
-    status: "available",
+    current_model_sheet_id: "character_model_sheet_mochi",
     created_at: "2026-07-04T08:50:00Z",
     updated_at: null,
   };
 }
 
-function visualReferenceImages(): ReferenceLibraryImage[] {
+function visualSceneStyles(): SceneStyleReference[] {
   return [
     {
-      id: "reference_visual_cat_character",
-      original_filename: "mochi-cat-reference.png",
-      storage_path: "reference_library/reference_visual_cat_character.png",
-      media_type: "image/png",
-      width: 768,
-      height: 768,
-      tags: ["cat", "character", "breakfast"],
-      notes: "Selected character reference for Mochi target cat.",
-      created_at: "2026-07-04T08:51:00Z",
-      status: "available",
-    },
-    {
-      id: "reference_visual_storybook_style",
-      original_filename: "storybook-kitchen-style.png",
-      storage_path: "reference_library/reference_visual_storybook_style.png",
-      media_type: "image/png",
-      width: 768,
-      height: 768,
-      tags: ["style", "storybook", "warm-light"],
-      notes: "Warm storybook rendering reference.",
+      id: "scene_style_storybook_kitchen",
+      display_name: "Warm storybook kitchen",
+      current_image_id: "scene_style_image_storybook_kitchen",
       created_at: "2026-07-04T08:52:00Z",
-      status: "available",
-    },
-    {
-      id: "reference_visual_kitchen_scene",
-      original_filename: "wide-breakfast-kitchen-reference.png",
-      storage_path: "reference_library/reference_visual_kitchen_scene.png",
-      media_type: "image/png",
-      width: 1024,
-      height: 768,
-      tags: ["scene", "kitchen", "wide"],
-      notes: "Wide kitchen composition reference for the empty scene.",
-      created_at: "2026-07-04T08:53:00Z",
-      status: "available",
+      updated_at: null,
     },
   ];
 }

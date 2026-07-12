@@ -34,7 +34,6 @@ def _create_prompt_ready_scene_package(
             "avoidObjects": [{"label": "shattered glass"}],
             "promptConfirmations": {
                 "avoidObjectsReviewed": True,
-                "styleReferenceMode": "confirmed_empty",
             },
         },
     )

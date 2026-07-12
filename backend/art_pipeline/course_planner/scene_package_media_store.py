@@ -43,7 +43,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
         image_bytes: bytes,
         original_filename: str,
         prompt_snapshot: str | None,
-        reference_image_ids: list[str],
     ) -> ChapterScenePackage:
         current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
         width, height = read_scene_package_png_size(image_bytes, "Empty scene image")
@@ -65,7 +64,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
             ),
             reference_snapshot=self._build_reference_snapshot(
                 current,
-                reference_image_ids,
             ),
             created_at=utc_now(),
         )
@@ -89,7 +87,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
         image_bytes: bytes,
         original_filename: str,
         prompt_snapshot: str | None,
-        reference_image_ids: list[str],
         generation_note: str,
     ) -> ChapterScenePackage:
         current, scene_pack_id = self._load_scene_package_for_write(chapter_id)
@@ -113,7 +110,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
             ),
             reference_snapshot=self._build_reference_snapshot(
                 current,
-                reference_image_ids,
                 current_empty_scene_image_id=current.current_empty_scene_image_id,
             ),
             generation_note=generation_note,
@@ -339,10 +335,6 @@ class CoursePlannerScenePackageMediaStoreMixin:
             ),
             reference_snapshot=self._build_reference_snapshot(
                 current,
-                [
-                    selection.reference_image_id
-                    for selection in current.reference_selections
-                ],
                 current_empty_scene_image_id=current.current_empty_scene_image_id,
             ),
             created_at=utc_now(),
@@ -443,25 +435,22 @@ class CoursePlannerScenePackageMediaStoreMixin:
     def _build_reference_snapshot(
         self,
         package: ChapterScenePackage,
-        reference_image_ids: list[str],
         *,
         current_empty_scene_image_id: str | None = None,
     ) -> ImageReferenceSnapshot:
-        known_reference_image_ids = {
-            selection.reference_image_id for selection in package.reference_selections
-        }
-        missing_reference_image_ids = [
-            reference_image_id
-            for reference_image_id in reference_image_ids
-            if reference_image_id not in known_reference_image_ids
+        character_image_ids = [
+            self._require_character_ip(assignment.character_ip_id).current_model_sheet_id
+            for assignment in package.cast_assignments
         ]
-        if missing_reference_image_ids:
-            raise ScenePackageValidationError(
-                "Unknown scene package reference image ids: "
-                + ", ".join(missing_reference_image_ids)
-            )
+        style_image_ids = (
+            [self._require_scene_style_reference(package.scene_style_reference_id).current_image_id]
+            if package.scene_style_reference_id
+            else []
+        )
+        # WHY: 快照必须从 Chapter 选择解析“本次实际使用”的当前媒体 id，
+        # 不接受上传表单覆盖，否则历史结果无法证明当时使用的是哪份全局资料。
         return ImageReferenceSnapshot(
-            reference_image_ids=list(reference_image_ids),
+            reference_image_ids=[*character_image_ids, *style_image_ids],
             current_empty_scene_image_id=(
                 package.current_empty_scene_image_id
                 if current_empty_scene_image_id is None
@@ -470,7 +459,11 @@ class CoursePlannerScenePackageMediaStoreMixin:
         )
 
     def _prompt_projection_libraries(self):
-        return (self.list_character_ips(), self.list_reference_library_images())
+        return (
+            self.list_character_ips(),
+            self.list_scene_style_references(),
+            self._current_library_assets(),
+        )
 
 
 def _validated_linked_target_object_id(

@@ -280,7 +280,7 @@ describe("Assembly editor asset pool", () => {
     const assetPool = screen.getByRole("region", { name: "Assembly asset pool" });
     await user.click(within(assetPool).getByRole("button", { name: "Import generated assets" }));
 
-    const drawer = await screen.findByRole("complementary", { name: "Generated Chapter Assets" });
+    const drawer = await screen.findByRole("dialog", { name: "Generated Chapter Assets" });
     expect(drawer).toHaveClass("course-planner-drawer");
     expect(drawer.closest(".assembly-editor-layout")).toBeNull();
     expect(within(drawer).getByRole("heading", { name: "Generated Chapter Assets" })).toBeInTheDocument();

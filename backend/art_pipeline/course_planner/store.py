@@ -16,6 +16,7 @@ from art_pipeline.course_planner.models import (
     SceneKeywords,
     Space,
 )
+from art_pipeline.course_planner.library_store import CoursePlannerLibraryStoreMixin
 from art_pipeline.course_planner.store_common import (
     require_match as _require_match,
     validate_slug as _validate_slug,
@@ -39,6 +40,7 @@ class ChaptersPayload(BaseModel):
 
 
 class CoursePlannerStore(
+    CoursePlannerLibraryStoreMixin,
     CoursePlannerHierarchyStoreMixin,
     CoursePlannerScenePackageStoreMixin,
     CoursePlannerScenePackageDeleteStoreMixin,

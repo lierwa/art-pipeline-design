@@ -44,11 +44,6 @@ class TargetObjectExemption(CoursePlannerModel):
 
 class PromptReadinessConfirmation(CoursePlannerModel):
     avoid_objects_reviewed: bool = False
-    style_reference_mode: Literal[
-        "unreviewed",
-        "selected",
-        "confirmed_empty",
-    ] = "unreviewed"
 
 
 class ChapterCastAssignment(CoursePlannerModel):
@@ -56,15 +51,6 @@ class ChapterCastAssignment(CoursePlannerModel):
     character_ip_id: str = Field(min_length=1)
     role_label: str = Field(min_length=1)
     action_intent: str = Field(min_length=1)
-    reference_image_ids: list[str] = Field(default_factory=list)
-
-
-class ChapterReferenceSelection(CoursePlannerModel):
-    # WHY: Chapter 这里只持久化已验证过的库图片 id 与 prompt 角色；
-    # 备注说明属于 Reference Library 事实源，避免 chapter-local 再分叉出第二条解释通道。
-    id: str = Field(min_length=1)
-    reference_image_id: str = Field(min_length=1)
-    prompt_role: Literal["character", "style", "scene", "other"]
 
 
 class AssemblyTransform(CoursePlannerModel):
@@ -231,7 +217,9 @@ class ChapterScenePackage(CoursePlannerModel):
         default_factory=PromptReadinessConfirmation
     )
     cast_assignments: list[ChapterCastAssignment] = Field(default_factory=list)
-    reference_selections: list[ChapterReferenceSelection] = Field(default_factory=list)
+    # WHY: Chapter 只能选择一个全局场景风格；单值外键直接表达业务基数，
+    # 不再通过通用 prompt role 列表推导“哪个引用才是风格”。
+    scene_style_reference_id: str | None = None
     target_objects: list[TargetObjectItem] = Field(default_factory=list)
     target_object_exemptions: list[TargetObjectExemption] = Field(default_factory=list)
     avoid_objects: list[AvoidObjectItem] = Field(default_factory=list)

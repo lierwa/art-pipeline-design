@@ -3,7 +3,7 @@ import type {
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
   CharacterIpProfile,
-  ReferenceLibraryImage,
+  SceneStyleReference,
   ScenePack,
 } from "../../src/features/coursePlanner/types";
 
@@ -66,16 +66,14 @@ export function studioScenePackageFixture(overrides: Partial<ChapterScenePackage
     },
     prompt_confirmations: {
       avoid_objects_reviewed: true,
-      style_reference_mode: "selected",
     },
     cast_assignments: [{
       id: "cast_main_child",
       character_ip_id: "child_ip_001",
       role_label: "main",
       action_intent: "Reach for the breakfast bowl while looking toward spilled milk.",
-      reference_image_ids: ["reference_style_001"],
     }],
-    reference_selections: [{ id: "reference_selection_001", reference_image_id: "reference_style_001", prompt_role: "style" }],
+    scene_style_reference_id: "scene_style_001",
     target_objects: [
       {
         id: "target_object_bowl",
@@ -101,7 +99,7 @@ export function studioScenePackageFixture(overrides: Partial<ChapterScenePackage
       height: 1024,
       status: "available",
       prompt_snapshot: "Warm breakfast kitchen without character cutouts.",
-      reference_snapshot: snapshot(["reference_style_001"], null),
+      reference_snapshot: snapshot(["character_model_sheet_001", "scene_style_image_001"], null),
       created_at: "2026-07-03T11:01:00Z",
     }],
     complete_images: [{
@@ -114,7 +112,7 @@ export function studioScenePackageFixture(overrides: Partial<ChapterScenePackage
       empty_scene_image_id: "empty_scene_001",
       status: "active",
       prompt_snapshot: "Warm breakfast kitchen with family action beats.",
-      reference_snapshot: snapshot(["reference_style_001"], "empty_scene_001"),
+      reference_snapshot: snapshot(["character_model_sheet_001", "scene_style_image_001"], "empty_scene_001"),
       generation_note: "brighter morning light",
       pipeline_run_id: null,
       pipeline_run_status: null,
@@ -131,31 +129,25 @@ export function characterIpFixture(overrides: Partial<CharacterIpProfile> = {}):
   return {
     id: "child_ip_001",
     display_name: "团团",
-    visual_invariants: "Short black hair, yellow pajama top, round face.",
-    personality_cues: "Curious and energetic.",
-    reference_image_ids: ["reference_style_001"],
-    status: "available",
+    current_model_sheet_id: "character_model_sheet_001",
     created_at: "2026-07-03T10:58:00Z",
     updated_at: null,
     ...overrides,
   };
 }
 
-export function referenceImageFixture(overrides: Partial<ReferenceLibraryImage> = {}): ReferenceLibraryImage {
+export function sceneStyleFixture(overrides: Partial<SceneStyleReference> = {}): SceneStyleReference {
   return {
-    id: "reference_style_001",
-    original_filename: "tuantuan-style.png",
-    storage_path: "reference_library/reference_style_001.png",
-    media_type: "image/png",
-    width: 512,
-    height: 512,
-    tags: ["团团", "style"],
-    notes: "Character and illustration style reference.",
+    id: "scene_style_001",
+    display_name: "暖色绘本室内",
+    current_image_id: "scene_style_image_001",
     created_at: "2026-07-03T10:59:00Z",
-    status: "available",
+    updated_at: null,
     ...overrides,
   };
 }
+
+export const referenceImageFixture = sceneStyleFixture;
 
 export function snapshot(referenceImageIds: string[], currentEmptySceneImageId: string | null, notes = "style board") {
   return { reference_image_ids: referenceImageIds, current_empty_scene_image_id: currentEmptySceneImageId, notes };

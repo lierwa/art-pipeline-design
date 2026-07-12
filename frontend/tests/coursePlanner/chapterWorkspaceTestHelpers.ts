@@ -6,7 +6,7 @@ import type {
   ChapterScenePackage,
   CharacterIpProfile,
   CoursePlannerState,
-  ReferenceLibraryImage,
+  SceneStyleReference,
   ScenePack,
 } from "../../src/features/coursePlanner/types";
 import {
@@ -27,10 +27,10 @@ export type ChapterWorkspaceFetchMockOptions = {
   state?: CoursePlannerState;
   scenePackage?: ChapterScenePackage;
   characterIps?: CharacterIpProfile[];
-  referenceImages?: ReferenceLibraryImage[];
+  sceneStyles?: SceneStyleReference[];
   fetchScenePackage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  uploadReferenceLibraryImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  selectReferenceImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  selectSceneStyle?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  removeCharacterIp?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   assignCharacterIp?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   updateScenePrompt?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
@@ -50,7 +50,7 @@ type ChapterWorkspaceMockContext = {
   state: CoursePlannerState;
   scenePackage: ChapterScenePackage;
   characterIps: CharacterIpProfile[];
-  referenceImages: ReferenceLibraryImage[];
+  sceneStyles: SceneStyleReference[];
 };
 
 export function installChapterWorkspaceFetchMock(options: ChapterWorkspaceFetchMockOptions = {}) {
@@ -74,7 +74,7 @@ function createChapterWorkspaceMockContext(options: ChapterWorkspaceFetchMockOpt
     state: options.state ?? coursePlannerState(),
     scenePackage: options.scenePackage ?? studioScenePackageFixture(),
     characterIps: options.characterIps ?? [characterIpFixture()],
-    referenceImages: options.referenceImages ?? [referenceImageFixture()],
+    sceneStyles: options.sceneStyles ?? [referenceImageFixture()],
   };
 }
 
@@ -105,11 +105,8 @@ async function handleLibraryMockRoutes(
   if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
     return jsonResponse({ characterIps: context.characterIps });
   }
-  if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
-    return jsonResponse({ referenceImages: context.referenceImages });
-  }
-  if (path === "/api/course-planner/reference-library/images" && init?.method === "POST") {
-    return options.uploadReferenceLibraryImage?.(input, init) ?? jsonResponse({ referenceImage: appendReferenceImage(context, init) });
+  if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+    return jsonResponse({ sceneStyleReferences: context.sceneStyles });
   }
   return null;
 }
@@ -124,11 +121,19 @@ async function handleScenePackageMockRoutes(
   if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package`) && (!init || init.method === "GET")) {
     return options.fetchScenePackage?.(input, init) ?? jsonResponse({ scenePackage });
   }
-  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/reference-selections`) && init?.method === "POST") {
-    return options.selectReferenceImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await appendReferenceSelection(scenePackage, init)) });
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/scene-style-reference`) && init?.method === "PUT") {
+    return options.selectSceneStyle?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await selectSceneStyle(scenePackage, init)) });
+  }
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/scene-style-reference`) && init?.method === "DELETE") {
+    return jsonResponse({ scenePackage: recordNextPackage(context, { ...scenePackage, scene_style_reference_id: null }) });
   }
   if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/cast-assignments`) && init?.method === "POST") {
     return options.assignCharacterIp?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await appendCastAssignment(scenePackage, init)) });
+  }
+  if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/cast-assignments/`) && init?.method === "DELETE") {
+    const characterIpId = decodeURIComponent(path.split("/cast-assignments/")[1] ?? "");
+    const next = { ...scenePackage, cast_assignments: scenePackage.cast_assignments.filter((item) => item.character_ip_id !== characterIpId) };
+    return options.removeCharacterIp?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, next) });
   }
   return handleScenePackageMediaMockRoutes(context, input, path, init);
 }
@@ -210,24 +215,6 @@ function recordNextPackage(context: ChapterWorkspaceMockContext, next: ChapterSc
   return next;
 }
 
-function appendReferenceImage(context: ChapterWorkspaceMockContext, init: RequestInit | undefined) {
-  const body = init?.body as FormData;
-  const referenceImage: ReferenceLibraryImage = {
-    id: `reference_image_${String(context.referenceImages.length + 1).padStart(3, "0")}`,
-    original_filename: fileNameFromFormData(body, "file", "reference.png"),
-    storage_path: `reference_library/reference_image_${String(context.referenceImages.length + 1).padStart(3, "0")}.png`,
-    media_type: "image/png",
-    width: 512,
-    height: 512,
-    tags: body.getAll("tags").map(String),
-    notes: String(body.get("notes") ?? ""),
-    created_at: "2026-07-03T11:11:00Z",
-    status: "available",
-  };
-  context.referenceImages = [...context.referenceImages, referenceImage];
-  return referenceImage;
-}
-
 export function renderChapterWorkspace(options: RenderChapterWorkspaceOptions = {}) {
   const route = options.route ?? `/course-planner/chapters/${STUDIO_CHAPTER_ID}`;
   const restoreFetch = installChapterWorkspaceFetchMock(options);
@@ -267,23 +254,16 @@ export function coursePlannerState({
   };
 }
 
-async function appendReferenceSelection(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
-  const body = await parseJsonBody<{ referenceImageId: string; promptRole: ChapterScenePackage["reference_selections"][number]["prompt_role"] }>(init);
+async function selectSceneStyle(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
+  const body = await parseJsonBody<{ sceneStyleReferenceId: string }>(init);
   return {
     ...current,
-    reference_selections: [
-      ...current.reference_selections,
-      {
-        id: `reference_selection_${String(current.reference_selections.length + 1).padStart(3, "0")}`,
-        reference_image_id: body.referenceImageId,
-        prompt_role: body.promptRole,
-      },
-    ],
+    scene_style_reference_id: body.sceneStyleReferenceId,
   };
 }
 
 async function appendCastAssignment(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
-  const body = await parseJsonBody<{ characterIpId: string; roleLabel: string; actionIntent: string; referenceImageIds?: string[] }>(init);
+  const body = await parseJsonBody<{ characterIpId: string; roleLabel: string; actionIntent: string }>(init);
   return {
     ...current,
     cast_assignments: [
@@ -293,7 +273,6 @@ async function appendCastAssignment(current: ChapterScenePackage, init: RequestI
         character_ip_id: body.characterIpId,
         role_label: body.roleLabel,
         action_intent: body.actionIntent,
-        reference_image_ids: body.referenceImageIds ?? [],
       },
     ],
   };
@@ -480,7 +459,7 @@ function lockFinalScene(current: ChapterScenePackage): ChapterScenePackage {
       // 这里直接沿用当前 package 事实，避免 helper 自己发明第二套投影规则。
       assembly_snapshot: current.assembly,
       prompt_snapshot: current.prompt.prompt_text,
-      reference_snapshot: snapshot(current.reference_selections.map((selection) => selection.reference_image_id), current.current_empty_scene_image_id, ""),
+      reference_snapshot: snapshot(current.complete_images.at(-1)?.reference_snapshot.reference_image_ids ?? [], current.current_empty_scene_image_id, ""),
       created_at: "2026-07-03T11:09:00Z",
     },
   };

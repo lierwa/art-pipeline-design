@@ -30,7 +30,6 @@ export function CompleteSceneImagesPanel({
       return;
     }
     await onUploadCompleteSceneImage(file, {
-      referenceImageIds: scenePackage.reference_selections.map((selection) => selection.reference_image_id),
       generationNote: "",
     });
     event.target.value = "";

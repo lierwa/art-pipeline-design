@@ -85,8 +85,7 @@ describe("course planner scene package API client", () => {
     expect(JSON.parse(String(calls[6].init?.body))).toEqual(assemblyManifestFixture());
     expect(packageResult.chapter_id).toBe("chapter_001");
     expect(packageResult.prompt.prompt_text).toBe("Low-shadow room scene.");
-    expect(packageResult.prompt_confirmations.style_reference_mode).toBe("confirmed_empty");
-    expect(packageResult.reference_selections[0].prompt_role).toBe("style");
+    expect(packageResult.prompt_confirmations.avoid_objects_reviewed).toBe(true);
     expect(promptResult.target_objects[0].description).toBe("Yellow cover.");
     expect(emptyResult.empty_scene_images[0].reference_snapshot.reference_image_ids).toEqual(["reference_001", "reference_002"]);
     expect(selectedResult.current_empty_scene_image_id).toBe("empty_scene_001");
@@ -100,7 +99,7 @@ describe("course planner scene package API client", () => {
     const fetcher = scenePackageFetcher();
     const file = new File(["png"], "empty.png", { type: "image/png" });
 
-    await uploadEmptySceneImage("chapter_001", file, { referenceImageIds: ["reference_001"] }, fetcher);
+    await uploadEmptySceneImage("chapter_001", file, {}, fetcher);
     await selectEmptySceneImage("chapter_001", "empty_scene_001", fetcher);
 
     expect(fetcher.calls.map(([input, init]) => [input, init?.method])).toEqual([
@@ -214,11 +213,11 @@ describe("course planner scene package API client", () => {
 
     expect(emptyBody.get("file")).toBe(emptyFile);
     expect(emptyBody.get("promptSnapshot")).toBeNull();
-    expect(emptyBody.getAll("referenceImageIds")).toEqual(["reference_001", "reference_002"]);
+    expect(emptyBody.getAll("referenceImageIds")).toEqual([]);
     expect(completeBody.get("file")).toBe(completeFile);
     expect(completeBody.get("promptSnapshot")).toBeNull();
     expect(completeBody.get("generationNote")).toBe("brighter morning light");
-    expect(completeBody.getAll("referenceImageIds")).toEqual(["reference_001"]);
+    expect(completeBody.getAll("referenceImageIds")).toEqual([]);
     expect(assetBody.get("file")).toBe(assetFile);
     expect(assetBody.get("displayName")).toBe("抱枕");
     expect(assetBody.get("sourceRunId")).toBeNull();
@@ -272,7 +271,6 @@ function promptPatchInput() {
     avoidObjects: [{ label: "shattered glass", description: "unsafe prop" }],
     promptConfirmations: {
       avoidObjectsReviewed: true,
-      styleReferenceMode: "confirmed_empty" as const,
     },
   };
 }
@@ -291,21 +289,17 @@ function promptPatchRequestPayload() {
     avoidObjects: [{ label: "shattered glass", description: "unsafe prop" }],
     promptConfirmations: {
       avoidObjectsReviewed: true,
-      styleReferenceMode: "confirmed_empty",
     },
   };
 }
 
 function emptySceneUploadInput() {
-  return {
-    referenceImageIds: ["reference_001", "reference_002"],
-  };
+  return {};
 }
 
 function completeImageUploadInput() {
   return {
     generationNote: "brighter morning light",
-    referenceImageIds: ["reference_001"],
   };
 }
 

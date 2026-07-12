@@ -4,47 +4,37 @@ from typing import TYPE_CHECKING
 
 from art_pipeline.course_planner.models import (
     CharacterIpProfile,
-    ReferenceLibraryImage,
+    LibraryImageAsset,
+    SceneStyleReference,
 )
-from art_pipeline.course_planner.scene_package_errors import (
-    ScenePackageValidationError,
-)
+from art_pipeline.course_planner.scene_package_errors import ScenePackageValidationError
 
 if TYPE_CHECKING:
     from art_pipeline.course_planner.scene_package_models import (
         ChapterCastAssignment,
-        ChapterReferenceSelection,
         ChapterScenePackage,
     )
 
 
-LibraryPayload = tuple[list[CharacterIpProfile], list[ReferenceLibraryImage]]
+LibraryPayload = tuple[
+    list[CharacterIpProfile],
+    list[SceneStyleReference],
+    dict[str, LibraryImageAsset],
+]
 
 
 def is_prompt_ready(package: ChapterScenePackage) -> bool:
-    has_character = all(
-        assignment.character_ip_id.strip()
-        and assignment.action_intent.strip()
-        and assignment.reference_image_ids
+    has_character = bool(package.cast_assignments) and all(
+        assignment.character_ip_id.strip() and assignment.action_intent.strip()
         for assignment in package.cast_assignments
-    ) and bool(package.cast_assignments)
-    has_target_objects = bool(package.target_objects)
-    has_avoid_review = package.prompt_confirmations.avoid_objects_reviewed
-    has_spatial_contract = bool(package.prompt.scene_spatial_contract.strip())
-    has_style_resolution = (
-        any(
-            selection.prompt_role == "style"
-            for selection in package.reference_selections
-        )
-        or package.prompt_confirmations.style_reference_mode == "confirmed_empty"
     )
     return (
         bool(package.prompt.prompt_text.strip())
         and has_character
-        and has_target_objects
-        and has_avoid_review
-        and has_spatial_contract
-        and has_style_resolution
+        and bool(package.target_objects)
+        and package.prompt_confirmations.avoid_objects_reviewed
+        and bool(package.prompt.scene_spatial_contract.strip())
+        and bool(package.scene_style_reference_id)
     )
 
 
@@ -61,9 +51,7 @@ def build_complete_prompt(
 ) -> str:
     parts = _prompt_projection_parts(package, libraries)
     if package.current_empty_scene_image_id:
-        parts.append(
-            f"Selected empty scene image: {package.current_empty_scene_image_id}"
-        )
+        parts.append(f"Selected empty scene image: {package.current_empty_scene_image_id}")
     return "\n".join(parts)
 
 
@@ -71,32 +59,20 @@ def _prompt_projection_parts(
     package: ChapterScenePackage,
     libraries: LibraryPayload | None,
 ) -> list[str]:
-    character_lookup, reference_lookup = _library_lookups(package, libraries)
+    character_lookup, style_lookup, asset_lookup = _library_lookups(package, libraries)
     parts: list[str] = []
     if package.prompt.prompt_text.strip():
         parts.append(package.prompt.prompt_text.strip())
     if package.prompt.scene_spatial_contract.strip():
         parts.append(package.prompt.scene_spatial_contract.strip())
-    if package.cast_assignments:
-        parts.extend(
-            _cast_prompt_lines(
-                package.cast_assignments,
-                character_lookup,
-                reference_lookup,
-            )
-        )
+    parts.extend(_cast_prompt_lines(package.cast_assignments, character_lookup, asset_lookup))
     if package.target_objects:
-        target_text = ", ".join(item.label.strip() for item in package.target_objects)
-        parts.append(f"Target objects: {target_text}")
+        parts.append("Target objects: " + ", ".join(item.label.strip() for item in package.target_objects))
     if package.avoid_objects:
-        avoid_text = ", ".join(item.label.strip() for item in package.avoid_objects)
-        parts.append(f"Avoid objects: {avoid_text}")
-    if package.reference_selections:
-        parts.extend(
-            _reference_selection_lines(
-                package.reference_selections,
-                reference_lookup,
-            )
+        parts.append("Avoid objects: " + ", ".join(item.label.strip() for item in package.avoid_objects))
+    if package.scene_style_reference_id:
+        parts.append(
+            _style_prompt_line(package.scene_style_reference_id, style_lookup, asset_lookup)
         )
     return parts
 
@@ -104,24 +80,29 @@ def _prompt_projection_parts(
 def _library_lookups(
     package: ChapterScenePackage,
     libraries: LibraryPayload | None,
-) -> tuple[dict[str, CharacterIpProfile], dict[str, ReferenceLibraryImage]]:
-    if not package.cast_assignments and not package.reference_selections:
-        return {}, {}
+) -> tuple[
+    dict[str, CharacterIpProfile],
+    dict[str, SceneStyleReference],
+    dict[str, LibraryImageAsset],
+]:
+    if not package.cast_assignments and not package.scene_style_reference_id:
+        return {}, {}, {}
     if libraries is None:
         raise ScenePackageValidationError(
-            "Prompt projection requires library records when cast assignments or reference selections exist."
+            "Prompt projection requires global library records for selected characters and style."
         )
-    characters, reference_images = libraries
+    characters, styles, assets = libraries
     return (
         {character.id: character for character in characters},
-        {image.id: image for image in reference_images},
+        {style.id: style for style in styles},
+        assets,
     )
 
 
 def _cast_prompt_lines(
     cast_assignments: list[ChapterCastAssignment],
     character_lookup: dict[str, CharacterIpProfile],
-    reference_lookup: dict[str, ReferenceLibraryImage],
+    asset_lookup: dict[str, LibraryImageAsset],
 ) -> list[str]:
     lines: list[str] = []
     for assignment in cast_assignments:
@@ -131,46 +112,33 @@ def _cast_prompt_lines(
                 "Missing character library record for cast assignment "
                 f"{assignment.id}: {assignment.character_ip_id}"
             )
-        missing_reference_ids = [
-            reference_id
-            for reference_id in assignment.reference_image_ids
-            if reference_id not in reference_lookup
-        ]
-        if missing_reference_ids:
+        asset = asset_lookup.get(character.current_model_sheet_id)
+        if asset is None:
             raise ScenePackageValidationError(
-                "Missing reference library records for cast assignment "
-                f"{assignment.id}: {', '.join(missing_reference_ids)}"
+                "Missing Character Model Sheet for cast assignment "
+                f"{assignment.id}: {character.current_model_sheet_id}"
             )
-        line = (
+        lines.append(
             f"Cast {assignment.role_label}: {character.display_name}; "
-            f"action: {assignment.action_intent}"
+            f"action: {assignment.action_intent}; "
+            f"model sheet: {asset.original_filename} [{asset.id}]"
         )
-        if character.visual_invariants.strip():
-            line += f"; invariants: {character.visual_invariants.strip()}"
-        reference_names = [
-            reference_lookup[reference_id].original_filename
-            for reference_id in assignment.reference_image_ids
-        ]
-        if reference_names:
-            line += f"; references: {', '.join(reference_names)}"
-        lines.append(line)
     return lines
 
 
-def _reference_selection_lines(
-    reference_selections: list[ChapterReferenceSelection],
-    reference_lookup: dict[str, ReferenceLibraryImage],
-) -> list[str]:
-    lines: list[str] = []
-    for selection in reference_selections:
-        reference = reference_lookup.get(selection.reference_image_id)
-        if reference is None:
-            raise ScenePackageValidationError(
-                "Missing reference library record for selection "
-                f"{selection.id}: {selection.reference_image_id}"
-            )
-        line = f"Reference {selection.prompt_role}: {reference.original_filename}"
-        if reference.notes.strip():
-            line += f" ({reference.notes.strip()})"
-        lines.append(line)
-    return lines
+def _style_prompt_line(
+    style_id: str,
+    style_lookup: dict[str, SceneStyleReference],
+    asset_lookup: dict[str, LibraryImageAsset],
+) -> str:
+    style = style_lookup.get(style_id)
+    if style is None:
+        raise ScenePackageValidationError(
+            f"Missing Scene Style Reference library record: {style_id}"
+        )
+    asset = asset_lookup.get(style.current_image_id)
+    if asset is None:
+        raise ScenePackageValidationError(
+            f"Missing Scene Style Reference image: {style.current_image_id}"
+        )
+    return f"Scene style: {style.display_name}; reference: {asset.original_filename} [{asset.id}]"

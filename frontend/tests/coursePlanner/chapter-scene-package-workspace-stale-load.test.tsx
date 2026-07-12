@@ -57,8 +57,8 @@ describe("Chapter scene-package workspace stale load guard", () => {
       if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
         return jsonResponse({ characterIps: [characterIpFixture()] });
       }
-      if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
-        return jsonResponse({ referenceImages: [referenceImageFixture()] });
+      if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+        return jsonResponse({ sceneStyleReferences: [referenceImageFixture()] });
       }
       if (path.endsWith(`/chapters/${firstChapter.id}/scene-package`) && (!init || init.method === "GET")) {
         return jsonResponse({ scenePackage: firstScenePackage });
@@ -111,8 +111,8 @@ describe("Chapter scene-package workspace stale load guard", () => {
       if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
         return jsonResponse({ characterIps: [characterIpFixture()] });
       }
-      if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
-        return jsonResponse({ referenceImages: [referenceImageFixture()] });
+      if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+        return jsonResponse({ sceneStyleReferences: [referenceImageFixture()] });
       }
       if (path.endsWith(`/chapters/${firstChapter.id}/scene-package`) && (!init || init.method === "GET")) {
         return firstLoad.promise;
@@ -175,8 +175,8 @@ describe("Chapter scene-package workspace stale load guard", () => {
       if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
         return jsonResponse({ characterIps: [characterIpFixture()] });
       }
-      if (path === "/api/course-planner/reference-library/images" && (!init || init.method === "GET")) {
-        return jsonResponse({ referenceImages: [referenceImageFixture()] });
+      if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+        return jsonResponse({ sceneStyleReferences: [referenceImageFixture()] });
       }
       if (path.endsWith(`/chapters/${firstChapter.id}/scene-package`) && (!init || init.method === "GET")) {
         return jsonResponse({ scenePackage: firstScenePackage });

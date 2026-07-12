@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import * as Tooltip from "@radix-ui/react-tooltip";
+import { Library } from "lucide-react";
 
 import { WorkflowToast } from "../../../app/components/WorkflowToast";
+import { IconButton } from "../../../shared/ui/IconButton";
 import { CandidateChapterBoard } from "../components/CandidateChapterBoard";
+import { GlobalReferenceLibraryDrawer } from "../components/GlobalReferenceLibraryDrawer";
 import {
   CoursePlannerDialog,
   CoursePlannerDrawer,
@@ -35,6 +39,7 @@ export function SceneCategoryBoardPage() {
   const planner = useCoursePlannerState();
   const [isBatchRevisionOpen, setIsBatchRevisionOpen] = useState(false);
   const [batchFeedback, setBatchFeedback] = useState("");
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [dismissedToastKey, setDismissedToastKey] = useState<string | null>(null);
   const [scenePackEditor, setScenePackEditor] = useState<ScenePackEditorState | null>(null);
   const activeScenePack = planner.activeScenePack;
@@ -140,6 +145,16 @@ export function SceneCategoryBoardPage() {
             title="Scene Pack / Chapter Board"
             description={activeScenePack?.title ?? "Select a Scene Pack to start Chapter planning."}
             status={<CoursePlannerStatusBadge label={operationLabel(planner.asyncStatus)} tone={operationTone(planner.asyncStatus)} />}
+            actions={(
+              <Tooltip.Provider>
+                <IconButton
+                  label="资料库"
+                  icon={<Library size={16} />}
+                  showLabel
+                  onClick={() => setIsLibraryOpen(true)}
+                />
+              </Tooltip.Provider>
+            )}
           />
         </div>
         {inlineError ? <p className="course-planner-inline-error" role="alert">{inlineError}</p> : null}
@@ -297,9 +312,10 @@ export function SceneCategoryBoardPage() {
         ) : null}
       {isBatchRevisionOpen ? (
         <CoursePlannerDrawer
-          ariaLabel="Revise candidate batch"
           title="调整整批"
           description="把反馈发送给 AI，替换当前候选池；已接受的 Chapter 不会被覆盖。"
+          isOpen
+          modal={false}
           onClose={() => setIsBatchRevisionOpen(false)}
           footer={(
             <>
@@ -328,6 +344,10 @@ export function SceneCategoryBoardPage() {
           </label>
         </CoursePlannerDrawer>
       ) : null}
+      <GlobalReferenceLibraryDrawer
+        isOpen={isLibraryOpen}
+        onClose={() => setIsLibraryOpen(false)}
+      />
       </main>
     </>
   );

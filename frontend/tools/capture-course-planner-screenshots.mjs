@@ -27,6 +27,26 @@ const screenshotTargets = [
     url: "/__course-planner-visual?view=board",
   },
   {
+    name: "library",
+    path: "global-reference-library-drawer-1920x1080.png",
+    url: "/__course-planner-visual?view=library",
+  },
+  {
+    name: "library-create",
+    path: "global-reference-library-create-character-1920x1080.png",
+    url: "/__course-planner-visual?view=library-create",
+  },
+  {
+    name: "library-edit",
+    path: "global-reference-library-edit-character-1920x1080.png",
+    url: "/__course-planner-visual?view=library-edit",
+  },
+  {
+    name: "library-style",
+    path: "global-reference-library-scene-style-1920x1080.png",
+    url: "/__course-planner-visual?view=library-style",
+  },
+  {
     name: "chapter-loading",
     path: "chapter-loading-1920x1080.png",
     url: "/__course-planner-visual?view=chapter-loading",
@@ -146,6 +166,10 @@ try {
   console.log(`visual server ${baseUrl}`);
   if (serveOnly) {
     console.log(`${baseUrl}/__course-planner-visual?view=board`);
+    console.log(`${baseUrl}/__course-planner-visual?view=library`);
+    console.log(`${baseUrl}/__course-planner-visual?view=library-create`);
+    console.log(`${baseUrl}/__course-planner-visual?view=library-edit`);
+    console.log(`${baseUrl}/__course-planner-visual?view=library-style`);
     console.log(`${baseUrl}/__course-planner-visual?view=chapter-loading`);
     console.log(`${baseUrl}/__course-planner-visual?view=chapter`);
     console.log(`${baseUrl}/__course-planner-visual?view=assembly-loading`);
@@ -467,6 +491,18 @@ function readyExpression(waitFor) {
   if (waitFor === "board") {
     return "document.body.textContent.includes('Scene Pack / Chapter Board') && document.body.textContent.includes('Scene Packs') && document.body.textContent.includes('Chapter List')";
   }
+  if (waitFor === "library") {
+    return "document.body.textContent.includes('Scene Pack / Chapter Board') && document.body.textContent.includes('资料库') && document.body.textContent.includes('角色 IP') && Boolean(document.querySelector('.course-planner-drawer'))";
+  }
+  if (waitFor === "library-create") {
+    return "document.body.textContent.includes('创建角色 IP') && document.body.textContent.includes('选择 PNG') && Boolean(document.querySelector('input[name=displayName]'))";
+  }
+  if (waitFor === "library-edit") {
+    return "document.body.textContent.includes('编辑角色 IP') && document.body.textContent.includes('保留当前图片') && Boolean(document.querySelector('input[name=displayName]'))";
+  }
+  if (waitFor === "library-style") {
+    return "document.querySelector('[role=tab][data-state=active]')?.textContent.includes('场景风格') === true";
+  }
   if (waitFor === "chapter-loading" || waitFor === "assembly-loading") {
     return "document.body.textContent.includes('Loading Scene Package') && document.body.textContent.includes('Loading the latest chapter scene-package snapshot.')";
   }
@@ -477,7 +513,7 @@ function readyExpression(waitFor) {
     return "document.body.textContent.includes('Assembly') && document.body.textContent.includes('Placement')";
   }
   if (waitFor === "assembly-drawer") {
-    return "document.body.textContent.includes('Generated Chapter Assets') && document.body.textContent.includes('Generated cat variant') && Boolean(document.querySelector('.course-planner-drawer-overlay'))";
+    return "document.body.textContent.includes('Generated Chapter Assets') && document.body.textContent.includes('Generated cat variant') && Boolean(document.querySelector('.course-planner-drawer'))";
   }
   if (waitFor === "assembly-multiselect") {
     return "document.body.textContent.includes('2 placements selected') && Array.from(document.querySelectorAll('input')).some((input) => input.getAttribute('placeholder') === 'Mixed') && document.querySelectorAll('.assembly-layer-item.is-selected').length >= 2";
@@ -686,7 +722,7 @@ function coursePlannerVisualPlugin() {
             .catch(next);
           return;
         }
-        if (isScenePackageMediaRequest(requestUrl.pathname)) {
+        if (isScenePackageMediaRequest(requestUrl.pathname) || isGlobalLibraryMediaRequest(requestUrl.pathname)) {
           sendSvg(response, placeholderSvg(requestUrl.pathname));
           return;
         }
@@ -726,6 +762,11 @@ function sendSvg(response, svg) {
 
 function isScenePackageMediaRequest(pathname) {
   return pathname.startsWith("/api/course-planner/chapters/") && pathname.includes("/scene-package/media/");
+}
+
+function isGlobalLibraryMediaRequest(pathname) {
+  return pathname.startsWith("/api/course-planner/character-ips/")
+    || pathname.startsWith("/api/course-planner/scene-style-references/");
 }
 
 function placeholderSvg(pathname) {
