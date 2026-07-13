@@ -43,7 +43,7 @@ def test_add_empty_scene_image_captures_prompt_and_reference_snapshot(
     assert image.height == 80
     assert image.status == "available"
     assert image.prompt_snapshot == "Custom empty scene prompt snapshot."
-    assert image.reference_snapshot.reference_image_ids == []
+    assert len(image.reference_snapshot.reference_image_ids) == 2
     assert image.reference_snapshot.current_empty_scene_image_id is None
 
 
@@ -175,10 +175,9 @@ def test_add_complete_scene_image_uses_selected_empty_scene_snapshot(
     assert complete.width == 96
     assert complete.height == 64
     assert complete.status == "active"
-    assert "A low-shadow bedroom empty scene." in complete.prompt_snapshot
-    assert "Bed against back wall" in complete.prompt_snapshot
-    assert "Target objects: book" in complete.prompt_snapshot
-    assert "Selected empty scene image" in complete.prompt_snapshot
+    assert complete.prompt_snapshot == (
+        "A complete bedroom scene with 团团 arranging the book."
+    )
     assert complete.reference_snapshot.current_empty_scene_image_id == empty_scene.id
     assert complete.generation_note == "brighter morning light"
     assert complete_path.read_bytes() == image_bytes

@@ -5,12 +5,14 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from art_pipeline.course_planner.api_models import (
-    ChapterCastAssignmentRequest,
+    ChapterCastSelectionRequest,
     ChapterSceneStyleReferenceRequest,
-    ChapterScenePromptPatchRequest,
     CurrentEmptySceneImageRequest,
 )
 from art_pipeline.course_planner.library_routes import library_router
+from art_pipeline.course_planner.scene_package_prompt_routes import (
+    prompt_package_router,
+)
 from art_pipeline.course_planner.generated_assets import (
     list_generated_chapter_assets,
     materialize_generated_chapter_asset,
@@ -45,48 +47,13 @@ class GeneratedAssetMaterializeRequest(BaseModel):
 def register_scene_package_routes(app) -> None:
     app.include_router(library_router)
     app.include_router(scene_package_router)
+    app.include_router(prompt_package_router)
 
 
 @scene_package_router.get("/chapters/{chapterId}/scene-package")
 def get_scene_package(request: Request, chapterId: str) -> dict[str, object]:
     try:
         package = store_for_request(request).read_chapter_scene_package(chapterId)
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(exc) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.patch("/chapters/{chapterId}/scene-package/prompt")
-async def patch_scene_package_prompt(
-    request: Request,
-    chapterId: str,
-) -> dict[str, object]:
-    payload = await parse_json_model(request, ChapterScenePromptPatchRequest)
-    try:
-        package = store_for_request(request).update_chapter_scene_prompt(
-            chapterId,
-            prompt_text=payload.prompt_text,
-            scene_spatial_contract=(
-                payload.scene_spatial_contract
-                if "scene_spatial_contract" in payload.model_fields_set
-                else None
-            ),
-            target_objects=(
-                _target_object_updates(payload)
-                if "target_objects" in payload.model_fields_set
-                else None
-            ),
-            avoid_objects=(
-                _avoid_object_updates(payload)
-                if "avoid_objects" in payload.model_fields_set
-                else None
-            ),
-            prompt_confirmations=(
-                _prompt_confirmation_updates(payload)
-                if "prompt_confirmations" in payload.model_fields_set
-                else None
-            ),
-        )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
     return scene_package_payload(package)
@@ -124,20 +91,18 @@ def delete_scene_package_style_reference(
     return scene_package_payload(package)
 
 
-@scene_package_router.post(
-    "/chapters/{chapterId}/scene-package/cast-assignments"
+@scene_package_router.put(
+    "/chapters/{chapterId}/scene-package/cast-selection"
 )
-async def post_scene_package_cast_assignment(
+async def put_scene_package_cast_selection(
     request: Request,
     chapterId: str,
 ) -> dict[str, object]:
-    payload = await parse_json_model(request, ChapterCastAssignmentRequest)
+    payload = await parse_json_model(request, ChapterCastSelectionRequest)
     try:
-        package = store_for_request(request).write_chapter_cast_assignment(
+        package = store_for_request(request).set_chapter_cast_selection(
             chapterId,
-            character_ip_id=payload.character_ip_id,
-            role_label=payload.role_label,
-            action_intent=payload.action_intent,
+            character_ip_ids=payload.character_ip_ids,
         )
     except SCENE_PACKAGE_ROUTE_ERRORS as exc:
         raise scene_package_http_exception(exc) from exc
@@ -271,24 +236,6 @@ def delete_complete_scene_image(
             exc,
             child_not_found_detail="Complete scene image not found.",
         ) from exc
-    return scene_package_payload(package)
-
-
-@scene_package_router.delete(
-    "/chapters/{chapterId}/scene-package/cast-assignments/{characterIpId}"
-)
-def delete_scene_package_cast_assignment(
-    request: Request,
-    chapterId: str,
-    characterIpId: str,
-) -> dict[str, object]:
-    try:
-        package = store_for_request(request).remove_chapter_cast_assignment(
-            chapterId,
-            characterIpId,
-        )
-    except SCENE_PACKAGE_ROUTE_ERRORS as exc:
-        raise scene_package_http_exception(exc) from exc
     return scene_package_payload(package)
 
 
@@ -449,43 +396,3 @@ def get_scene_package_media(
             child_not_found_detail="Scene package media not found.",
         ) from exc
     return FileResponse(path, media_type=media_type)
-
-
-def _target_object_updates(
-    payload: ChapterScenePromptPatchRequest,
-) -> list[dict[str, str]]:
-    if payload.target_objects is None:
-        return []
-    # WHY: scene package target object 的 HTTP 合同与持久化合同现在保持同构，
-    # 这里直接透传 description/priority，避免路由层再制造 notes 兼容分叉。
-    return [
-        {
-            "id": target.id,
-            "label": target.label,
-            "description": target.description,
-            "priority": target.priority,
-        }
-        for target in payload.target_objects
-    ]
-
-
-def _avoid_object_updates(
-    payload: ChapterScenePromptPatchRequest,
-) -> list[dict[str, str]]:
-    if payload.avoid_objects is None:
-        return []
-    return [
-        {
-            "label": target.label,
-            "description": target.description,
-        }
-        for target in payload.avoid_objects
-    ]
-
-
-def _prompt_confirmation_updates(
-    payload: ChapterScenePromptPatchRequest,
-) -> dict[str, object]:
-    if payload.prompt_confirmations is None:
-        return {}
-    return payload.prompt_confirmations.model_dump(mode="python", by_alias=False)

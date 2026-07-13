@@ -6,7 +6,7 @@ import type { CompleteImageUploadInput } from "../api";
 import { scenePackageMediaUrl } from "../scenePackageMedia";
 import type { ChapterScenePackage } from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
-import { readableSceneMediaName } from "./mediaDisplayNames";
+import { promptLineageLabel, readableSceneMediaName } from "./mediaDisplayNames";
 
 type CompleteSceneImagesPanelProps = {
   scenePackage: ChapterScenePackage;
@@ -62,6 +62,9 @@ export function CompleteSceneImagesPanel({
                   </CoursePlannerStatusBadge>
                 </div>
                 <p>{image.width} x {image.height}</p>
+                <CoursePlannerStatusBadge tone={image.prompt_snapshot.trim() ? "neutral" : "warning"}>
+                  {promptLineageLabel(image.prompt_snapshot)}
+                </CoursePlannerStatusBadge>
                 {image.generation_note ? <p className="chapter-media-note">{image.generation_note}</p> : null}
               </div>
               <div className="chapter-complete-image-actions">

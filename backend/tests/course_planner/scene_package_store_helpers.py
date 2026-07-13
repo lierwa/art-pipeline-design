@@ -16,6 +16,12 @@ from art_pipeline.course_planner.scene_package_models import (
     ChapterScenePackage,
     CompleteSceneImage,
     EmptySceneImage,
+    GeneratedChapterCastDirection,
+    GeneratedChapterPromptPackage,
+    GeneratedChapterPromptReferenceSnapshot,
+    CharacterModelSheetSnapshot,
+    TargetObjectItem,
+    AvoidObjectItem,
 )
 from art_pipeline.course_planner.store import CoursePlannerStore
 
@@ -39,13 +45,22 @@ def make_store_with_chapter(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter
 
 def make_store_with_prompt(tmp_path: Path) -> tuple[CoursePlannerStore, Chapter]:
     store, chapter = make_store_with_chapter(tmp_path)
-    store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        scene_spatial_contract="Bed against back wall, desk by window, floor kept clear.",
-        target_objects=[{"label": "book"}],
-        avoid_objects=[{"label": "shattered glass"}],
+    character = store.create_character_ip(
+        display_name="团团",
+        image_bytes=make_png_bytes(width=320, height=180),
+        original_filename="tuantuan.png",
     )
+    style = store.create_scene_style_reference(
+        display_name="暖色绘本室内",
+        image_bytes=make_png_bytes(width=320, height=180),
+        original_filename="warm.png",
+    )
+    store.set_chapter_cast_selection(chapter.id, character_ip_ids=[character.id])
+    store.set_chapter_scene_style_reference(
+        chapter.id,
+        scene_style_reference_id=style.id,
+    )
+    seed_current_prompt_package(store, chapter.id)
     return store, chapter
 
 def make_store_with_empty_scene_image(
@@ -66,6 +81,7 @@ def make_store_with_selected_empty_scene(
 ) -> tuple[CoursePlannerStore, Chapter, EmptySceneImage]:
     store, chapter, image = make_store_with_empty_scene_image(tmp_path)
     store.select_empty_scene_image(chapter.id, image.id)
+    seed_current_prompt_package(store, chapter.id)
     selected = store.read_chapter_scene_package(chapter.id).empty_scene_images[0]
     return store, chapter, selected
 
@@ -118,6 +134,7 @@ def make_store_with_two_empty_scene_images_and_assembly(
     )
     old_image, new_image = second_package.empty_scene_images
     store.select_empty_scene_image(chapter.id, old_image.id)
+    seed_current_prompt_package(store, chapter.id)
     direct_package = store.add_direct_chapter_asset(
         chapter.id,
         image_bytes=make_png_bytes(width=32, height=32),
@@ -229,6 +246,74 @@ def make_stub_chapter_asset(asset_id: str = "chapter_asset_001") -> ChapterAsset
         linked_target_object_id="target_object_001",
         created_at="2026-07-03T10:06:00Z",
     )
+
+
+def seed_current_prompt_package(
+    store: CoursePlannerStore,
+    chapter_id: str,
+    *,
+    target_labels: tuple[str, ...] = ("book",),
+) -> None:
+    package = store.read_chapter_scene_package(chapter_id)
+    characters = [
+        store.get_character_ip(character_id)
+        for character_id in package.selected_character_ip_ids
+    ]
+    style = (
+        store.get_scene_style_reference(package.scene_style_reference_id)
+        if package.scene_style_reference_id
+        else None
+    )
+    # WHY: 测试数据必须模拟“选择完成后生成”的真实时序；直接修补旧 Prompt 快照会
+    # 掩盖 Empty/角色/风格变更应使当前生成结果失效这一业务不变量。
+    prompt_package = GeneratedChapterPromptPackage(
+        empty_scene_prompt="A low-shadow bedroom empty scene.",
+        complete_scene_prompt="A complete bedroom scene with 团团 arranging the book.",
+        scene_spatial_contract="Bed against back wall, desk by window, floor kept clear.",
+        cast_directions=[
+            GeneratedChapterCastDirection(
+                character_ip_id=character.id,
+                action="整理书本",
+            )
+            for character in characters
+        ],
+        reference_snapshot=GeneratedChapterPromptReferenceSnapshot(
+            character_model_sheets=[
+                CharacterModelSheetSnapshot(
+                    character_ip_id=character.id,
+                    model_sheet_id=character.current_model_sheet_id,
+                )
+                for character in characters
+            ],
+            scene_style_reference_id=style.id if style else None,
+            scene_style_image_id=style.current_image_id if style else None,
+            current_empty_scene_image_id=package.current_empty_scene_image_id,
+        ),
+        generated_at="2026-07-14T00:00:00Z",
+    )
+    store.write_chapter_scene_package(
+        package.model_copy(
+            update={
+                "current_prompt_package": prompt_package,
+                "target_objects": [
+                    TargetObjectItem(
+                        id=f"target_object_{index:03d}",
+                        label=label,
+                    )
+                    for index, label in enumerate(target_labels, start=1)
+                ],
+                "avoid_objects": [
+                    AvoidObjectItem(
+                        id="avoid_object_001",
+                        label="shattered glass",
+                    )
+                ],
+            }
+        ),
+        validate_assembly=False,
+    )
+
+
 def make_png_bytes(*, width: int = 8, height: int = 6) -> bytes:
     image = Image.new("RGBA", (width, height), (120, 45, 200, 255))
     buffer = BytesIO()

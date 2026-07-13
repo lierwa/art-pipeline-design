@@ -57,23 +57,32 @@ export function studioChapterFixture(overrides: Partial<Chapter> = {}): Chapter 
 
 export function studioScenePackageFixture(overrides: Partial<ChapterScenePackage> = {}): ChapterScenePackage {
   return {
+    schema_version: 2,
     chapter_id: STUDIO_CHAPTER_ID,
     current_empty_scene_image_id: "empty_scene_001",
-    prompt: {
-      prompt_text: "Warm breakfast kitchen with a child reaching for cereal near the table.",
-      scene_spatial_contract: "Table centered, fridge left, sink right, floor kept clear.",
-      updated_at: "2026-07-03T11:00:00Z",
-    },
-    prompt_confirmations: {
-      avoid_objects_reviewed: true,
-    },
-    cast_assignments: [{
-      id: "cast_main_child",
-      character_ip_id: "child_ip_001",
-      role_label: "main",
-      action_intent: "Reach for the breakfast bowl while looking toward spilled milk.",
-    }],
+    selected_character_ip_ids: ["child_ip_001"],
     scene_style_reference_id: "scene_style_001",
+    current_prompt_package: {
+      empty_scene_prompt: "Warm breakfast kitchen without characters or detachable objects.",
+      complete_scene_prompt: "Warm breakfast kitchen with 团团 reaching for the breakfast bowl.",
+      scene_spatial_contract: "Table centered, fridge left, sink right, floor kept clear.",
+      cast_directions: [{
+        character_ip_id: "child_ip_001",
+        action: "Reach for the breakfast bowl while looking toward spilled milk.",
+      }],
+      reference_snapshot: {
+        character_model_sheets: [{
+          character_ip_id: "child_ip_001",
+          model_sheet_id: "character_model_sheet_001",
+        }],
+        scene_style_reference_id: "scene_style_001",
+        scene_style_image_id: "scene_style_image_001",
+        current_empty_scene_image_id: "empty_scene_001",
+        global_reference_image_ids: [],
+      },
+      generation_feedback: "",
+      generated_at: "2026-07-03T11:00:00Z",
+    },
     target_objects: [
       {
         id: "target_object_bowl",

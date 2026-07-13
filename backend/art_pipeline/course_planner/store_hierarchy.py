@@ -101,6 +101,10 @@ class CoursePlannerHierarchyStoreMixin:
         pack = self.get_scene_pack(scene_pack_id)
         return [self._read_chapter(pack.id, chapter_id) for chapter_id in pack.chapter_ids]
 
+    def get_chapter(self, chapter_id: str) -> Chapter:
+        chapter, _ = self._find_chapter(chapter_id)
+        return chapter
+
     def reorder_chapters(self, scene_pack_id: str, chapter_ids: list[str]) -> ScenePack:
         pack = self.get_scene_pack(scene_pack_id)
         if len(chapter_ids) != len(set(chapter_ids)) or set(chapter_ids) != set(

@@ -16,6 +16,7 @@ from route_test_helpers import (
     scene_pack_payload,
 )
 from art_pipeline.workspace.store import read_runs, read_state
+from scene_package_route_test_helpers import _create_selected_empty_scene
 
 
 def test_scene_pack_crud_and_state_use_hierarchy_contract(tmp_path: Path) -> None:
@@ -212,31 +213,9 @@ def test_cross_pack_chapter_delete_rejects_ownership_before_descendant_check(
 
 def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path) -> None:
     client = client_with_provider(tmp_path)
-    scene_pack_id = create_scene_pack(client)
-    chapter_id = create_chapter(client, scene_pack_id)
-    client.patch(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
-        json={
-            "promptText": "Bedroom reading corner.",
-            "sceneSpatialContract": "Desk by the window, lamp near the book stack.",
-            "targetObjects": [
-                {"label": "book", "priority": "required"},
-                {"label": "lamp", "priority": "recommended"},
-            ],
-            "avoidObjects": [],
-            "promptConfirmations": {
-                "avoidObjectsReviewed": True,
-            },
-        },
-    )
-    empty_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
-        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
-    )
-    empty_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
-    client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
-        json={"emptySceneImageId": empty_id},
+    chapter_id, empty_id = _create_selected_empty_scene(
+        client,
+        target_labels=("book", "lamp"),
     )
     asset_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
@@ -255,7 +234,7 @@ def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path)
         json={
             "schema_version": 1,
             "empty_scene_image_id": empty_id,
-            "empty_scene_size": {"width": 120, "height": 80},
+            "empty_scene_size": {"width": 72, "height": 48},
             "placements": [
                 {
                     "id": "placement_001",
@@ -280,7 +259,7 @@ def test_final_scene_import_route_uses_scene_package_final_scene(tmp_path: Path)
     )
     client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene",
-        files={"file": ("final.png", _png_bytes(width=120, height=80), "image/png")},
+        files={"file": ("final.png", _png_bytes(width=72, height=48), "image/png")},
     )
 
     response = client.post(

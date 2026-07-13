@@ -6,7 +6,7 @@ import type { EmptySceneImageUploadInput } from "../api";
 import { scenePackageMediaUrl } from "../scenePackageMedia";
 import type { ChapterScenePackage } from "../types";
 import { CoursePlannerStatusBadge } from "./CoursePlannerChrome";
-import { readableSceneMediaName } from "./mediaDisplayNames";
+import { promptLineageLabel, readableSceneMediaName } from "./mediaDisplayNames";
 
 type EmptySceneImagesPanelProps = {
   scenePackage: ChapterScenePackage;
@@ -66,6 +66,9 @@ export function EmptySceneImagesPanel({
                   <div>
                     <h3 title={image.original_filename}>{imageName}</h3>
                     <p>{image.width} x {image.height}</p>
+                    <CoursePlannerStatusBadge tone={image.prompt_snapshot.trim() ? "neutral" : "warning"}>
+                      {promptLineageLabel(image.prompt_snapshot)}
+                    </CoursePlannerStatusBadge>
                   </div>
                   {isCurrent ? <CoursePlannerStatusBadge tone="success">Current Empty Scene</CoursePlannerStatusBadge> : null}
                 </div>

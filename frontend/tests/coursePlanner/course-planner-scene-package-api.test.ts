@@ -9,12 +9,13 @@ import {
   deleteChapterAsset,
   duplicateChapterAsset,
   fetchChapterScenePackage,
+  generateChapterPromptPackage,
   listGeneratedChapterAssets,
   lockFinalChapterScene,
   materializeGeneratedChapterAsset,
   saveChapterSceneAssembly,
   selectEmptySceneImage,
-  updateChapterScenePrompt,
+  updateChapterCastSelection,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
@@ -41,7 +42,9 @@ describe("course planner scene package API client", () => {
       "tasks",
     ]);
     expect(scenePackage.chapter_id).toBe("chapter_breakfast_kitchen");
-    expect(scenePackage.prompt.prompt_text).toContain("breakfast");
+    expect(scenePackage.schema_version).toBe(2);
+    expect(scenePackage.current_prompt_package?.complete_scene_prompt).toContain("breakfast");
+    expect(scenePackage.selected_character_ip_ids).toEqual(["child_ip_001"]);
   });
 
   it("uses scene-package routes and keeps the new package contract in snake_case", async () => {
@@ -55,7 +58,12 @@ describe("course planner scene package API client", () => {
     }) as typeof fetch;
 
     const packageResult = await fetchChapterScenePackage("chapter_001", fetcher);
-    const promptResult = await updateChapterScenePrompt("chapter_001", promptPatchInput(), fetcher);
+    const castResult = await updateChapterCastSelection("chapter_001", ["character_001"], fetcher);
+    const generationResult = await generateChapterPromptPackage(
+      "chapter_001",
+      { feedback: "Make the action clearer." },
+      fetcher,
+    );
     const emptyFile = new File(["empty"], "empty.png", { type: "image/png" });
     const emptyResult = await uploadEmptySceneImage("chapter_001", emptyFile, emptySceneUploadInput(), fetcher);
     const selectedResult = await selectEmptySceneImage("chapter_001", "empty_scene_001", fetcher);
@@ -72,7 +80,8 @@ describe("course planner scene package API client", () => {
 
     expect(calls.map((call) => [call.input, call.init?.method ?? "GET"])).toEqual([
       ["/api/course-planner/chapters/chapter_001/scene-package", "GET"],
-      ["/api/course-planner/chapters/chapter_001/scene-package/prompt", "PATCH"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/cast-selection", "PUT"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/prompt-package/generate", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/empty-scene-images", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/current-empty-scene", "POST"],
       ["/api/course-planner/chapters/chapter_001/scene-package/complete-images", "POST"],
@@ -80,13 +89,14 @@ describe("course planner scene package API client", () => {
       ["/api/course-planner/chapters/chapter_001/scene-package/assembly", "PUT"],
       ["/api/course-planner/chapters/chapter_001/scene-package/final-scene", "POST"],
     ]);
-    expect(JSON.parse(String(calls[1].init?.body))).toEqual(promptPatchRequestPayload());
-    expect(JSON.parse(String(calls[3].init?.body))).toEqual({ emptySceneImageId: "empty_scene_001" });
-    expect(JSON.parse(String(calls[6].init?.body))).toEqual(assemblyManifestFixture());
+    expect(JSON.parse(String(calls[1].init?.body))).toEqual({ characterIpIds: ["character_001"] });
+    expect(JSON.parse(String(calls[2].init?.body))).toEqual({ feedback: "Make the action clearer." });
+    expect(JSON.parse(String(calls[4].init?.body))).toEqual({ emptySceneImageId: "empty_scene_001" });
+    expect(JSON.parse(String(calls[7].init?.body))).toEqual(assemblyManifestFixture());
     expect(packageResult.chapter_id).toBe("chapter_001");
-    expect(packageResult.prompt.prompt_text).toBe("Low-shadow room scene.");
-    expect(packageResult.prompt_confirmations.avoid_objects_reviewed).toBe(true);
-    expect(promptResult.target_objects[0].description).toBe("Yellow cover.");
+    expect(castResult.selected_character_ip_ids).toEqual(["character_001"]);
+    expect(generationResult.scenePackage.current_prompt_package?.generation_feedback).toBe("Make the action clearer.");
+    expect(generationResult.task.status).toBe("succeeded");
     expect(emptyResult.empty_scene_images[0].reference_snapshot.reference_image_ids).toEqual(["reference_001", "reference_002"]);
     expect(selectedResult.current_empty_scene_image_id).toBe("empty_scene_001");
     expect(completeResult.complete_images[0].generation_note).toBe("brighter morning light");
@@ -224,7 +234,7 @@ describe("course planner scene package API client", () => {
     expect(assetBody.get("linkedTargetObjectId")).toBe("target_object_001");
   });
 
-  it("sends only supplied optional fields when patching chapter scene prompt", async () => {
+  it("sends an explicit empty cast selection as an atomic draft update", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ input: String(input), init });
@@ -234,11 +244,11 @@ describe("course planner scene package API client", () => {
       });
     }) as typeof fetch;
 
-    await updateChapterScenePrompt("chapter_001", { promptText: "Brighter breakfast room." }, fetcher);
+    await updateChapterCastSelection("chapter_001", [], fetcher);
 
     expect(calls).toHaveLength(1);
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      promptText: "Brighter breakfast room.",
+      characterIpIds: [],
     });
   });
 
@@ -255,42 +265,6 @@ function scenePackageFetcher() {
   }) as typeof fetch & { calls: Array<[string, RequestInit | undefined]> };
   fetcher.calls = calls;
   return fetcher;
-}
-
-function promptPatchInput() {
-  return {
-    promptText: "Low-shadow room scene.",
-    sceneSpatialContract: "Bed against back wall, desk by window, floor kept clear.",
-    targetObjects: [
-      {
-        label: "book",
-        description: "Yellow cover.",
-        priority: "required" as const,
-      },
-    ],
-    avoidObjects: [{ label: "shattered glass", description: "unsafe prop" }],
-    promptConfirmations: {
-      avoidObjectsReviewed: true,
-    },
-  };
-}
-
-function promptPatchRequestPayload() {
-  return {
-    promptText: "Low-shadow room scene.",
-    sceneSpatialContract: "Bed against back wall, desk by window, floor kept clear.",
-    targetObjects: [
-      {
-        label: "book",
-        description: "Yellow cover.",
-        priority: "required",
-      },
-    ],
-    avoidObjects: [{ label: "shattered glass", description: "unsafe prop" }],
-    promptConfirmations: {
-      avoidObjectsReviewed: true,
-    },
-  };
 }
 
 function emptySceneUploadInput() {
@@ -314,8 +288,26 @@ function scenePackageResponseFor(input: string, init?: RequestInit): unknown {
   if (input.endsWith("/scene-package") && (!init || init.method === "GET")) {
     return { scenePackage: scenePackageFixture() };
   }
-  if (input.endsWith("/scene-package/prompt") && init?.method === "PATCH") {
-    return { scenePackage: scenePackageFixture() };
+  if (input.endsWith("/scene-package/cast-selection") && init?.method === "PUT") {
+    return {
+      scenePackage: {
+        ...scenePackageFixture(),
+        selected_character_ip_ids: JSON.parse(String(init.body)).characterIpIds,
+      },
+    };
+  }
+  if (input.endsWith("/scene-package/prompt-package/generate") && init?.method === "POST") {
+    const feedback = JSON.parse(String(init.body)).feedback;
+    return {
+      scenePackage: {
+        ...scenePackageFixture(),
+        current_prompt_package: {
+          ...scenePackageFixture().current_prompt_package,
+          generation_feedback: feedback,
+        },
+      },
+      task: { id: "task_prompt_001", status: "succeeded" },
+    };
   }
   if (input.endsWith("/scene-package/empty-scene-images") && init?.method === "POST") {
     return { scenePackage: scenePackageFixture() };
@@ -358,12 +350,29 @@ function scenePackageResponseFor(input: string, init?: RequestInit): unknown {
 
 function scenePackageFixture() {
   return {
+    schema_version: 2,
     chapter_id: "chapter_001",
     current_empty_scene_image_id: "empty_scene_001",
-    prompt: promptFixture(),
-    prompt_confirmations: promptConfirmationsFixture(),
-    cast_assignments: castAssignmentFixtures(),
-    reference_selections: referenceSelectionFixtures(),
+    selected_character_ip_ids: ["character_001"],
+    scene_style_reference_id: "scene_style_001",
+    current_prompt_package: {
+      empty_scene_prompt: "Low-shadow empty room scene.",
+      complete_scene_prompt: "Low-shadow room scene with the selected character reading.",
+      scene_spatial_contract: "Bed against back wall, desk by window, floor kept clear.",
+      cast_directions: [{ character_ip_id: "character_001", action: "Read the book." }],
+      reference_snapshot: {
+        character_model_sheets: [{
+          character_ip_id: "character_001",
+          model_sheet_id: "reference_001",
+        }],
+        scene_style_reference_id: "scene_style_001",
+        scene_style_image_id: "reference_002",
+        current_empty_scene_image_id: "empty_scene_001",
+        global_reference_image_ids: [],
+      },
+      generation_feedback: "",
+      generated_at: "2026-07-03T08:00:00Z",
+    },
     target_objects: targetObjectFixtures(),
     target_object_exemptions: [],
     avoid_objects: avoidObjectFixtures(),
@@ -373,43 +382,6 @@ function scenePackageFixture() {
     assembly: assemblyManifestFixture(),
     final_scene: finalSceneFixture(),
   };
-}
-
-function promptFixture() {
-  return {
-    prompt_text: "Low-shadow room scene.",
-    scene_spatial_contract: "Bed against back wall, desk by window, floor kept clear.",
-    updated_at: "2026-07-03T08:00:00Z",
-  };
-}
-
-function promptConfirmationsFixture() {
-  return {
-    avoid_objects_reviewed: true,
-    style_reference_mode: "confirmed_empty",
-  };
-}
-
-function castAssignmentFixtures() {
-  return [
-    {
-      id: "cast_assignment_001",
-      character_ip_id: "character_001",
-      role_label: "lead",
-      action_intent: "Reaches for cloth.",
-      reference_image_ids: ["reference_001"],
-    },
-  ];
-}
-
-function referenceSelectionFixtures() {
-  return [
-    {
-      id: "reference_selection_001",
-      reference_image_id: "reference_001",
-      prompt_role: "style",
-    },
-  ];
 }
 
 function targetObjectFixtures() {

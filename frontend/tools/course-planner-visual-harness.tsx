@@ -32,6 +32,10 @@ import { PlanningBriefPanel } from "../src/features/coursePlanner/components/Pla
 import { SceneCategoryList } from "../src/features/coursePlanner/components/SceneCategoryList";
 import { SelectedChapterSequence } from "../src/features/coursePlanner/components/SelectedChapterSequence";
 import { GlobalReferenceLibraryDrawer } from "../src/features/coursePlanner/components/GlobalReferenceLibraryDrawer";
+import {
+  chapterPromptStatus,
+  chapterPromptStatusLabel,
+} from "../src/features/coursePlanner/domain/chapterPromptStatus";
 import { coursePlannerVisualReferenceFixture } from "../tests/coursePlanner/coursePlannerVisualReferenceFixtures";
 
 type VisualView =
@@ -69,6 +73,7 @@ if (isLibraryView(view)) {
 function CoursePlannerVisualHarness() {
   const [scenePackage, setScenePackage] = useState(fixture.scenePackage);
   const saveTimestampRevisionRef = useRef(0);
+  const promptStatus = chapterPromptStatus(scenePackage, fixture.characterIps, fixture.sceneStyles);
 
   const resolveScenePackage = useCallback(async (nextScenePackage: ChapterScenePackage | null = scenePackage) => {
     if (nextScenePackage) {
@@ -116,24 +121,29 @@ function CoursePlannerVisualHarness() {
               backTo="/course-planner"
               backLabel="Back to board"
               title={fixture.chapter.title}
-              status={<CoursePlannerStatusBadge label="Final locked" tone="success" />}
+              status={(
+                <CoursePlannerStatusBadge
+                  label={chapterPromptStatusLabel(promptStatus)}
+                  tone={promptStatus === "prompt_ready" ? "success" : "warning"}
+                />
+              )}
             />
             <div className="chapter-workspace-route-body">
               <ChapterSceneStudio
                 asyncStatus={{}}
                 chapter={fixture.chapter}
                 characterIps={fixture.characterIps}
+                isGeneratingPrompt={false}
                 sceneStyles={fixture.sceneStyles}
                 scenePackage={scenePackage}
-                onAssignCharacterIp={() => resolveScenePackage()}
                 onClearSceneStyle={() => resolveScenePackage()}
                 onDeleteCompleteSceneImage={() => resolveScenePackage()}
+                onGeneratePrompt={() => resolveScenePackage()}
                 onImportCompleteImage={() => resolveScenePackage()}
                 onLockFinal={() => resolveScenePackage()}
                 onSelectEmptySceneImage={() => resolveScenePackage()}
-                onRemoveCharacterIp={() => resolveScenePackage()}
+                onSelectCharacters={() => resolveScenePackage()}
                 onSelectSceneStyle={() => resolveScenePackage()}
-                onUpdatePrompt={() => resolveScenePackage()}
                 onUploadCompleteSceneImage={() => resolveScenePackage()}
                 onUploadEmptySceneImage={() => resolveScenePackage()}
               />

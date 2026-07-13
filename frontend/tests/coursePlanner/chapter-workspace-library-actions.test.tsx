@@ -2,7 +2,6 @@ import "./assemblyEditorDependencyMocks";
 import {
   describe,
   expect,
-  fireEvent,
   it,
   screen,
   userEvent,
@@ -45,14 +44,17 @@ describe("Chapter Scene Studio library and run actions", () => {
   });
 
   it("keeps chapter asset actions behind the Assembly editor entry point", async () => {
+    const readyPackage = scenePackageWithTwoPlacements();
     const view = renderChapterWorkspace({
-      scenePackage: studioScenePackageFixture({
+      scenePackage: {
+        ...readyPackage,
+        current_prompt_package: null,
         complete_images: [{
-          ...studioScenePackageFixture().complete_images[0],
+          ...readyPackage.complete_images[0],
           pipeline_run_id: "run_complete_scene_001",
           pipeline_run_status: "ready",
         }],
-      }),
+      },
     });
 
     try {
@@ -60,6 +62,8 @@ describe("Chapter Scene Studio library and run actions", () => {
       expect(screen.getByRole("link", { name: "Open Assembly Editor" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Upload Scene Asset" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Add from Run/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Lock Final" })).toBeDisabled();
+      expect(screen.getByText("Generate a current Prompt Package before locking Final.")).toBeInTheDocument();
     } finally {
       view.restore();
     }
@@ -68,7 +72,12 @@ describe("Chapter Scene Studio library and run actions", () => {
   it("confirms before deleting a Complete Scene Image", async () => {
     const user = userEvent.setup();
     let deletedCompleteImageId: string | null = null;
-    const scenePackage = studioScenePackageFixture();
+    const basePackage = studioScenePackageFixture();
+    const scenePackage = studioScenePackageFixture({
+      current_prompt_package: null,
+      empty_scene_images: basePackage.empty_scene_images.map((image) => ({ ...image, prompt_snapshot: "" })),
+      complete_images: basePackage.complete_images.map((image) => ({ ...image, prompt_snapshot: "" })),
+    });
     const view = renderChapterWorkspace({
       scenePackage,
       deleteCompleteSceneImage: (_input, _init) => {
@@ -97,7 +106,7 @@ describe("Chapter Scene Studio library and run actions", () => {
     }
   });
 
-  it("only consumes global library records and can bind a second character", async () => {
+  it("only consumes global library records and atomically selects a second character", async () => {
     const user = userEvent.setup();
     const view = renderChapterWorkspace({
       scenePackage: studioScenePackageFixture(),
@@ -109,16 +118,17 @@ describe("Chapter Scene Studio library and run actions", () => {
     });
 
     try {
-      const libraryPanel = await screen.findByRole("region", { name: "Library selection" });
-      expect(within(libraryPanel).queryByRole("button", { name: /创建|上传|编辑|删除/i })).not.toBeInTheDocument();
-      expect(within(libraryPanel).getByText("暖色绘本室内")).toBeInTheDocument();
-      expect(within(libraryPanel).getByRole("option", { name: "妈妈" })).toBeInTheDocument();
+      const promptPanel = await screen.findByRole("region", { name: "Prompt Generation" });
+      expect(within(promptPanel).queryByRole("button", { name: /创建|上传|编辑|删除/i })).not.toBeInTheDocument();
+      expect(within(promptPanel).getByRole("option", { name: "暖色绘本室内" })).toBeInTheDocument();
 
-      fireEvent.change(within(libraryPanel).getByLabelText("Action"), { target: { value: "整理餐桌" } });
-      await user.click(within(libraryPanel).getByRole("button", { name: "Bind Character IP" }));
+      const parentOption = within(promptPanel).getByRole("checkbox", { name: "妈妈" });
+      expect(parentOption).not.toBeChecked();
+      await user.click(parentOption);
 
-      await waitFor(() => expect(within(libraryPanel).getByRole("heading", { name: "妈妈" })).toBeInTheDocument());
-      expect(within(libraryPanel).getAllByRole("button", { name: "解除" })).toHaveLength(2);
+      await waitFor(() => expect(parentOption).toBeChecked());
+      expect(within(promptPanel).getByText("2 of 2 selected")).toBeInTheDocument();
+      expect(within(promptPanel).queryByText(/Role|Action|Bind Character IP|解除/)).not.toBeInTheDocument();
     } finally {
       view.restore();
     }
@@ -204,7 +214,17 @@ describe("Chapter Scene Studio library and run actions", () => {
   it("uploads scene images without frontend-owned prompt snapshots", async () => {
     const user = userEvent.setup();
     const seenUploads = { empty: false, complete: false };
-    const scenePackage = studioScenePackageFixture();
+    const basePackage = studioScenePackageFixture();
+    const scenePackage = studioScenePackageFixture({
+      empty_scene_images: basePackage.empty_scene_images.map((image) => ({
+        ...image,
+        prompt_snapshot: "",
+      })),
+      complete_images: basePackage.complete_images.map((image) => ({
+        ...image,
+        prompt_snapshot: "",
+      })),
+    });
     const view = renderChapterWorkspace({
       scenePackage,
       uploadEmptySceneImage: (_input, init) => {
@@ -227,6 +247,7 @@ describe("Chapter Scene Studio library and run actions", () => {
     try {
       const emptyPanel = await screen.findByRole("region", { name: "Empty scene images" });
       const completePanel = await screen.findByRole("region", { name: "Complete scene images" });
+      expect(screen.getAllByText("无 Prompt lineage")).toHaveLength(2);
       const emptyInput = emptyPanel.querySelector<HTMLInputElement>('input[type="file"]');
       const completeInput = completePanel.querySelector<HTMLInputElement>('input[type="file"]');
 

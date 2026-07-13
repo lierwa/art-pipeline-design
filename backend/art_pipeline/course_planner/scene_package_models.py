@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -8,12 +8,6 @@ from art_pipeline.course_planner.media_storage_paths import (
     validate_relative_media_storage_path_value,
 )
 from art_pipeline.course_planner.models import CoursePlannerModel
-
-
-class ChapterScenePrompt(CoursePlannerModel):
-    prompt_text: str = ""
-    scene_spatial_contract: str = ""
-    updated_at: str | None = None
 
 
 class TargetObjectItem(CoursePlannerModel):
@@ -42,15 +36,34 @@ class TargetObjectExemption(CoursePlannerModel):
         return stripped
 
 
-class PromptReadinessConfirmation(CoursePlannerModel):
-    avoid_objects_reviewed: bool = False
-
-
-class ChapterCastAssignment(CoursePlannerModel):
-    id: str = Field(min_length=1)
+class GeneratedChapterCastDirection(CoursePlannerModel):
     character_ip_id: str = Field(min_length=1)
-    role_label: str = Field(min_length=1)
-    action_intent: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+
+
+class CharacterModelSheetSnapshot(CoursePlannerModel):
+    character_ip_id: str = Field(min_length=1)
+    model_sheet_id: str = Field(min_length=1)
+
+
+class GeneratedChapterPromptReferenceSnapshot(CoursePlannerModel):
+    character_model_sheets: list[CharacterModelSheetSnapshot] = Field(
+        default_factory=list
+    )
+    scene_style_reference_id: str | None = None
+    scene_style_image_id: str | None = None
+    current_empty_scene_image_id: str | None = None
+    global_reference_image_ids: list[str] = Field(default_factory=list)
+
+
+class GeneratedChapterPromptPackage(CoursePlannerModel):
+    empty_scene_prompt: str = Field(min_length=1)
+    complete_scene_prompt: str = Field(min_length=1)
+    scene_spatial_contract: str = Field(min_length=1)
+    cast_directions: list[GeneratedChapterCastDirection] = Field(default_factory=list)
+    reference_snapshot: GeneratedChapterPromptReferenceSnapshot
+    generation_feedback: str = ""
+    generated_at: str = Field(min_length=1)
 
 
 class AssemblyTransform(CoursePlannerModel):
@@ -210,16 +223,14 @@ class FinalChapterScene(ScenePackageMediaRecord):
 
 
 class ChapterScenePackage(CoursePlannerModel):
+    schema_version: Literal[2] = 2
     chapter_id: str = Field(min_length=1)
     current_empty_scene_image_id: str | None = None
-    prompt: ChapterScenePrompt = Field(default_factory=ChapterScenePrompt)
-    prompt_confirmations: PromptReadinessConfirmation = Field(
-        default_factory=PromptReadinessConfirmation
-    )
-    cast_assignments: list[ChapterCastAssignment] = Field(default_factory=list)
+    selected_character_ip_ids: list[str] = Field(default_factory=list, max_length=2)
     # WHY: Chapter 只能选择一个全局场景风格；单值外键直接表达业务基数，
     # 不再通过通用 prompt role 列表推导“哪个引用才是风格”。
     scene_style_reference_id: str | None = None
+    current_prompt_package: GeneratedChapterPromptPackage | None = None
     target_objects: list[TargetObjectItem] = Field(default_factory=list)
     target_object_exemptions: list[TargetObjectExemption] = Field(default_factory=list)
     avoid_objects: list[AvoidObjectItem] = Field(default_factory=list)
@@ -228,6 +239,37 @@ class ChapterScenePackage(CoursePlannerModel):
     complete_images: list[CompleteSceneImage] = Field(default_factory=list)
     chapter_assets: list[ChapterAsset] = Field(default_factory=list)
     final_scene: FinalChapterScene | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or value.get("schema_version") == 2:
+            return value
+        migrated = dict(value)
+        assignments = migrated.pop("cast_assignments", [])
+        selected_ids = list(migrated.get("selected_character_ip_ids", []))
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                continue
+            character_ip_id = assignment.get("character_ip_id")
+            if character_ip_id and character_ip_id not in selected_ids:
+                selected_ids.append(character_ip_id)
+        # WHY: v1 的 role/action 与 Prompt Facts 已被证明是重复事实源；迁移只保留
+        # 可追溯的全局角色选择和生产资产，方向文本必须由下一次 AI 生成重新建立。
+        for legacy_field in (
+            "prompt",
+            "prompt_confirmations",
+            "reference_selections",
+        ):
+            migrated.pop(legacy_field, None)
+        migrated.update(
+            {
+                "schema_version": 2,
+                "selected_character_ip_ids": selected_ids,
+                "current_prompt_package": None,
+            }
+        )
+        return migrated
 
     @model_validator(mode="after")
     def _prune_stale_target_object_references(self) -> "ChapterScenePackage":
@@ -263,9 +305,4 @@ from art_pipeline.course_planner.scene_package_assembly_validation import (
     frontmost_layer_id,
     validate_assembly_manifest,
     validate_assembly_manifest_structure,
-)
-from art_pipeline.course_planner.scene_package_prompt_projection import (
-    build_complete_prompt,
-    build_empty_scene_prompt,
-    is_prompt_ready,
 )

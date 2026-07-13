@@ -30,9 +30,8 @@ export type ChapterWorkspaceFetchMockOptions = {
   sceneStyles?: SceneStyleReference[];
   fetchScenePackage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   selectSceneStyle?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  removeCharacterIp?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  assignCharacterIp?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
-  updateScenePrompt?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  selectCharacters?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
+  generatePrompt?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   selectEmptySceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
   uploadCompleteSceneImage?: (input: RequestInfo | URL, init: RequestInit | undefined) => Promise<Response> | Response;
@@ -127,13 +126,9 @@ async function handleScenePackageMockRoutes(
   if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/scene-style-reference`) && init?.method === "DELETE") {
     return jsonResponse({ scenePackage: recordNextPackage(context, { ...scenePackage, scene_style_reference_id: null }) });
   }
-  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/cast-assignments`) && init?.method === "POST") {
-    return options.assignCharacterIp?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, await appendCastAssignment(scenePackage, init)) });
-  }
-  if (path.includes(`/chapters/${scenePackage.chapter_id}/scene-package/cast-assignments/`) && init?.method === "DELETE") {
-    const characterIpId = decodeURIComponent(path.split("/cast-assignments/")[1] ?? "");
-    const next = { ...scenePackage, cast_assignments: scenePackage.cast_assignments.filter((item) => item.character_ip_id !== characterIpId) };
-    return options.removeCharacterIp?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, next) });
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/cast-selection`) && init?.method === "PUT") {
+    return options.selectCharacters?.(input, init)
+      ?? jsonResponse({ scenePackage: recordNextPackage(context, await selectCharacters(scenePackage, init)) });
   }
   return handleScenePackageMediaMockRoutes(context, input, path, init);
 }
@@ -145,8 +140,8 @@ async function handleScenePackageMediaMockRoutes(
   init: RequestInit | undefined,
 ): Promise<Response | null> {
   const { options, scenePackage } = context;
-  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/prompt`) && init?.method === "PATCH") {
-    return options.updateScenePrompt?.(input, init) ?? jsonResponse({ scenePackage: await patchScenePrompt(context, scenePackage, init) });
+  if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/prompt-package/generate`) && init?.method === "POST") {
+    return options.generatePrompt?.(input, init) ?? jsonResponse(await generatePromptPackage(context, scenePackage, init));
   }
   if (path.endsWith(`/chapters/${scenePackage.chapter_id}/scene-package/empty-scene-images`) && init?.method === "POST") {
     return options.uploadEmptySceneImage?.(input, init) ?? jsonResponse({ scenePackage: recordNextPackage(context, appendEmptySceneImage(scenePackage, init)) });
@@ -188,26 +183,36 @@ async function handleScenePackageAssetMockRoutes(
   return null;
 }
 
-async function patchScenePrompt(context: ChapterWorkspaceMockContext, current: ChapterScenePackage, init: RequestInit | undefined) {
-  const body = await parseJsonBody<{
-    promptText: string;
-    sceneSpatialContract?: string;
-    targetObjects?: ChapterScenePackage["target_objects"];
-    avoidObjects?: ChapterScenePackage["avoid_objects"];
-    promptConfirmations?: ChapterScenePackage["prompt_confirmations"];
-  }>(init);
+async function generatePromptPackage(
+  context: ChapterWorkspaceMockContext,
+  current: ChapterScenePackage,
+  init: RequestInit | undefined,
+) {
+  const body = await parseJsonBody<{ feedback: string }>(init);
+  const previous = current.current_prompt_package;
+  if (!previous) {
+    throw new Error("Prompt generation fixture requires a selected prompt setup.");
+  }
   context.scenePackage = {
     ...current,
-    prompt: {
-      prompt_text: body.promptText,
-      scene_spatial_contract: body.sceneSpatialContract ?? current.prompt.scene_spatial_contract,
-      updated_at: "2026-07-03T11:05:00Z",
+    current_prompt_package: {
+      ...previous,
+      generation_feedback: body.feedback,
+      generated_at: "2026-07-03T11:05:00Z",
     },
-    target_objects: body.targetObjects ?? current.target_objects,
-    avoid_objects: body.avoidObjects ?? current.avoid_objects,
-    prompt_confirmations: body.promptConfirmations ?? current.prompt_confirmations,
   };
-  return context.scenePackage;
+  return {
+    scenePackage: context.scenePackage,
+    task: {
+      id: "task_prompt_001",
+      kind: "generate_chapter_prompt_package",
+      status: "succeeded",
+      target: { chapterId: current.chapter_id },
+      createdAt: "2026-07-03T11:05:00Z",
+      updatedAt: "2026-07-03T11:05:00Z",
+      error: null,
+    },
+  };
 }
 
 function recordNextPackage(context: ChapterWorkspaceMockContext, next: ChapterScenePackage): ChapterScenePackage {
@@ -262,19 +267,11 @@ async function selectSceneStyle(current: ChapterScenePackage, init: RequestInit 
   };
 }
 
-async function appendCastAssignment(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
-  const body = await parseJsonBody<{ characterIpId: string; roleLabel: string; actionIntent: string }>(init);
+async function selectCharacters(current: ChapterScenePackage, init: RequestInit | undefined): Promise<ChapterScenePackage> {
+  const body = await parseJsonBody<{ characterIpIds: string[] }>(init);
   return {
     ...current,
-    cast_assignments: [
-      ...current.cast_assignments,
-      {
-        id: `cast_assignment_${String(current.cast_assignments.length + 1).padStart(3, "0")}`,
-        character_ip_id: body.characterIpId,
-        role_label: body.roleLabel,
-        action_intent: body.actionIntent,
-      },
-    ],
+    selected_character_ip_ids: body.characterIpIds,
   };
 }
 
@@ -458,7 +455,7 @@ function lockFinalScene(current: ChapterScenePackage): ChapterScenePackage {
       // WHY: smoke test helper 要模拟“锁定终稿后冻结快照”的边界；
       // 这里直接沿用当前 package 事实，避免 helper 自己发明第二套投影规则。
       assembly_snapshot: current.assembly,
-      prompt_snapshot: current.prompt.prompt_text,
+      prompt_snapshot: current.current_prompt_package?.complete_scene_prompt ?? "",
       reference_snapshot: snapshot(current.complete_images.at(-1)?.reference_snapshot.reference_image_ids ?? [], current.current_empty_scene_image_id, ""),
       created_at: "2026-07-03T11:09:00Z",
     },

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScenePackCreateRequest(BaseModel):
@@ -29,48 +29,10 @@ class CandidateBatchRequest(BaseModel):
     feedback: str = ""
 
 
-class TargetObjectRequest(BaseModel):
+class GenerateChapterPromptPackageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str | None = Field(default=None, min_length=1)
-    label: str = Field(min_length=1)
-    description: str = ""
-    priority: Literal["core", "required", "recommended"] = "required"
-
-
-class AvoidObjectRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    label: str = Field(min_length=1)
-    description: str = ""
-
-
-class PromptReadinessConfirmationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    avoid_objects_reviewed: bool = Field(alias="avoidObjectsReviewed")
-
-
-class ChapterScenePromptPatchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    prompt_text: str = Field(alias="promptText")
-    scene_spatial_contract: str | None = Field(
-        default=None,
-        alias="sceneSpatialContract",
-    )
-    target_objects: list[TargetObjectRequest] | None = Field(
-        default=None,
-        alias="targetObjects",
-    )
-    avoid_objects: list[AvoidObjectRequest] | None = Field(
-        default=None,
-        alias="avoidObjects",
-    )
-    prompt_confirmations: PromptReadinessConfirmationRequest | None = Field(
-        default=None,
-        alias="promptConfirmations",
-    )
+    feedback: str = ""
 
 
 class ChapterSceneStyleReferenceRequest(BaseModel):
@@ -79,12 +41,22 @@ class ChapterSceneStyleReferenceRequest(BaseModel):
     scene_style_reference_id: str = Field(alias="sceneStyleReferenceId", min_length=1)
 
 
-class ChapterCastAssignmentRequest(BaseModel):
+class ChapterCastSelectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    character_ip_id: str = Field(alias="characterIpId", min_length=1)
-    role_label: str = Field(alias="roleLabel", min_length=1)
-    action_intent: str = Field(alias="actionIntent", min_length=1)
+    character_ip_ids: list[str] = Field(
+        alias="characterIpIds",
+        max_length=2,
+    )
+
+    @field_validator("character_ip_ids")
+    @classmethod
+    def _require_unique_character_ids(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("characterIpIds must not contain duplicate ids.")
+        if any(not character_ip_id.strip() for character_ip_id in value):
+            raise ValueError("characterIpIds must not contain empty ids.")
+        return value
 
 
 class ChapterSeedRequest(BaseModel):

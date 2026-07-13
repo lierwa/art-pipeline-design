@@ -30,7 +30,7 @@ describe("Course Planner route navigation", () => {
       window.history.pushState({}, "", "/course-planner");
       render(<App />);
 
-      const banner = await screen.findByRole("banner");
+      const banner = await screen.findByRole("banner", { name: "Course Planner" });
       expect(within(banner).getByRole("heading", { name: "Course Planner" })).toBeInTheDocument();
       expect(within(banner).getByRole("navigation", { name: /product areas/i })).toBeInTheDocument();
       expect(await screen.findByRole("heading", { name: "Scene Pack / Chapter Board" })).toBeInTheDocument();
@@ -49,12 +49,15 @@ describe("Course Planner route navigation", () => {
       window.history.pushState({}, "", "/course-planner/chapters/chapter_breakfast_kitchen");
       render(<App />);
 
-      const banner = await screen.findByRole("banner");
+      const banner = await screen.findByRole("banner", { name: "Course Planner" });
       expect(within(banner).getByRole("heading", { name: "Course Planner" })).toBeInTheDocument();
       const workspace = await screen.findByRole("main");
       expect(within(workspace).getByRole("link", { name: "Back to board" })).toHaveAttribute("href", "/course-planner");
-      expect(within(workspace).getByText("室内家庭篇 / Chapter Scene Studio")).toBeInTheDocument();
+      await within(workspace).findByRole("region", { name: "Prompt Generation" });
       expect(within(workspace).getAllByRole("heading", { name: "早餐厨房" }).length).toBeGreaterThan(0);
+      const pageHeader = within(workspace).getByRole("heading", { name: "早餐厨房" })
+        .closest(".course-planner-workspace-header");
+      expect(within(pageHeader as HTMLElement).getByRole("status")).toHaveTextContent("Prompt ready");
     } finally {
       restoreFetch();
       window.history.pushState({}, "", "/");
@@ -70,7 +73,7 @@ describe("Course Planner route navigation", () => {
       window.history.pushState({}, "", "/course-planner/chapters/chapter_breakfast_kitchen/assembly");
       render(<App />);
 
-      const banner = await screen.findByRole("banner");
+      const banner = await screen.findByRole("banner", { name: "Course Planner" });
       expect(within(banner).getByRole("heading", { name: "Course Planner" })).toBeInTheDocument();
       const workspace = await screen.findByRole("region", { name: "Assembly workspace" });
       expect(within(workspace).getByRole("link", { name: "Back to Chapter" })).toHaveAttribute(
@@ -94,7 +97,7 @@ describe("Course Planner route navigation", () => {
       window.history.pushState({}, "", "/course-planner/chapters/chapter_breakfast_kitchen/assembly");
       render(<App />);
 
-      const banner = await screen.findByRole("banner");
+      const banner = await screen.findByRole("banner", { name: "Course Planner" });
       const workspace = await screen.findByRole("region", { name: "Assembly workspace" });
       const shell = banner.closest(".app-shell");
       expect(shell).toHaveClass("course-planner-shell");
@@ -133,8 +136,7 @@ describe("Course Planner route navigation", () => {
         "href",
         "/course-planner/chapters/chapter_breakfast_kitchen",
       );
-      expect(await within(workspace).findByRole("status", { name: /loading/i })).toBeInTheDocument();
-      expect(within(workspace).queryByText(/^Loading$/)?.closest(".course-planner-page-header__actions")).toBeTruthy();
+      expect(within(workspace).getByText(/^Loading$/).closest(".course-planner-workspace-header__actions")).toBeTruthy();
       expect(within(workspace).getByText("Assembly")).toBeInTheDocument();
       expect(within(workspace).getByText("早餐厨房")).toBeInTheDocument();
     } finally {

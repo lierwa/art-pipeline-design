@@ -31,6 +31,8 @@ describe("Course Planner visual screenshot tool", () => {
     expect(script).toContain("view=assembly-drawer");
     expect(script).toContain("course-planner-assembly-editor-normal-reference.png");
     expect(script).toContain("course-planner-assembly-generated-assets-drawer-overlay-on-current-reference.png");
+    expect(script).toContain("textContent.includes('Prompt Generation')");
+    expect(script).not.toContain("textContent.includes('Prompt Facts')");
     expect(script).not.toContain("placement-editor-reference-imagegen.png");
     expect(harness).toContain("[aria-label='Import generated assets']");
   });

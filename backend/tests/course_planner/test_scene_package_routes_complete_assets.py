@@ -70,7 +70,9 @@ def test_upload_complete_image_records_projected_snapshot(client: TestClient) ->
     complete_image = upload_response.json()["scenePackage"]["complete_images"][0]
     assert complete_image["width"] == 96
     assert complete_image["height"] == 64
-    assert "Low-shadow room scene." in complete_image["prompt_snapshot"]
+    assert complete_image["prompt_snapshot"] == (
+        "A complete bedroom scene with 团团 arranging the book."
+    )
     assert complete_image["generation_note"] == "brighter morning light"
     assert complete_image["empty_scene_image_id"] == empty_scene_id
 
@@ -100,7 +102,9 @@ def test_upload_complete_image_does_not_accept_reference_override_as_snapshot_so
 
     assert response.status_code == 200
     complete = response.json()["scenePackage"]["complete_images"][0]
-    assert complete["reference_snapshot"]["reference_image_ids"] == []
+    reference_ids = complete["reference_snapshot"]["reference_image_ids"]
+    assert len(reference_ids) == 2
+    assert "reference_missing" not in reference_ids
 
 
 def test_direct_scene_asset_upload_materializes_asset_without_run_lineage(
@@ -145,19 +149,13 @@ def test_direct_scene_asset_upload_rejects_unknown_target_object(
 def test_lock_final_scene_uploads_composed_png_and_records_snapshot(
     client: TestClient,
 ) -> None:
-    chapter_id = _create_chapter(client)
-    empty_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
-        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
-    )
-    empty_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
-    client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
-        json={"emptySceneImageId": empty_id},
-    )
+    chapter_id, empty_id = _create_selected_empty_scene(client)
     asset_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
-        data={"displayName": "抱枕"},
+        data={
+            "displayName": "抱枕",
+            "linkedTargetObjectId": "target_object_001",
+        },
         files={"file": ("pillow.png", _png_bytes(width=32, height=32), "image/png")},
     )
     asset_id = asset_response.json()["scenePackage"]["chapter_assets"][0]["id"]
@@ -195,25 +193,16 @@ def test_lock_final_scene_uploads_composed_png_and_records_snapshot(
     assert final_scene["height"] == 80
 
 
-def test_lock_final_scene_allows_zero_placements_without_required_targets(
+def test_lock_final_scene_rejects_zero_placements(
     client: TestClient,
 ) -> None:
-    chapter_id = _create_chapter(client)
-    empty_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
-        files={"file": ("empty.png", _png_bytes(width=120, height=80), "image/png")},
-    )
-    empty_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
-    client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
-        json={"emptySceneImageId": empty_id},
-    )
+    chapter_id, empty_id = _create_selected_empty_scene(client)
     client.put(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/assembly",
         json={
             "schema_version": 1,
             "empty_scene_image_id": empty_id,
-            "empty_scene_size": {"width": 120, "height": 80},
+            "empty_scene_size": {"width": 72, "height": 48},
             "placements": [],
             "groups": [],
             "layer_order": [],
@@ -222,10 +211,8 @@ def test_lock_final_scene_allows_zero_placements_without_required_targets(
 
     response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/final-scene",
-        files={"file": ("final.png", _png_bytes(width=120, height=80), "image/png")},
+        files={"file": ("final.png", _png_bytes(width=72, height=48), "image/png")},
     )
 
-    assert response.status_code == 200
-    final_scene = response.json()["scenePackage"]["final_scene"]
-    assert final_scene["assembly_snapshot"]["placements"] == []
-    assert final_scene["placed_assets"] == []
+    assert response.status_code == 409
+    assert "at least one placement" in response.json()["detail"]

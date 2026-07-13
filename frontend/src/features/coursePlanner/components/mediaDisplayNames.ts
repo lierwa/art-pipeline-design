@@ -4,6 +4,10 @@ export function readableSceneMediaName(originalFilename: string, fallback: strin
   return normalizeHumanText(originalFilename.replace(/\.[^.]+$/, "")) ?? fallback;
 }
 
+export function promptLineageLabel(promptSnapshot: string): string {
+  return promptSnapshot.trim() ? "Prompt lineage" : "无 Prompt lineage";
+}
+
 export function normalizeHumanText(value: string): string | null {
   const normalized = value.replace(/[_-]+/g, " ").trim();
   if (!normalized || UUID_STEM_PATTERN.test(normalized)) {

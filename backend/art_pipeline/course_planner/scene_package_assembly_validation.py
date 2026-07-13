@@ -41,6 +41,8 @@ def validate_assembly_manifest_structure(package: ChapterScenePackage) -> list[s
 
 def validate_assembly_manifest_readiness(package: ChapterScenePackage) -> list[str]:
     errors = validate_assembly_manifest_structure(package)
+    if not package.assembly.placements:
+        errors.append("Assembly manifest must contain at least one placement.")
     errors.extend(_target_object_coverage_errors(package))
     return errors
 

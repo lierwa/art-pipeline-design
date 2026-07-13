@@ -36,7 +36,8 @@ def test_scene_package_defaults_to_clean_studio_state() -> None:
     assert package.chapter_assets == []
     assert package.assembly.empty_scene_image_id is None
     assert package.final_scene is None
-    assert package.cast_assignments == []
+    assert package.selected_character_ip_ids == []
+    assert package.current_prompt_package is None
     assert package.scene_style_reference_id is None
     assert package.avoid_objects == []
     assert package.target_object_exemptions == []
@@ -193,7 +194,11 @@ def test_target_object_references_prune_stale_exemptions_and_asset_links() -> No
 def test_scene_package_rejects_legacy_generic_reference_selection_lane() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ChapterScenePackage.model_validate(
-            {"chapter_id": "chapter_001", "reference_selections": []}
+            {
+                "schema_version": 2,
+                "chapter_id": "chapter_001",
+                "reference_selections": [],
+            }
         )
 
 @pytest.mark.parametrize(

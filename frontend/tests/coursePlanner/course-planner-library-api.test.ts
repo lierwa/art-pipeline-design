@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "../app/appTestHarness";
 
 import {
-  assignCharacterIpToChapter,
   characterModelSheetUrl,
   clearChapterSceneStyleReference,
   createCharacterIp,
@@ -13,6 +12,7 @@ import {
   sceneStyleReferenceImageUrl,
   selectChapterSceneStyleReference,
   updateCharacterIp,
+  updateChapterCastSelection,
   updateSceneStyleReference,
 } from "../../src/features/coursePlanner/api";
 
@@ -60,30 +60,24 @@ describe("course planner global library API client", () => {
     );
   });
 
-  it("binds only character IDs and one scene style ID at Chapter scope", async () => {
+  it("saves one atomic character selection and one scene style ID at Chapter scope", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ input: String(input), init });
       return responseFor(String(input), init);
     }) as typeof fetch;
 
-    await assignCharacterIpToChapter("chapter_001", {
-      characterIpId: "character_ip_001",
-      roleLabel: "main",
-      actionIntent: "sorts breakfast items",
-    }, fetcher);
+    await updateChapterCastSelection("chapter_001", ["character_ip_001"], fetcher);
     await selectChapterSceneStyleReference("chapter_001", "scene_style_001", fetcher);
     await clearChapterSceneStyleReference("chapter_001", fetcher);
 
     expect(calls.map((call) => [call.input, call.init?.method])).toEqual([
-      ["/api/course-planner/chapters/chapter_001/scene-package/cast-assignments", "POST"],
+      ["/api/course-planner/chapters/chapter_001/scene-package/cast-selection", "PUT"],
       ["/api/course-planner/chapters/chapter_001/scene-package/scene-style-reference", "PUT"],
       ["/api/course-planner/chapters/chapter_001/scene-package/scene-style-reference", "DELETE"],
     ]);
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      characterIpId: "character_ip_001",
-      roleLabel: "main",
-      actionIntent: "sorts breakfast items",
+      characterIpIds: ["character_ip_001"],
     });
     expect(JSON.parse(String(calls[1].init?.body))).toEqual({
       sceneStyleReferenceId: "scene_style_001",
@@ -142,17 +136,12 @@ function sceneStyleFixture() {
 
 function scenePackageFixture() {
   return {
+    schema_version: 2,
     chapter_id: "chapter_001",
     current_empty_scene_image_id: null,
-    prompt: { prompt_text: "Breakfast scene.", scene_spatial_contract: "", updated_at: null },
-    prompt_confirmations: { avoid_objects_reviewed: true },
-    cast_assignments: [{
-      id: "cast_assignment_001",
-      character_ip_id: "character_ip_001",
-      role_label: "main",
-      action_intent: "sorts breakfast items",
-    }],
+    selected_character_ip_ids: ["character_ip_001"],
     scene_style_reference_id: "scene_style_001",
+    current_prompt_package: null,
     target_objects: [],
     target_object_exemptions: [],
     avoid_objects: [],

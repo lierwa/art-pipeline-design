@@ -394,7 +394,8 @@ describe("Chapter Scene Studio assembly autosave retry and refresh paths", () =>
 
     expect(positionXInput).toHaveValue(308);
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
-    const conflictStatus = screen.getByRole("status");
+    const conflictStatus = screen.getByText("Conflict").closest(".course-planner-inline-error");
+    expect(conflictStatus).not.toBeNull();
     expect(conflictStatus).toHaveTextContent(
       "New package data arrived from the server. Retry overwrites the newer server assembly with your local draft.",
     );

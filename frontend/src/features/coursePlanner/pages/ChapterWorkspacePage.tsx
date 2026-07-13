@@ -1,6 +1,6 @@
 import { useParams } from "react-router";
 
-import { isAssemblyReady } from "../assembly/assemblyReadiness";
+import { chapterPromptStatus, chapterPromptStatusLabel } from "../domain/chapterPromptStatus";
 import { ChapterSceneStudio } from "../components/ChapterSceneStudio";
 import {
   CoursePlannerPageHeader,
@@ -13,7 +13,7 @@ import "../components/chapterStudioShared.css";
 import "../components/chapterMediaPanels.css";
 import "../components/chapterStudioLayout.css";
 import { useChapterScenePackageWorkspace } from "../hooks/useChapterScenePackageWorkspace";
-import type { ChapterScenePackage } from "../types";
+import type { ChapterScenePackage, CharacterIpProfile, SceneStyleReference } from "../types";
 
 type ScenePackageLoadState = ReturnType<typeof useChapterScenePackageWorkspace>["loadState"];
 
@@ -39,8 +39,21 @@ export function ChapterWorkspacePage() {
         title={chapter.title}
         status={(
           <CoursePlannerStatusBadge
-            label={studioStatusLabel(loadState, scenePackage)}
-            tone={studioStatusTone(loadState, scenePackage)}
+            label={studioStatusLabel(
+              loadState,
+              scenePackage,
+              characterIps,
+              sceneStyles,
+              workspace.isGeneratingPrompt,
+            )}
+            tone={studioStatusTone(
+              loadState,
+              scenePackage,
+              characterIps,
+              sceneStyles,
+              workspace.isGeneratingPrompt,
+            )}
+            role="status"
           />
         )}
       />
@@ -64,11 +77,11 @@ export function ChapterWorkspacePage() {
             characterIps={characterIps}
             sceneStyles={sceneStyles}
             asyncStatus={asyncStatus}
-            onAssignCharacterIp={handlers.handleAssignCharacterIp}
+            isGeneratingPrompt={workspace.isGeneratingPrompt}
             onClearSceneStyle={handlers.handleClearSceneStyle}
-            onRemoveCharacterIp={handlers.handleRemoveCharacterIp}
+            onGeneratePrompt={handlers.handleGeneratePrompt}
+            onSelectCharacters={handlers.handleSelectCharacters}
             onSelectSceneStyle={handlers.handleSelectSceneStyle}
-            onUpdatePrompt={handlers.handleUpdatePrompt}
             onUploadEmptySceneImage={handlers.handleUploadEmptySceneImage}
             onSelectEmptySceneImage={handlers.handleSelectEmptySceneImage}
             onUploadCompleteSceneImage={handlers.handleUploadCompleteSceneImage}
@@ -82,7 +95,13 @@ export function ChapterWorkspacePage() {
   );
 }
 
-export function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage: ChapterScenePackage | null): string {
+export function studioStatusLabel(
+  loadState: ScenePackageLoadState,
+  scenePackage: ChapterScenePackage | null,
+  characterIps: CharacterIpProfile[] = [],
+  sceneStyles: SceneStyleReference[] = [],
+  isGeneratingPrompt = false,
+): string {
   if (loadState === "loading" && !scenePackage) {
     return "Loading";
   }
@@ -95,21 +114,17 @@ export function studioStatusLabel(loadState: ScenePackageLoadState, scenePackage
   if (scenePackage.final_scene) {
     return "Final locked";
   }
-  if (isAssemblyReady(scenePackage)) {
-    return "Assembly ready";
-  }
-  if (scenePackage.complete_images.length > 0) {
-    return "Images ready";
-  }
-  if (scenePackage.empty_scene_images.length > 0) {
-    return "Empty scene ready";
-  }
-  return "Prompt drafted";
+  return chapterPromptStatusLabel(
+    chapterPromptStatus(scenePackage, characterIps, sceneStyles, isGeneratingPrompt),
+  );
 }
 
 export function studioStatusTone(
   loadState: ScenePackageLoadState,
   scenePackage: ChapterScenePackage | null,
+  characterIps: CharacterIpProfile[] = [],
+  sceneStyles: SceneStyleReference[] = [],
+  isGeneratingPrompt = false,
 ): "neutral" | "warning" | "success" | "danger" {
   if (loadState === "error") {
     return "danger";
@@ -117,7 +132,12 @@ export function studioStatusTone(
   if (scenePackage?.final_scene) {
     return "success";
   }
-  if ((scenePackage && isAssemblyReady(scenePackage)) || scenePackage?.empty_scene_images.length) {
+  if (scenePackage && chapterPromptStatus(
+    scenePackage,
+    characterIps,
+    sceneStyles,
+    isGeneratingPrompt,
+  ) === "needs_regeneration") {
     return "warning";
   }
   return "neutral";

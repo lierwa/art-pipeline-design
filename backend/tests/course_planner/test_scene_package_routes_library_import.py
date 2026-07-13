@@ -6,7 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from route_test_helpers import client_with_provider
-from scene_package_route_test_helpers import _create_chapter, _png_bytes
+from scene_package_route_test_helpers import (
+    _create_chapter,
+    _create_character_ip,
+    _create_scene_style,
+    _png_bytes,
+    _post_character_ip,
+    _post_scene_style,
+)
 
 
 @pytest.fixture
@@ -104,24 +111,18 @@ def test_chapter_selects_multiple_characters_and_one_scene_style(client: TestCli
     second = _create_character_ip(client, "妈妈")
     style = _create_scene_style(client, "暖色绘本室内")
 
-    for character, role in ((first, "child"), (second, "parent")):
-        response = client.post(
-            f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-assignments",
-            json={
-                "characterIpId": character["id"],
-                "roleLabel": role,
-                "actionIntent": "整理房间",
-            },
-        )
-        assert response.status_code == 200
+    cast_response = client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-selection",
+        json={"characterIpIds": [first["id"], second["id"]]},
+    )
     style_response = client.put(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/scene-style-reference",
         json={"sceneStyleReferenceId": style["id"]},
     )
 
     package = style_response.json()["scenePackage"]
-    assert [item["character_ip_id"] for item in package["cast_assignments"]] == [first["id"], second["id"]]
-    assert all("reference_image_ids" not in item for item in package["cast_assignments"])
+    assert cast_response.status_code == 200
+    assert package["selected_character_ip_ids"] == [first["id"], second["id"]]
     assert package["scene_style_reference_id"] == style["id"]
     assert "reference_selections" not in package
 
@@ -130,12 +131,10 @@ def test_chapter_rejects_character_reference_overrides(client: TestClient) -> No
     chapter_id = _create_chapter(client)
     character = _create_character_ip(client, "团团")
 
-    response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-assignments",
+    response = client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-selection",
         json={
-            "characterIpId": character["id"],
-            "roleLabel": "child",
-            "actionIntent": "整理房间",
+            "characterIpIds": [character["id"]],
             "referenceImageIds": ["legacy_reference"],
         },
     )
@@ -147,9 +146,9 @@ def test_referenced_library_records_return_stable_delete_conflict(client: TestCl
     chapter_id = _create_chapter(client)
     character = _create_character_ip(client, "团团")
     style = _create_scene_style(client, "暖色绘本室内")
-    client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-assignments",
-        json={"characterIpId": character["id"], "roleLabel": "child", "actionIntent": "整理房间"},
+    client.put(
+        f"/api/course-planner/chapters/{chapter_id}/scene-package/cast-selection",
+        json={"characterIpIds": [character["id"]]},
     )
     client.put(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/scene-style-reference",
@@ -182,34 +181,6 @@ def test_unreferenced_delete_removes_record_but_preserves_immutable_media(client
     assert response.status_code == 204
     assert client.get("/api/course-planner/character-ips").json()["characterIps"] == []
     assert media_path.exists()
-
-
-def _post_character_ip(client: TestClient, display_name: str):
-    return client.post(
-        "/api/course-planner/character-ips",
-        data={"displayName": display_name},
-        files={"file": ("character-sheet.png", _png_bytes(width=320, height=180), "image/png")},
-    )
-
-
-def _create_character_ip(client: TestClient, display_name: str) -> dict[str, object]:
-    response = _post_character_ip(client, display_name)
-    assert response.status_code == 200
-    return response.json()["characterIp"]
-
-
-def _post_scene_style(client: TestClient, display_name: str):
-    return client.post(
-        "/api/course-planner/scene-style-references",
-        data={"displayName": display_name},
-        files={"file": ("style.png", _png_bytes(width=320, height=180), "image/png")},
-    )
-
-
-def _create_scene_style(client: TestClient, display_name: str) -> dict[str, object]:
-    response = _post_scene_style(client, display_name)
-    assert response.status_code == 200
-    return response.json()["sceneStyleReference"]
 
 
 def _media_path(client: TestClient, owner_kind: str, owner_id: str, media_id: str) -> Path:

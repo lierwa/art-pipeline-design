@@ -387,9 +387,9 @@ describe("Chapter Scene Studio assembly autosave", () => {
       if (currentScenePackage) {
         controlsRef.current?.pushScenePackage({
           ...currentScenePackage,
-          prompt: {
-            ...currentScenePackage.prompt,
-            updated_at: "2026-07-04T08:15:30Z",
+          current_prompt_package: {
+            ...currentScenePackage.current_prompt_package!,
+            generated_at: "2026-07-04T08:15:30Z",
           },
         });
       }
@@ -492,7 +492,7 @@ describe("Chapter Scene Studio assembly autosave", () => {
     });
 
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByText("Conflict").closest(".course-planner-inline-error")).toHaveTextContent(
       "New package data arrived from the server. Retry overwrites the newer server assembly with your local draft.",
     );
     expect(positionXInput).toHaveValue(308);
@@ -528,7 +528,9 @@ describe("Chapter Scene Studio assembly autosave", () => {
     await advanceAutosaveCycle();
     expect(within(assemblyEditorStatus()).getByText("Save failed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByText(
+      "Autosave exploded. Retry saves the same local manifest after the failed request.",
+    ).closest(".course-planner-inline-error")).toHaveTextContent(
       "Autosave exploded. Retry saves the same local manifest after the failed request.",
     );
     expect(placementGeometryInput(properties, "Position X")).toHaveValue(341);

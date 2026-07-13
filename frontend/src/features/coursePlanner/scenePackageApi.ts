@@ -1,11 +1,10 @@
 import type {
-  AvoidObjectItem,
+  AiTaskRecord,
   CharacterIpProfile,
   ChapterSceneAssemblyManifest,
   ChapterScenePackage,
   GeneratedChapterAsset,
   SceneStyleReference,
-  TargetObjectItem,
   WorkspaceRunImportSummary,
 } from "./types";
 import {
@@ -21,24 +20,10 @@ import type { CoursePlannerFetcher } from "./apiClient";
 
 export type GlobalLibraryCreateInput = { displayName: string; file: File };
 export type GlobalLibraryUpdateInput = { displayName?: string; file?: File };
-export type ChapterCastAssignmentInput = {
-  characterIpId: string;
-  roleLabel: string;
-  actionIntent: string;
-};
-export type ChapterScenePromptTargetObjectInput = Pick<TargetObjectItem, "label" | "description" | "priority"> & {
-  id?: string;
-};
-export type ChapterScenePromptAvoidObjectInput = Pick<AvoidObjectItem, "label" | "description">;
-export type PromptReadinessConfirmationInput = {
-  avoidObjectsReviewed: boolean;
-};
-export type ChapterScenePromptInput = {
-  promptText: string;
-  sceneSpatialContract?: string;
-  targetObjects?: ChapterScenePromptTargetObjectInput[];
-  avoidObjects?: ChapterScenePromptAvoidObjectInput[];
-  promptConfirmations?: PromptReadinessConfirmationInput;
+export type GenerateChapterPromptPackageInput = { feedback?: string };
+export type GenerateChapterPromptPackageResult = {
+  scenePackage: ChapterScenePackage;
+  task: AiTaskRecord;
 };
 export type EmptySceneImageUploadInput = Record<string, never>;
 export type CompleteImageUploadInput = {
@@ -135,33 +120,16 @@ export async function clearChapterSceneStyleReference(
   return requestScenePackage(fetcher, `${scenePackagePath(chapterId)}/scene-style-reference`, { method: "DELETE" }, "Could not clear Scene Style Reference.");
 }
 
-export async function assignCharacterIpToChapter(
+export async function updateChapterCastSelection(
   chapterId: string,
-  input: ChapterCastAssignmentInput,
+  characterIpIds: string[],
   fetcher: CoursePlannerFetcher = fetch,
 ): Promise<ChapterScenePackage> {
   return requestScenePackage(
     fetcher,
-    `${scenePackagePath(chapterId)}/cast-assignments`,
-    jsonRequest("POST", {
-      characterIpId: input.characterIpId,
-      roleLabel: input.roleLabel,
-      actionIntent: input.actionIntent,
-    }),
-    "Could not bind Character IP to Chapter.",
-  );
-}
-
-export async function removeCharacterIpFromChapter(
-  chapterId: string,
-  characterIpId: string,
-  fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterScenePackage> {
-  return requestScenePackage(
-    fetcher,
-    `${scenePackagePath(chapterId)}/cast-assignments/${encodePathPart(characterIpId)}`,
-    { method: "DELETE" },
-    "Could not unbind Character IP from Chapter.",
+    `${scenePackagePath(chapterId)}/cast-selection`,
+    jsonRequest("PUT", { characterIpIds }),
+    "Could not update Chapter cast selection.",
   );
 }
 
@@ -172,17 +140,21 @@ export async function fetchChapterScenePackage(
   return requestScenePackage(fetcher, scenePackagePath(chapterId), { method: "GET" }, "Could not load Chapter Scene Package.");
 }
 
-export async function updateChapterScenePrompt(
+export async function generateChapterPromptPackage(
   chapterId: string,
-  input: ChapterScenePromptInput,
+  input: GenerateChapterPromptPackageInput = {},
   fetcher: CoursePlannerFetcher = fetch,
-): Promise<ChapterScenePackage> {
-  return requestScenePackage(
+): Promise<GenerateChapterPromptPackageResult> {
+  const payload = await requestJson(
     fetcher,
-    `${scenePackagePath(chapterId)}/prompt`,
-    jsonRequest("PATCH", chapterScenePromptPatchBody(input)),
-    "Could not update Chapter Scene prompt.",
+    `${scenePackagePath(chapterId)}/prompt-package/generate`,
+    jsonRequest("POST", { feedback: input.feedback ?? "" }),
+    "Could not generate Chapter Prompt Package.",
   );
+  return {
+    scenePackage: payloadValue<ChapterScenePackage>(payload, "scenePackage"),
+    task: payloadValue<AiTaskRecord>(payload, "task"),
+  };
 }
 
 export async function uploadEmptySceneImage(
@@ -365,27 +337,6 @@ export async function lockFinalChapterScene(
     { method: "POST", body },
     "Could not lock Final Chapter Scene.",
   );
-}
-
-function chapterScenePromptPatchBody(input: ChapterScenePromptInput): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    promptText: input.promptText,
-  };
-  // WHY: PATCH 省略字段表示“沿用当前 chapter scene package 事实”，
-  // 只有显式传入空串或空数组时才应该清空对应内容，避免前端投影误删用户已确认的数据。
-  if (input.sceneSpatialContract !== undefined) {
-    body.sceneSpatialContract = input.sceneSpatialContract;
-  }
-  if (input.targetObjects !== undefined) {
-    body.targetObjects = input.targetObjects;
-  }
-  if (input.avoidObjects !== undefined) {
-    body.avoidObjects = input.avoidObjects;
-  }
-  if (input.promptConfirmations !== undefined) {
-    body.promptConfirmations = input.promptConfirmations;
-  }
-  return body;
 }
 
 function scenePackagePath(chapterId: string): string {

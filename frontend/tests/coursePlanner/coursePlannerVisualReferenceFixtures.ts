@@ -40,7 +40,7 @@ export function coursePlannerVisualReferenceFixture(): CoursePlannerVisualRefere
       height: 768,
       empty_scene_image_id: "visual_empty_scene_wide_kitchen",
       assembly_snapshot: lockedFinalAssembly,
-      prompt_snapshot: visualPrompt().prompt_text,
+      prompt_snapshot: visualPrompt().complete_scene_prompt,
       reference_snapshot: snapshot(
         ["reference_visual_cat_character", "reference_visual_storybook_style", "reference_visual_kitchen_scene"],
         "visual_empty_scene_wide_kitchen",
@@ -108,19 +108,12 @@ function visualReferenceScenePackageFixture(
 ): ChapterScenePackage {
   // WHY: 该 fixture 只用于让浏览器视觉 QA 与参考图可比较，不能沉淀为生产业务规则。
   return {
+    schema_version: 2,
     chapter_id: VISUAL_REFERENCE_CHAPTER_ID,
     current_empty_scene_image_id: "visual_empty_scene_wide_kitchen",
-    prompt: visualPrompt(),
-    prompt_confirmations: {
-      avoid_objects_reviewed: true,
-    },
-    cast_assignments: [{
-      id: "visual_cast_cat_mochi",
-      character_ip_id: "character_ip_mochi_cat",
-      role_label: "target cat",
-      action_intent: "Sit alert beside the breakfast island and look toward the cereal bowl.",
-    }],
+    selected_character_ip_ids: ["character_ip_mochi_cat"],
     scene_style_reference_id: "scene_style_storybook_kitchen",
+    current_prompt_package: visualPrompt(),
     target_objects: [
       {
         id: "target_object_cat",
@@ -198,9 +191,25 @@ function visualReferenceScenePackageFixture(
 
 function visualPrompt() {
   return {
-    prompt_text: "Wide storybook kitchen at breakfast time, warm sunlight, a small cat waiting by the island while breakfast items are arranged for a family morning routine.",
+    empty_scene_prompt: "Wide storybook kitchen at breakfast time with warm sunlight; no characters or detachable breakfast items.",
+    complete_scene_prompt: "Wide storybook kitchen at breakfast time, warm sunlight, a small cat waiting by the island while breakfast items are arranged for a family morning routine.",
     scene_spatial_contract: "1024x768 wide kitchen; island centered in foreground, refrigerator and sink on the back wall, window light from left, open floor area for the selected cat placement.",
-    updated_at: "2026-07-04T08:58:00Z",
+    cast_directions: [{
+      character_ip_id: "character_ip_mochi_cat",
+      action: "Sit alert beside the breakfast island and look toward the cereal bowl.",
+    }],
+    reference_snapshot: {
+      character_model_sheets: [{
+        character_ip_id: "character_ip_mochi_cat",
+        model_sheet_id: "character_model_sheet_mochi",
+      }],
+      scene_style_reference_id: "scene_style_storybook_kitchen",
+      scene_style_image_id: "scene_style_image_storybook_kitchen",
+      current_empty_scene_image_id: "visual_empty_scene_wide_kitchen",
+      global_reference_image_ids: [],
+    },
+    generation_feedback: "",
+    generated_at: "2026-07-04T08:58:00Z",
   };
 }
 

@@ -18,7 +18,7 @@ export function deriveChapterProductionStatus(scenePackage: ChapterScenePackage 
   }
 
   return {
-    hasPromptText: scenePackage.prompt.prompt_text.trim().length > 0,
+    hasPromptText: (scenePackage.current_prompt_package?.complete_scene_prompt ?? "").trim().length > 0,
     targetObjectCount: scenePackage.target_objects.length,
     // WHY: 这里统计的是已进入 assembly 的 placed asset，而不是 chapter_assets 总数；
     // Task 5 页面需要的是“是否完成摆放”的合同信号，而不是“素材库里有多少图片”。

@@ -7,15 +7,19 @@ _Avoid_: Scene, when referring to a chapter's final image package.
 
 ## Chapter Scene Package
 
-The chapter-owned image package for one playable scene. It includes the Chapter Scene Prompt, reference selections, Empty Scene Images, Complete Scene Images, Chapter Asset Pool, Chapter Scene Assembly, and Final Chapter Scene. It is a child resource of its Chapter, not a global package.
+The chapter-owned image package for one playable scene. It includes the selected Character IP ids, one Scene Style Reference selection, the current Generated Chapter Prompt Package, Empty Scene Images, Complete Scene Images, Chapter Asset Pool, Chapter Scene Assembly, and Final Chapter Scene. It is a child resource of its Chapter, not a global package.
 
-## Chapter Scene Prompt
+## Generated Chapter Prompt Package
 
-The prompt generated or authored for a chapter and used with visual references to produce scene images in ChatGPT/Image2. The prompt is an input to image creation, not the final scene package.
+The current AI-generated, read-only pair of Empty Scene Prompt and Complete Scene Prompt plus their spatial contract, selected-character directions, target/avoid objects, generation feedback, and reference snapshot. A chapter keeps only one current prompt package; uploaded images and the Final Chapter Scene preserve immutable lineage snapshots.
 
-## Prompt Projection
+## Empty Scene Prompt
 
-A copy-ready text rendering derived from Chapter Scene Package facts such as Character IP selections, references, target objects, avoid objects, Generation Notes, and the Scene Spatial Contract. It is not a separate authoring source for those facts.
+The generated prompt for the room shell, layout, camera, style, and negative constraints. It excludes characters and detachable target objects so the result can serve as the Chapter Scene Assembly background.
+
+## Complete Scene Prompt
+
+The generated prompt that includes exactly the selected Character IPs, their AI-authored actions, target objects, spatial relationships, style constraints, and the current Empty Scene Image when one exists.
 
 ## Character IP
 
@@ -30,9 +34,9 @@ _Avoid_: Character reference gallery, per-view reference set.
 
 The shared catalog of Character IPs available across all Scene Categories and Chapters. It owns each character's name and Character Model Sheet.
 
-## Chapter Cast Assignment
+## Chapter Cast Selection
 
-The chapter-specific assignment of a Character IP to a role and action intent inside a Chapter Scene Package. It may add scene-local direction, but it must reference a Character IP rather than restating the character identity as free text.
+The chapter-specific atomic selection of zero to two Character IP ids. Zero characters is a valid saved draft; prompt generation requires one or two. Role labels and action intent are not authored here: the AI generates one action for each selected character in the current Generated Chapter Prompt Package.
 
 ## Scene Style Reference
 
@@ -49,23 +53,23 @@ The Chapter-specific selection of one Scene Style Reference for its prompt packa
 
 ## Prompt Ready
 
-The state where a Chapter Scene Prompt has enough confirmed chapter facts to project a copy-ready external ChatGPT/Image2 prompt. Prompt Ready is independent from whether any generated image has been uploaded, and empty selections only count as ready when the author has explicitly confirmed that nothing is needed for that area.
+The state where the current Generated Chapter Prompt Package still matches the Chapter Seed, selected Character IPs and their current Model Sheets, selected Scene Style Reference, current Empty Scene Image, and global reference images used to generate it. Changing any of those inputs makes the package stale and requires regeneration.
 
-## Confirmed Empty Selection
+## Prompt Lineage
 
-An author-confirmed decision that a normally optional list, such as avoid objects or extra style references, should be empty for the current chapter. It is different from an unreviewed blank value.
+The immutable prompt text and reference snapshot captured when an Empty Scene Image, Complete Scene Image, or Final Chapter Scene is created. A locally prepared upload may explicitly have no prompt lineage, but Lock Final requires a current valid Generated Chapter Prompt Package.
 
 ## Target Object List
 
-The author-editable list of objects the Complete Scene Images should try to include for a chapter. It is the chapter's authority for desired object coverage and may be initialized from chapter planning data, but the Chapter Scene Package owns the current list.
+The AI-generated list of detachable objects the Complete Scene Images should include and the Chapter Scene Assembly must cover or explicitly exempt. The current Generated Chapter Prompt Package is its single authority; Assembly consumes the package-level projection rather than maintaining another target list.
 
 ## Avoid Object List
 
-The author-editable list of objects, hazards, or visual patterns that should not appear in Complete Scene Images for a chapter. It is the chapter's authority for object-level exclusions.
+The AI-generated list of objects, hazards, or visual patterns that should not appear. The current Generated Chapter Prompt Package is its single authority.
 
-## Generation Note
+## Generation Feedback
 
-A short, optional instruction for one external ChatGPT/Image2 generation attempt. It can emphasize or nudge the next result, but it is not the authority for target objects, avoid objects, Character IP identity, references, or the Scene Spatial Contract.
+Optional user feedback passed back to the AI when regenerating the entire prompt package. Prompts remain read-only; feedback requests a coherent replacement instead of editing one projected string in place.
 
 ## Chapter Scene Package Progress
 

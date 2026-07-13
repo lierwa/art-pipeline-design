@@ -507,7 +507,7 @@ function readyExpression(waitFor) {
     return "document.body.textContent.includes('Loading Scene Package') && document.body.textContent.includes('Loading the latest chapter scene-package snapshot.')";
   }
   if (waitFor === "chapter") {
-    return "Boolean(document.querySelector('.chapter-scene-studio')) && document.body.textContent.includes('Prompt Facts') && document.body.textContent.includes('Final')";
+    return "Boolean(document.querySelector('.chapter-scene-studio')) && document.body.textContent.includes('Prompt Generation') && document.body.textContent.includes('Final')";
   }
   if (waitFor === "assembly") {
     return "document.body.textContent.includes('Assembly') && document.body.textContent.includes('Placement')";

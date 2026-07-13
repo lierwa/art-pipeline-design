@@ -20,6 +20,7 @@ import {
   characterIpFixture,
   coursePlannerState,
   referenceImageFixture,
+  STUDIO_CHAPTER_ID,
   studioChapterFixture,
   studioScenePackageFixture,
   studioScenePackFixture,
@@ -165,7 +166,7 @@ describe("Chapter scene-package workspace stale load guard", () => {
     };
     const firstScenePackage = scenePackageFor(firstChapter.id);
     const secondLoad = deferred<Response>();
-    const promptMutation = deferred<Response>();
+    const promptGeneration = deferred<Response>();
     let latestWorkspace: ChapterWorkspaceSnapshot | null = null;
     const restoreFetch = installFetchMock(async (input, init) => {
       const path = String(input);
@@ -184,8 +185,8 @@ describe("Chapter scene-package workspace stale load guard", () => {
       if (path.endsWith(`/chapters/${secondChapter.id}/scene-package`) && (!init || init.method === "GET")) {
         return secondLoad.promise;
       }
-      if (path.endsWith(`/chapters/${firstChapter.id}/scene-package/prompt`) && init?.method === "PATCH") {
-        return promptMutation.promise;
+      if (path.endsWith(`/chapters/${firstChapter.id}/scene-package/prompt-package/generate`) && init?.method === "POST") {
+        return promptGeneration.promise;
       }
       throw new Error(`Unexpected fetch call: ${path}`);
     });
@@ -207,11 +208,11 @@ describe("Chapter scene-package workspace stale load guard", () => {
       }
 
       void act(() => {
-        void firstChapterWorkspace.handlers.handleUpdatePrompt({ promptText: "Late A prompt" });
+        void firstChapterWorkspace.handlers.handleGeneratePrompt("Clarify the action.");
       });
       await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith(
-        `/api/course-planner/chapters/${firstChapter.id}/scene-package/prompt`,
-        expect.objectContaining({ method: "PATCH" }),
+        `/api/course-planner/chapters/${firstChapter.id}/scene-package/prompt-package/generate`,
+        expect.objectContaining({ method: "POST" }),
       ));
 
       view.rerender(
@@ -227,18 +228,79 @@ describe("Chapter scene-package workspace stale load guard", () => {
         { method: "GET" },
       ));
 
-      await resolveScenePackage(promptMutation, {
-        ...firstScenePackage,
-        prompt: {
-          ...firstScenePackage.prompt,
-          prompt_text: "Late A prompt",
-        },
+      await act(async () => {
+        promptGeneration.resolve(jsonResponse({
+          scenePackage: {
+            ...firstScenePackage,
+            current_prompt_package: {
+              ...firstScenePackage.current_prompt_package!,
+              complete_scene_prompt: "Late A prompt",
+            },
+          },
+          task: { id: "task_late", status: "succeeded" },
+        }));
+        await Promise.resolve();
+        await Promise.resolve();
       });
 
       expect(screen.getByTestId("loaded-scene-package")).not.toHaveTextContent(firstChapter.id);
       expect(screen.getByTestId("loaded-scene-package")).toHaveTextContent("loading");
     } finally {
       restoreFetch();
+    }
+  });
+
+  it("coalesces duplicate prompt generation requests for the active chapter", async () => {
+    const generation = deferred<Response>();
+    const harness = renderPromptGenerationHarness(() => generation.promise);
+
+    try {
+      await waitFor(() => expect(screen.getByTestId("loaded-scene-package")).toHaveTextContent(STUDIO_CHAPTER_ID));
+      const workspace = harness.workspace();
+
+      let firstRequest: Promise<ChapterScenePackage | null> | null = null;
+      let secondRequest: Promise<ChapterScenePackage | null> | null = null;
+      act(() => {
+        firstRequest = workspace.handlers.handleGeneratePrompt("");
+        secondRequest = workspace.handlers.handleGeneratePrompt("ignored duplicate");
+      });
+
+      expect(firstRequest).toBe(secondRequest);
+      await waitFor(() => expect(screen.getByTestId("prompt-generating")).toHaveTextContent("true"));
+      expect(harness.generationCalls()).toBe(1);
+
+      generation.resolve(jsonResponse({
+        scenePackage: studioScenePackageFixture(),
+        task: { id: "task_prompt", status: "succeeded" },
+      }));
+      await act(async () => {
+        await firstRequest;
+      });
+      expect(screen.getByTestId("prompt-generating")).toHaveTextContent("false");
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("preserves the last successful prompt package when generation fails", async () => {
+    const harness = renderPromptGenerationHarness(() => new Response(
+      JSON.stringify({ detail: "AI generation failed" }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    ));
+
+    try {
+      await waitFor(() => expect(screen.getByTestId("loaded-scene-package")).toHaveTextContent(STUDIO_CHAPTER_ID));
+      const previousPrompt = screen.getByTestId("complete-prompt").textContent;
+
+      await act(async () => {
+        await harness.workspace().handlers.handleGeneratePrompt("Try again");
+      });
+
+      expect(screen.getByTestId("loaded-scene-package")).toHaveTextContent(STUDIO_CHAPTER_ID);
+      expect(screen.getByTestId("complete-prompt")).toHaveTextContent(previousPrompt ?? "");
+      expect(harness.generationCalls()).toBe(1);
+    } finally {
+      harness.restore();
     }
   });
 });
@@ -259,10 +321,68 @@ function ChapterWorkspaceProbe({
   }, [onWorkspace, workspace]);
 
   return (
-    <div data-testid="loaded-scene-package">
-      {workspace.scenePackage?.chapter_id ?? workspace.loadState}
-    </div>
+    <>
+      <div data-testid="loaded-scene-package">
+        {workspace.scenePackage?.chapter_id ?? workspace.loadState}
+      </div>
+      <div data-testid="prompt-generating">{String(workspace.isGeneratingPrompt)}</div>
+      <div data-testid="complete-prompt">
+        {workspace.scenePackage?.current_prompt_package?.complete_scene_prompt ?? ""}
+      </div>
+    </>
   );
+}
+
+function renderPromptGenerationHarness(
+  generate: () => Promise<Response> | Response,
+) {
+  const chapter = studioChapterFixture();
+  const scenePack = studioScenePackFixture();
+  const state = coursePlannerState({ chapter, scenePack });
+  let latestWorkspace: ChapterWorkspaceSnapshot | null = null;
+  let generationCallCount = 0;
+  const restoreFetch = installFetchMock(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/course-planner/state" && (!init || init.method === "GET")) {
+      return jsonResponse(state);
+    }
+    if (path === "/api/course-planner/character-ips" && (!init || init.method === "GET")) {
+      return jsonResponse({ characterIps: [characterIpFixture()] });
+    }
+    if (path === "/api/course-planner/scene-style-references" && (!init || init.method === "GET")) {
+      return jsonResponse({ sceneStyleReferences: [referenceImageFixture()] });
+    }
+    if (path.endsWith(`/chapters/${chapter.id}/scene-package`) && (!init || init.method === "GET")) {
+      return jsonResponse({ scenePackage: studioScenePackageFixture() });
+    }
+    if (path.endsWith(`/chapters/${chapter.id}/scene-package/prompt-package/generate`) && init?.method === "POST") {
+      generationCallCount += 1;
+      return generate();
+    }
+    throw new Error(`Unexpected fetch call: ${path}`);
+  });
+  const rendered = render(
+    <ChapterWorkspaceProbe
+      chapterId={chapter.id}
+      onWorkspace={(workspace) => {
+        latestWorkspace = workspace;
+      }}
+    />,
+  );
+
+  return {
+    generationCalls: () => generationCallCount,
+    restore: () => {
+      rendered.unmount();
+      restoreFetch();
+    },
+    workspace: () => {
+      if (!latestWorkspace) {
+        throw new Error("Expected a loaded Chapter workspace.");
+      }
+      return latestWorkspace;
+    },
+  };
 }
 
 async function resolveScenePackage(
@@ -277,11 +397,12 @@ async function resolveScenePackage(
 }
 
 function scenePackageFor(chapterId: string) {
+  const base = studioScenePackageFixture();
   return studioScenePackageFixture({
     chapter_id: chapterId,
-    prompt: {
-      ...studioScenePackageFixture().prompt,
-      prompt_text: `Prompt for ${chapterId}`,
+    current_prompt_package: {
+      ...base.current_prompt_package!,
+      complete_scene_prompt: `Prompt for ${chapterId}`,
     },
   });
 }

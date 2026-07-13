@@ -15,7 +15,7 @@ from art_pipeline.workspace.store import (
     write_state,
 )
 from scene_package_route_test_helpers import (
-    _create_chapter,
+    _create_selected_empty_scene,
     _png_bytes,
 )
 
@@ -26,31 +26,7 @@ def _create_chapter_with_complete_run(
     complete_id: str = "complete_scene_001",
     run_id: str = "run_current",
 ) -> str:
-    chapter_id = _create_chapter(client)
-    prompt_response = client.patch(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
-        json={
-            "promptText": "Low-shadow room scene.",
-            "sceneSpatialContract": "Bed against back wall, desk by window, floor kept clear.",
-            "targetObjects": [{"label": "book", "priority": "required"}],
-            "avoidObjects": [{"label": "shattered glass"}],
-            "promptConfirmations": {
-                "avoidObjectsReviewed": True,
-            },
-        },
-    )
-    assert prompt_response.status_code == 200, prompt_response.text
-    empty_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/empty-scene-images",
-        files={"file": ("empty.png", _png_bytes(width=72, height=48), "image/png")},
-    )
-    assert empty_response.status_code == 200, empty_response.text
-    empty_scene_id = empty_response.json()["scenePackage"]["empty_scene_images"][0]["id"]
-    select_response = client.post(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/current-empty-scene",
-        json={"emptySceneImageId": empty_scene_id},
-    )
-    assert select_response.status_code == 200, select_response.text
+    chapter_id, _ = _create_selected_empty_scene(client)
     response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/complete-images",
         files={"file": ("complete.png", _png_bytes(width=96, height=64), "image/png")},

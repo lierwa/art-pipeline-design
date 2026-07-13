@@ -12,6 +12,7 @@ from art_pipeline.course_planner.scene_package_errors import (
     ScenePackagePreconditionError,
     ScenePackageValidationError,
 )
+from art_pipeline.course_planner.ai_tasks import AiTaskFailedError
 from art_pipeline.course_planner.store import CoursePlannerStore
 
 ModelT = TypeVar("ModelT")
@@ -31,7 +32,12 @@ async def parse_json_model(request: Request, model_type: type[ModelT]) -> ModelT
     try:
         return model_type.model_validate(body)
     except ValidationError as exc:
-        raise HTTPException(status_code=400, detail=exc.errors()) from exc
+        # WHY: Pydantic 自定义校验会把原始异常对象放进 ctx；HTTP JSON 边界只需
+        # 稳定的 loc/type/msg，去掉不可序列化上下文可避免“校验失败又触发 500”。
+        raise HTTPException(
+            status_code=400,
+            detail=exc.errors(include_context=False),
+        ) from exc
 
 
 async def json_object_from_request(request: Request) -> dict[str, object]:
@@ -49,6 +55,20 @@ async def json_object_from_request(request: Request) -> dict[str, object]:
 
 def scene_package_payload(package) -> dict[str, object]:
     return {"scenePackage": package.model_dump(mode="json")}
+
+
+def ai_task_http_exception(error: AiTaskFailedError) -> HTTPException:
+    public_message = (
+        "Course Planner AI task failed. Check the AI task record for diagnostics."
+    )
+    task_payload = error.task.model_dump(mode="json")
+    # WHY: provider 原始错误只进入 task record/artifact；共享 HTTP 边界投影固定摘要，
+    # 避免不同 AI 路由各自泄露 schema 或模型会话内容。
+    task_payload["error"] = public_message
+    return HTTPException(
+        status_code=502,
+        detail={"message": public_message, "task": task_payload},
+    )
 
 
 def scene_package_http_exception(

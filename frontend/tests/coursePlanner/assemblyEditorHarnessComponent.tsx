@@ -342,7 +342,7 @@ export function buildLockedFinalScene(
     height: 1024,
     empty_scene_image_id: current.current_empty_scene_image_id ?? "empty_scene_001",
     assembly_snapshot: current.assembly,
-    prompt_snapshot: current.prompt.prompt_text,
+    prompt_snapshot: current.current_prompt_package?.complete_scene_prompt ?? "",
     reference_snapshot: snapshot(
       current.complete_images.at(-1)?.reference_snapshot.reference_image_ids ?? [],
       current.current_empty_scene_image_id,

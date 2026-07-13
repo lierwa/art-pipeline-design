@@ -208,19 +208,10 @@ def test_duplicate_chapter_asset_rejects_removed_source(client: TestClient) -> N
 def test_delete_chapter_asset_marks_it_removed_and_normalizes_surviving_assembly(
     client: TestClient,
 ) -> None:
-    chapter_id, empty_scene_id, asset_id = _create_selected_empty_scene_with_asset(client)
-    prompt_response = client.patch(
-        f"/api/course-planner/chapters/{chapter_id}/scene-package/prompt",
-        json={
-            "promptText": "Low-shadow room scene.",
-            "sceneSpatialContract": "Bed against back wall, desk by window, floor kept clear.",
-            "targetObjects": [
-                {"label": "book", "priority": "required"},
-                {"label": "lamp", "priority": "required"},
-            ],
-        },
+    chapter_id, empty_scene_id, asset_id = _create_selected_empty_scene_with_asset(
+        client,
+        target_labels=("book", "lamp"),
     )
-    assert prompt_response.status_code == 200
     second_asset_response = client.post(
         f"/api/course-planner/chapters/{chapter_id}/scene-package/chapter-assets/direct-upload",
         data={"displayName": "lamp", "linkedTargetObjectId": "target_object_002"},

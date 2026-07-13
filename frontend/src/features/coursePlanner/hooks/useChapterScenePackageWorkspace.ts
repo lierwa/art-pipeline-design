@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 
 import {
-  assignCharacterIpToChapter,
   deleteChapterAsset,
   deleteCompleteSceneImage,
   duplicateChapterAsset,
   fetchChapterScenePackage,
+  generateChapterPromptPackage,
   importCompleteSceneImageToPipeline,
   listGeneratedChapterAssets,
   listCharacterIps,
@@ -14,17 +14,14 @@ import {
   materializeGeneratedChapterAsset,
   saveChapterSceneAssembly,
   clearChapterSceneStyleReference,
-  removeCharacterIpFromChapter,
   selectChapterSceneStyleReference,
   selectEmptySceneImage,
-  updateChapterScenePrompt,
+  updateChapterCastSelection,
   uploadCompleteSceneImage,
   uploadDirectChapterAsset,
   uploadEmptySceneImage,
 } from "../api";
 import type {
-  ChapterCastAssignmentInput,
-  ChapterScenePromptInput,
   CompleteImageUploadInput,
   DirectChapterAssetUploadInput,
   EmptySceneImageUploadInput,
@@ -62,7 +59,8 @@ export function useChapterScenePackageWorkspace(chapterId: string | null) {
   const planner = useCoursePlannerState();
   const { chapter, scenePack } = useChapterContext(planner, chapterId);
   const studioData = useChapterStudioData(chapter, planner.runAsyncOperation);
-  const handlers = useChapterStudioMutations(chapter, planner.runAsyncOperation, studioData);
+  const mutations = useChapterStudioMutations(chapter, planner.runAsyncOperation, studioData);
+  const { isGeneratingPrompt, ...handlers } = mutations;
 
   return {
     asyncStatus: planner.state.asyncStatus,
@@ -70,6 +68,7 @@ export function useChapterScenePackageWorkspace(chapterId: string | null) {
     characterIps: studioData.characterIps,
     errorMessage: studioData.errorMessage,
     handlers,
+    isGeneratingPrompt,
     loadState: studioData.loadState,
     sceneStyles: studioData.sceneStyles,
     scenePack,
@@ -245,14 +244,15 @@ function useChapterStudioMutations(
   studioData: ReturnType<typeof useChapterStudioData>,
 ) {
   const { applyScenePackage, applyScenePackageIfCurrent } = studioData;
+  const promptGenerationRequestRef = useRef<{
+    chapterId: string;
+    promise: Promise<ChapterScenePackage | null>;
+  } | null>(null);
+  const [promptGenerationChapterId, setPromptGenerationChapterId] = useState<string | null>(null);
   const withChapter = useCallback(
     (key: string, operation: (chapter: Chapter) => Promise<ChapterScenePackage>) =>
       chapter ? applyScenePackage(chapter.id, `scenePackage:${key}:${chapter.id}`, () => operation(chapter)) : Promise.resolve(null),
     [applyScenePackage, chapter],
-  );
-  const handleUpdatePrompt = useCallback(
-    (input: ChapterScenePromptInput) => withChapter("prompt", (item) => updateChapterScenePrompt(item.id, input)),
-    [withChapter],
   );
   const handleSelectSceneStyle = useCallback(
     (sceneStyleId: string) => withChapter("styleSelect", (item) => selectChapterSceneStyleReference(item.id, sceneStyleId)),
@@ -262,14 +262,43 @@ function useChapterStudioMutations(
     () => withChapter("styleClear", (item) => clearChapterSceneStyleReference(item.id)),
     [withChapter],
   );
-  const handleAssignCharacterIp = useCallback(
-    (input: ChapterCastAssignmentInput) => withChapter("castAssign", (item) => assignCharacterIpToChapter(item.id, input)),
+  const handleSelectCharacters = useCallback(
+    (characterIpIds: string[]) => withChapter(
+      "castSelection",
+      (item) => updateChapterCastSelection(item.id, characterIpIds),
+    ),
     [withChapter],
   );
-  const handleRemoveCharacterIp = useCallback(
-    (characterIpId: string) => withChapter("castRemove", (item) => removeCharacterIpFromChapter(item.id, characterIpId)),
-    [withChapter],
-  );
+  const handleGeneratePrompt = useCallback((feedback: string) => {
+    if (!chapter) {
+      return Promise.resolve(null);
+    }
+    const activeRequest = promptGenerationRequestRef.current;
+    if (activeRequest?.chapterId === chapter.id) {
+      return activeRequest.promise;
+    }
+    const expectedChapterId = chapter.id;
+    // WHY: Generate 是有成本的同步 AI 调用；同一 Chapter 的重复点击共享一个 Promise，
+    // 同时仍允许路由切换后的新 Chapter 发起独立请求，并由既有 chapter guard 隔离回写。
+    const promise = applyScenePackage(
+      expectedChapterId,
+      `scenePackage:promptGenerate:${expectedChapterId}`,
+      async () => (
+        await generateChapterPromptPackage(expectedChapterId, { feedback })
+      ).scenePackage,
+    ).finally(() => {
+      if (promptGenerationRequestRef.current?.promise !== promise) {
+        return;
+      }
+      promptGenerationRequestRef.current = null;
+      setPromptGenerationChapterId((current) => (
+        current === expectedChapterId ? null : current
+      ));
+    });
+    promptGenerationRequestRef.current = { chapterId: expectedChapterId, promise };
+    setPromptGenerationChapterId(expectedChapterId);
+    return promise;
+  }, [applyScenePackage, chapter]);
   const handleUploadEmptySceneImage = useCallback(
     (file: File, input: EmptySceneImageUploadInput) => withChapter("emptyUpload", (item) => uploadEmptySceneImage(item.id, file, input)),
     [withChapter],
@@ -348,23 +377,23 @@ function useChapterStudioMutations(
   }, [applyScenePackageIfCurrent, chapter, runAsyncOperation]);
 
   return {
-    handleAssignCharacterIp,
     handleClearSceneStyle,
     handleDeleteChapterAsset,
     handleDeleteCompleteSceneImage,
     handleDuplicateChapterAsset,
+    handleGeneratePrompt,
     handleImportCompleteImage,
     handleListGeneratedAssets,
     handleLockFinal,
     handleMaterializeGeneratedAsset,
-    handleRemoveCharacterIp,
     handleSaveAssembly,
     handleSelectEmptySceneImage,
+    handleSelectCharacters,
     handleSelectSceneStyle,
-    handleUpdatePrompt,
     handleUploadCompleteSceneImage,
     handleUploadDirectAsset,
     handleUploadEmptySceneImage,
+    isGeneratingPrompt: promptGenerationChapterId === chapter?.id,
   };
 }
 

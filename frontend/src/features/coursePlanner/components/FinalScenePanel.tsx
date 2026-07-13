@@ -8,6 +8,7 @@ import { scenePackageMediaUrl } from "../scenePackageMedia";
 
 type FinalScenePanelProps = {
   assemblyReadiness: AssemblyReadiness;
+  promptReady: boolean;
   scenePackage: ChapterScenePackage;
   onLockFinal: () => Promise<ChapterScenePackage | null>;
 };
@@ -15,10 +16,11 @@ type FinalScenePanelProps = {
 export function FinalScenePanel({
   assemblyReadiness,
   onLockFinal,
+  promptReady,
   scenePackage,
 }: FinalScenePanelProps) {
   const [isLocking, setIsLocking] = useState(false);
-  const ready = assemblyReadiness.is_ready;
+  const ready = assemblyReadiness.is_ready && promptReady;
   const isLocked = Boolean(scenePackage.final_scene);
   const actionLabel = isLocked ? "Replace Final" : "Lock Final";
   const actionButton = (
@@ -76,6 +78,7 @@ export function FinalScenePanel({
         </div>
         <div className="chapter-final-copy">
           <p>{scenePackage.final_scene ? `${scenePackage.final_scene.original_filename} is locked for export.` : "Lock final to generate and export final images."}</p>
+          {!promptReady ? <p>Generate a current Prompt Package before locking Final.</p> : null}
         </div>
       </div>
     </section>

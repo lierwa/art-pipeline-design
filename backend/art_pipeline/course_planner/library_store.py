@@ -320,7 +320,7 @@ class CoursePlannerLibraryStoreMixin:
                     continue
                 package = self._read_model(path, ChapterScenePackage)
                 referenced = (
-                    any(item.character_ip_id == item_id for item in package.cast_assignments)
+                    item_id in package.selected_character_ip_ids
                     if item_kind == "character"
                     else package.scene_style_reference_id == item_id
                 )

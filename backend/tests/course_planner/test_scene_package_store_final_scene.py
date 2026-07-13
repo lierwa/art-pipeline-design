@@ -18,6 +18,7 @@ from scene_package_store_helpers import (
     make_store_with_chapter_asset,
     make_store_with_prompt,
     make_store_with_selected_empty_scene,
+    seed_current_prompt_package,
 )
 
 
@@ -35,18 +36,10 @@ def test_lock_final_scene_requires_selected_empty_scene(tmp_path: Path) -> None:
         )
 
 
-def test_lock_final_scene_allows_zero_placements_when_manifest_is_ready(
+def test_lock_final_scene_rejects_zero_placements(
     tmp_path: Path,
 ) -> None:
     store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
-    package = store.read_chapter_scene_package(chapter.id)
-    store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text=package.prompt.prompt_text,
-        scene_spatial_contract=package.prompt.scene_spatial_contract,
-        target_objects=[],
-        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
-    )
     package = store.read_chapter_scene_package(chapter.id)
     store.save_chapter_scene_assembly(
         chapter.id,
@@ -59,15 +52,12 @@ def test_lock_final_scene_allows_zero_placements_when_manifest_is_ready(
         ),
     )
 
-    locked = store.lock_final_chapter_scene(
-        chapter.id,
-        image_bytes=make_png_bytes(width=96, height=64),
-        original_filename="final.png",
-    )
-
-    assert locked.final_scene is not None
-    assert locked.final_scene.assembly_snapshot.placements == []
-    assert locked.final_scene.placed_assets == []
+    with pytest.raises(ScenePackagePreconditionError, match="at least one placement"):
+        store.lock_final_chapter_scene(
+            chapter.id,
+            image_bytes=make_png_bytes(width=96, height=64),
+            original_filename="final.png",
+        )
 
 
 def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:
@@ -99,30 +89,14 @@ def test_lock_final_scene_records_snapshot(tmp_path: Path) -> None:
     assert locked.final_scene.storage_path.startswith("final_scene/")
 
 
-def test_generated_result_snapshot_keeps_media_ids_used_before_library_replacement(
+def test_upload_after_library_replacement_has_no_prompt_lineage(
     tmp_path: Path,
 ) -> None:
     store, chapter, _ = make_store_with_selected_empty_scene(tmp_path)
-    character = store.create_character_ip(
-        display_name="团团",
-        image_bytes=make_png_bytes(width=320, height=180),
-        original_filename="tuantuan-v1.png",
-    )
-    style = store.create_scene_style_reference(
-        display_name="暖色绘本室内",
-        image_bytes=make_png_bytes(width=320, height=180),
-        original_filename="warm-v1.png",
-    )
-    store.write_chapter_cast_assignment(
-        chapter.id,
-        character_ip_id=character.id,
-        role_label="child",
-        action_intent="整理房间",
-    )
-    store.set_chapter_scene_style_reference(
-        chapter.id,
-        scene_style_reference_id=style.id,
-    )
+    package = store.read_chapter_scene_package(chapter.id)
+    character = store.get_character_ip(package.selected_character_ip_ids[0])
+    assert package.scene_style_reference_id is not None
+    style = store.get_scene_style_reference(package.scene_style_reference_id)
     first = store.add_complete_scene_image(
         chapter.id,
         image_bytes=make_png_bytes(width=96, height=64),
@@ -155,10 +129,10 @@ def test_generated_result_snapshot_keeps_media_ids_used_before_library_replaceme
         character.current_model_sheet_id,
         style.current_image_id,
     ]
-    assert second.reference_snapshot.reference_image_ids == [
-        updated_character.current_model_sheet_id,
-        updated_style.current_image_id,
-    ]
+    assert updated_character.current_model_sheet_id != character.current_model_sheet_id
+    assert updated_style.current_image_id != style.current_image_id
+    assert second.prompt_snapshot == ""
+    assert second.reference_snapshot.reference_image_ids == []
 
 
 def test_lock_final_scene_rejects_missing_target_coverage_in_saved_manifest(
@@ -174,15 +148,10 @@ def test_lock_final_scene_rejects_missing_target_coverage_in_saved_manifest(
             empty_scene_size=package.assembly.empty_scene_size,
         ),
     )
-    store.update_chapter_scene_prompt(
+    seed_current_prompt_package(
+        store,
         chapter.id,
-        prompt_text=package.prompt.prompt_text,
-        scene_spatial_contract=package.prompt.scene_spatial_contract,
-        target_objects=[
-            {"label": "book"},
-            {"label": "lamp"},
-        ],
-        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
+        target_labels=("book", "lamp"),
     )
 
     with pytest.raises(
@@ -200,16 +169,10 @@ def test_lock_final_scene_captures_placed_asset_snapshot_for_every_placement(
     tmp_path: Path,
 ) -> None:
     store, chapter, first_asset = make_store_with_chapter_asset(tmp_path)
-    package = store.read_chapter_scene_package(chapter.id)
-    store.update_chapter_scene_prompt(
+    seed_current_prompt_package(
+        store,
         chapter.id,
-        prompt_text=package.prompt.prompt_text,
-        scene_spatial_contract=package.prompt.scene_spatial_contract,
-        target_objects=[
-            {"label": "book"},
-            {"label": "cloth"},
-        ],
-        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
+        target_labels=("book", "cloth"),
     )
     package_with_second_asset = store.add_direct_chapter_asset(
         chapter.id,

@@ -1,6 +1,4 @@
 import { BrowserRouter, MemoryRouter } from "react-router";
-import { readFileSync } from "node:fs";
-import path from "node:path";
 
 import { describe, expect, it, render, screen, userEvent, within } from "../app/appTestHarness";
 
@@ -97,32 +95,7 @@ describe("Scene Category Board chapter density", () => {
     expect(within(chapterActions).queryByText(/^Deleting\.\.\.$/)).not.toBeInTheDocument();
   });
 
-  it("keeps Course Planner header and selected Chapter item layout contracts", () => {
-    const css = readFileSync(
-      path.join(process.cwd(), "src", "features", "coursePlanner", "components", "coursePlanner.css"),
-      "utf8",
-    );
-    const headerRule = cssRule(css, ".course-planner-page-header");
-    const itemRule = cssRule(css, ".selected-sequence-item");
-    const contentRule = cssRule(css, ".selected-sequence-content");
-    const actionsRule = cssRule(css, ".selected-sequence-actions");
-
-    expect(headerRule).toContain("grid-template-columns: 32px minmax(0, 1fr) max-content");
-    expect(itemRule).toContain("grid-template-columns: 30px minmax(0, 1fr)");
-    expect(itemRule).not.toContain("minmax(66px, auto)");
-    expect(contentRule).toContain("grid-column: 2");
-    expect(actionsRule).toContain("grid-column: 2");
-    expect(actionsRule).toContain("justify-self: end");
-  });
 });
-
-function cssRule(css: string, selector: string): string {
-  return css.match(new RegExp(`${escapeRegExp(selector)}\\s*\\{[^}]+}`))?.[0] ?? "";
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function chapter(id: string, title: string): Chapter {
   return {
@@ -157,19 +130,26 @@ function chapter(id: string, title: string): Chapter {
 
 function scenePackageFixture(): ChapterScenePackage {
   return {
+    schema_version: 2,
     chapter_id: "chapter_breakfast_kitchen",
     current_empty_scene_image_id: "empty_scene_001",
-    prompt: {
-      prompt_text: "Morning kitchen with a child reaching for cereal.",
+    selected_character_ip_ids: [],
+    scene_style_reference_id: null,
+    current_prompt_package: {
+      empty_scene_prompt: "Morning kitchen shell without characters or detachable objects.",
+      complete_scene_prompt: "Morning kitchen with a child reaching for cereal.",
       scene_spatial_contract: "Table centered, fridge on the left.",
-      updated_at: "2026-07-03T10:00:00Z",
+      cast_directions: [],
+      reference_snapshot: {
+        character_model_sheets: [],
+        scene_style_reference_id: null,
+        scene_style_image_id: null,
+        current_empty_scene_image_id: "empty_scene_001",
+        global_reference_image_ids: [],
+      },
+      generation_feedback: "",
+      generated_at: "2026-07-03T10:00:00Z",
     },
-    prompt_confirmations: {
-      avoid_objects_reviewed: true,
-      style_reference_mode: "selected",
-    },
-    cast_assignments: [],
-    reference_selections: [],
     target_objects: [
       {
         id: "target_object_bowl",

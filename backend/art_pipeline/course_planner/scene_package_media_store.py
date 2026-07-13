@@ -29,8 +29,9 @@ from art_pipeline.course_planner.scene_package_models import (
     FinalChapterScene,
     FinalScenePlacedAssetSnapshot,
     ImageReferenceSnapshot,
-    build_complete_prompt,
-    build_empty_scene_prompt,
+)
+from art_pipeline.course_planner.scene_package_prompt_lineage import (
+    is_prompt_package_current,
 )
 from art_pipeline.workspace.store import utc_now
 
@@ -302,6 +303,10 @@ class CoursePlannerScenePackageMediaStoreMixin:
             raise ScenePackagePreconditionError(
                 "Lock Final requires a selected Empty Scene Image."
             )
+        if not self._is_current_prompt_package_valid(current):
+            raise ScenePackagePreconditionError(
+                "Lock Final requires a current valid Prompt Package."
+            )
         assembly_errors = validate_assembly_manifest(current)
         if assembly_errors:
             # WHY: Lock Final 是把当前 assembly 固化成 final_scene 的唯一入口；
@@ -329,10 +334,7 @@ class CoursePlannerScenePackageMediaStoreMixin:
             empty_scene_image_id=current.current_empty_scene_image_id,
             assembly_snapshot=current.assembly,
             placed_assets=self._build_final_scene_placed_asset_snapshots(current),
-            prompt_snapshot=build_complete_prompt(
-                current,
-                self._prompt_projection_libraries(),
-            ),
+            prompt_snapshot=self._resolve_complete_prompt_snapshot(current, None),
             reference_snapshot=self._build_reference_snapshot(
                 current,
                 current_empty_scene_image_id=current.current_empty_scene_image_id,
@@ -421,7 +423,10 @@ class CoursePlannerScenePackageMediaStoreMixin:
     ) -> str:
         if prompt_snapshot is not None:
             return prompt_snapshot
-        return build_empty_scene_prompt(package, self._prompt_projection_libraries())
+        if not self._is_current_prompt_package_valid(package):
+            return ""
+        assert package.current_prompt_package is not None
+        return package.current_prompt_package.empty_scene_prompt
 
     def _resolve_complete_prompt_snapshot(
         self,
@@ -430,7 +435,10 @@ class CoursePlannerScenePackageMediaStoreMixin:
     ) -> str:
         if prompt_snapshot is not None:
             return prompt_snapshot
-        return build_complete_prompt(package, self._prompt_projection_libraries())
+        if not self._is_current_prompt_package_valid(package):
+            return ""
+        assert package.current_prompt_package is not None
+        return package.current_prompt_package.complete_scene_prompt
 
     def _build_reference_snapshot(
         self,
@@ -438,19 +446,30 @@ class CoursePlannerScenePackageMediaStoreMixin:
         *,
         current_empty_scene_image_id: str | None = None,
     ) -> ImageReferenceSnapshot:
-        character_image_ids = [
-            self._require_character_ip(assignment.character_ip_id).current_model_sheet_id
-            for assignment in package.cast_assignments
-        ]
-        style_image_ids = (
-            [self._require_scene_style_reference(package.scene_style_reference_id).current_image_id]
-            if package.scene_style_reference_id
-            else []
+        prompt_package = (
+            package.current_prompt_package
+            if self._is_current_prompt_package_valid(package)
+            else None
         )
-        # WHY: 快照必须从 Chapter 选择解析“本次实际使用”的当前媒体 id，
-        # 不接受上传表单覆盖，否则历史结果无法证明当时使用的是哪份全局资料。
+        reference_image_ids = []
+        if prompt_package is not None:
+            prompt_snapshot = prompt_package.reference_snapshot
+            reference_image_ids = [
+                *[
+                    item.model_sheet_id
+                    for item in prompt_snapshot.character_model_sheets
+                ],
+                *(
+                    [prompt_snapshot.scene_style_image_id]
+                    if prompt_snapshot.scene_style_image_id
+                    else []
+                ),
+                *prompt_snapshot.global_reference_image_ids,
+            ]
+        # WHY: lineage 必须冻结生成时实际使用的媒体快照；没有有效 Prompt 时保持
+        # reference_image_ids 为空，从而让本地上传明确显示为无 Prompt lineage。
         return ImageReferenceSnapshot(
-            reference_image_ids=[*character_image_ids, *style_image_ids],
+            reference_image_ids=reference_image_ids,
             current_empty_scene_image_id=(
                 package.current_empty_scene_image_id
                 if current_empty_scene_image_id is None
@@ -458,13 +477,31 @@ class CoursePlannerScenePackageMediaStoreMixin:
             ),
         )
 
-    def _prompt_projection_libraries(self):
-        return (
-            self.list_character_ips(),
-            self.list_scene_style_references(),
-            self._current_library_assets(),
+    def _is_current_prompt_package_valid(
+        self,
+        package: ChapterScenePackage,
+    ) -> bool:
+        try:
+            character_model_sheet_ids = {
+                character_id: self._require_character_ip(
+                    character_id
+                ).current_model_sheet_id
+                for character_id in package.selected_character_ip_ids
+            }
+            scene_style_image_id = (
+                self._require_scene_style_reference(
+                    package.scene_style_reference_id
+                ).current_image_id
+                if package.scene_style_reference_id
+                else None
+            )
+        except ScenePackageValidationError:
+            return False
+        return is_prompt_package_current(
+            package,
+            character_model_sheet_ids=character_model_sheet_ids,
+            scene_style_image_id=scene_style_image_id,
         )
-
 
 def _validated_linked_target_object_id(
     package: ChapterScenePackage,

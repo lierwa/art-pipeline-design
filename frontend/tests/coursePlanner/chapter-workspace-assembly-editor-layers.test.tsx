@@ -745,28 +745,43 @@ function dragLayerToDropZone(
   const dropZone = within(layerTree).getByLabelText(dropLabel);
 
   expect(row).toBeInTheDocument();
+  layerTree.querySelectorAll(".assembly-layer-drop-zone").forEach((zone) => {
+    mockRect(zone, { left: 0, top: 0, width: 0, height: 0 });
+  });
   mockRect(rowSelect as HTMLElement, { left: 24, top: 24, width: 220, height: 30 });
   mockRect(dropZone, { left: 24, top: 86, width: 280, height: 12 });
-  fireEvent.mouseDown(rowSelect as HTMLElement, {
+  fireEvent.pointerDown(rowSelect as HTMLElement, {
     button: 0,
     buttons: 1,
     clientX: 34,
     clientY: 34,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
   });
-  fireEvent.mouseMove(window, {
+  fireEvent.pointerMove(document, {
     buttons: 1,
     clientX: 44,
     clientY: 44,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
   });
-  fireEvent.mouseMove(window, {
+  fireEvent.pointerMove(document, {
     buttons: 1,
     clientX: 70,
     clientY: 92,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
   });
-  fireEvent.mouseUp(window, {
+  fireEvent.pointerUp(document, {
     button: 0,
     clientX: 70,
     clientY: 92,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
   });
 }
 

@@ -1,5 +1,26 @@
 import { vi } from "vitest";
 
+// WHY: jsdom 没有 PointerEvent，而生产端 dnd-kit 依赖 PointerSensor；在依赖加载前补齐
+// 最小浏览器协议，确保 Assembly 拖放测试走真实组件事件而不是自制业务入口。
+if (!window.PointerEvent) {
+  class TestPointerEvent extends MouseEvent {
+    readonly isPrimary: boolean;
+    readonly pointerId: number;
+    readonly pointerType: string;
+
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.isPrimary = init.isPrimary ?? false;
+      this.pointerId = init.pointerId ?? 0;
+      this.pointerType = init.pointerType ?? "";
+    }
+  }
+  Object.defineProperty(window, "PointerEvent", {
+    configurable: true,
+    value: TestPointerEvent,
+  });
+}
+
 vi.mock("react-arborist", async () => {
   const React = await import("react");
 
@@ -99,4 +120,96 @@ vi.mock("react-arborist", async () => {
   });
 
   return { Tree };
+});
+
+vi.mock("@dnd-kit/core", async () => {
+  const React = await import("react");
+  type DndRecord = { id: string; data: { current: unknown } };
+  type DndHandlers = {
+    onDragEnd?: (event: { active: DndRecord; over: DndRecord | null }) => void;
+    onDragOver?: (event: { active: DndRecord; over: DndRecord | null }) => void;
+    onDragStart?: (event: { active: DndRecord }) => void;
+  };
+  const droppables = new Map<string, { data: unknown; node: HTMLElement | null }>();
+  let active: DndRecord | null = null;
+  let pending: DndRecord | null = null;
+  let handlers: DndHandlers = {};
+
+  function DndContext({ children, ...nextHandlers }: DndHandlers & { children: React.ReactNode }) {
+    handlers = nextHandlers;
+    React.useEffect(() => {
+      function startDrag() {
+        if (!pending || active) {
+          return;
+        }
+        active = pending;
+        handlers.onDragStart?.({ active });
+      }
+      function finishDrag(event: PointerEvent) {
+        if (!active) {
+          pending = null;
+          return;
+        }
+        const overEntry = [...droppables.entries()].find(([, entry]) => {
+          const rect = entry.node?.getBoundingClientRect();
+          return Boolean(rect
+            && event.clientX >= rect.left
+            && event.clientX <= rect.right
+            && event.clientY >= rect.top
+            && event.clientY <= rect.bottom);
+        });
+        const over = overEntry
+          ? { id: overEntry[0], data: { current: overEntry[1].data } }
+          : null;
+        handlers.onDragOver?.({ active, over });
+        handlers.onDragEnd?.({ active, over });
+        active = null;
+        pending = null;
+      }
+      document.addEventListener("pointermove", startDrag);
+      document.addEventListener("pointerup", finishDrag);
+      return () => {
+        document.removeEventListener("pointermove", startDrag);
+        document.removeEventListener("pointerup", finishDrag);
+        active = null;
+        pending = null;
+        droppables.clear();
+      };
+    }, []);
+    return <>{children}</>;
+  }
+
+  function useDraggable({ id, data }: { id: string; data: unknown }) {
+    return {
+      attributes: {},
+      isDragging: active?.id === id,
+      listeners: {
+        onPointerDown: () => {
+          pending = { id, data: { current: data } };
+        },
+      },
+      setNodeRef: () => undefined,
+    };
+  }
+
+  function useDroppable({ id, data }: { id: string; data: unknown }) {
+    return {
+      isOver: false,
+      setNodeRef: (node: HTMLElement | null) => {
+        droppables.set(id, { data, node });
+      },
+    };
+  }
+
+  return {
+    closestCenter: () => [],
+    DndContext,
+    DragOverlay: () => null,
+    PointerSensor: function PointerSensor() {},
+    pointerWithin: () => [],
+    useDraggable,
+    useDroppable,
+    useSensor: () => ({}),
+    useSensors: () => [],
+  };
 });

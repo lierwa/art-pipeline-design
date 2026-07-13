@@ -122,7 +122,7 @@ describe("Chapter Scene Studio assembly canvas bridge", () => {
   });
 
   it("keeps image content below the selected frame, labels, and edit affordances with standard cursors", () => {
-    const stylesCss = readFileSync(path.join(process.cwd(), "src", "styles.css"), "utf8");
+    const stylesCss = readFileSync(path.join(process.cwd(), "src", "styles.css"), "utf8").replace(/\r\n/g, "\n");
 
     expect(cssRule(stylesCss, ".canvas-object-image")).toContain("z-index: 1");
     expect(cssRule(stylesCss, ".overlay-box")).toContain("z-index: 2");

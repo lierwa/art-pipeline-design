@@ -18,6 +18,7 @@ from scene_package_store_helpers import (
     make_store_with_two_empty_scene_images_and_assembly,
     make_stub_chapter_asset,
     scene_package_assembly_json_path,
+    seed_current_prompt_package,
 )
 
 
@@ -40,117 +41,6 @@ def test_read_chapter_scene_package_lazily_creates_package(tmp_path: Path) -> No
     assert package.chapter_id == chapter.id
     assert package_json_path.exists()
     assert assembly_path.exists()
-
-
-def test_update_scene_package_prompt_persists_prompt_targets_and_avoid_objects(
-    tmp_path: Path,
-) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
-
-    package = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        scene_spatial_contract="Bed against back wall, desk by window, floor kept clear.",
-        target_objects=[
-            {"label": "book"},
-            {
-                "label": "pencil",
-                "description": "yellow body",
-                "priority": "core",
-            },
-        ],
-        avoid_objects=[{"label": "shattered glass", "description": "unsafe prop"}],
-        prompt_confirmations={
-            "avoid_objects_reviewed": True,
-        },
-    )
-
-    reloaded = store.read_chapter_scene_package(chapter.id)
-
-    assert package.prompt.prompt_text == "A low-shadow bedroom empty scene."
-    assert package.prompt.scene_spatial_contract.startswith("Bed against back wall")
-    assert package.prompt.updated_at is not None
-    assert [(item.label, item.description, item.priority) for item in reloaded.target_objects] == [
-        ("book", "", "required"),
-        ("pencil", "yellow body", "core"),
-    ]
-    assert [(item.label, item.description) for item in reloaded.avoid_objects] == [
-        ("shattered glass", "unsafe prop")
-    ]
-    assert reloaded.prompt_confirmations.avoid_objects_reviewed is True
-    assert reloaded.prompt_confirmations.avoid_objects_reviewed
-    assert reloaded.scene_style_reference_id is None
-
-
-def test_update_scene_package_prompt_preserves_target_ids_across_reorder(
-    tmp_path: Path,
-) -> None:
-    store, chapter = make_store_with_chapter(tmp_path)
-    seeded = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        target_objects=[
-            {"label": "book"},
-            {"label": "lamp"},
-        ],
-    )
-
-    reordered = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        target_objects=[
-            {"label": "lamp", "priority": "core"},
-            {"label": "book"},
-            {"label": "cloth"},
-        ],
-    )
-
-    # WHY: linked_target_object_id 是 Chapter Asset 的外键；prompt 重新排序不能让
-    # target_object_001 从 book 悄悄变成 lamp。
-    assert {target.label: target.id for target in seeded.target_objects} == {
-        "book": "target_object_001",
-        "lamp": "target_object_002",
-    }
-    assert {target.label: target.id for target in reordered.target_objects} == {
-        "book": "target_object_001",
-        "lamp": "target_object_002",
-        "cloth": "target_object_003",
-    }
-    assert reordered.target_objects[0].priority == "core"
-
-
-def test_update_scene_package_prompt_preserves_omitted_fields_and_clears_explicit_empty(
-    tmp_path: Path,
-) -> None:
-    store, chapter = make_store_with_prompt(tmp_path)
-    seeded = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A low-shadow bedroom empty scene.",
-        scene_spatial_contract="Bed against back wall, desk by window, floor kept clear.",
-        target_objects=[{"label": "book"}],
-        avoid_objects=[{"label": "shattered glass"}],
-        prompt_confirmations={
-            "avoid_objects_reviewed": True,
-        },
-    )
-
-    preserved = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A brighter bedroom empty scene.",
-    )
-    cleared = store.update_chapter_scene_prompt(
-        chapter.id,
-        prompt_text="A brighter bedroom empty scene.",
-        scene_spatial_contract="",
-        avoid_objects=[],
-    )
-
-    assert preserved.prompt.prompt_text == "A brighter bedroom empty scene."
-    assert preserved.prompt.scene_spatial_contract == seeded.prompt.scene_spatial_contract
-    assert preserved.avoid_objects == seeded.avoid_objects
-    assert cleared.prompt.scene_spatial_contract == ""
-    assert cleared.avoid_objects == []
-    assert cleared.scene_style_reference_id is None
 
 
 def test_write_chapter_scene_package_round_trips_assembly(tmp_path: Path) -> None:
@@ -201,16 +91,10 @@ def test_save_chapter_scene_assembly_allows_wip_missing_target_coverage(
     tmp_path: Path,
 ) -> None:
     store, chapter, asset = make_store_with_chapter_asset(tmp_path)
-    package = store.read_chapter_scene_package(chapter.id)
-    store.update_chapter_scene_prompt(
+    seed_current_prompt_package(
+        store,
         chapter.id,
-        prompt_text=package.prompt.prompt_text,
-        scene_spatial_contract=package.prompt.scene_spatial_contract,
-        target_objects=[
-            {"label": "book"},
-            {"label": "lamp"},
-        ],
-        avoid_objects=[{"label": item.label} for item in package.avoid_objects],
+        target_labels=("book", "lamp"),
     )
     current = store.read_chapter_scene_package(chapter.id)
 
@@ -304,10 +188,7 @@ def test_scene_package_read_and_update_reject_mismatched_chapter_id(tmp_path: Pa
         store.read_chapter_scene_package(chapter.id)
 
     with pytest.raises(ValueError, match="Scene package chapter_id"):
-        store.update_chapter_scene_prompt(
-            chapter.id,
-            prompt_text="A brighter bedroom empty scene.",
-        )
+        store.set_chapter_cast_selection(chapter.id, character_ip_ids=[])
 
 
 def test_select_empty_scene_image_sets_current_without_locking_complete_images(

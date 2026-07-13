@@ -13,15 +13,10 @@ from art_pipeline.course_planner.scene_package_media_store import (
     CoursePlannerScenePackageMediaStoreMixin,
 )
 from art_pipeline.course_planner.scene_package_models import (
-    AvoidObjectItem,
-    ChapterCastAssignment,
     ChapterSceneAssembly,
     ChapterSceneAssemblyManifest,
     ChapterScenePackage,
-    ChapterScenePrompt,
     EmptySceneImage,
-    PromptReadinessConfirmation,
-    TargetObjectItem,
     validate_assembly_manifest,
     validate_assembly_manifest_structure,
 )
@@ -41,55 +36,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         package = self._read_model(path, ChapterScenePackage)
         require_match(package.chapter_id, chapter.id, "Scene package chapter_id")
         return package
-
-    def update_chapter_scene_prompt(
-        self,
-        chapter_id: str,
-        *,
-        prompt_text: str,
-        scene_spatial_contract: str | None = None,
-        target_objects: list[dict[str, str]] | None = None,
-        avoid_objects: list[dict[str, str]] | None = None,
-        prompt_confirmations: dict[str, object] | None = None,
-    ) -> ChapterScenePackage:
-        current = self.read_chapter_scene_package(chapter_id)
-        prompt = ChapterScenePrompt(
-            prompt_text=prompt_text,
-            scene_spatial_contract=(
-                current.prompt.scene_spatial_contract
-                if scene_spatial_contract is None
-                else scene_spatial_contract
-            ),
-            updated_at=utc_now(),
-        )
-        normalized_targets = (
-            current.target_objects
-            if target_objects is None
-            else self._normalize_target_objects(target_objects, current.target_objects)
-        )
-        normalized_avoid_objects = (
-            current.avoid_objects
-            if avoid_objects is None
-            else self._normalize_avoid_objects(avoid_objects)
-        )
-        normalized_confirmations = (
-            current.prompt_confirmations
-            if prompt_confirmations is None
-            else PromptReadinessConfirmation.model_validate(prompt_confirmations)
-        )
-        # WHY: prompt PATCH 只更新文字与 readiness；角色和风格选择必须走各自路由，
-        # 这样 Chapter 的选择事实不会和 prompt 文本编辑分叉成两套权威来源。
-        return self.write_chapter_scene_package(
-            current.model_copy(
-                update={
-                    "prompt": prompt,
-                    "target_objects": normalized_targets,
-                    "avoid_objects": normalized_avoid_objects,
-                    "prompt_confirmations": normalized_confirmations,
-                }
-            ),
-            validate_assembly=False,
-        )
 
     def set_chapter_scene_style_reference(
         self,
@@ -113,64 +59,21 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
             validate_assembly=False,
         )
 
-    def write_chapter_cast_assignment(
+    def set_chapter_cast_selection(
         self,
         chapter_id: str,
         *,
-        character_ip_id: str,
-        role_label: str,
-        action_intent: str,
+        character_ip_ids: list[str],
     ) -> ChapterScenePackage:
         current, _ = self._load_scene_package_for_write(chapter_id)
-        self._require_character_ip(character_ip_id)
-        existing = next(
-            (
-                assignment
-                for assignment in current.cast_assignments
-                if assignment.character_ip_id == character_ip_id
-                and assignment.role_label == role_label
-            ),
-            None,
-        )
-        assignment = ChapterCastAssignment(
-            id=(
-                existing.id
-                if existing is not None
-                else _next_cast_assignment_id(current)
-            ),
-            character_ip_id=character_ip_id,
-            role_label=role_label,
-            action_intent=action_intent,
-        )
-        updated_assignments = (
-            [
-                assignment
-                if item.character_ip_id == character_ip_id
-                and item.role_label == role_label
-                else item
-                for item in current.cast_assignments
-            ]
-            if existing is not None
-            else [*current.cast_assignments, assignment]
-        )
+        for character_ip_id in character_ip_ids:
+            self._require_character_ip(character_ip_id)
+        # WHY: cast selection 是一个有序、原子的小集合；整表替换避免逐角色写入时
+        # 出现中间态，也让前后端共享同一个 0..2 基数合同。
         return self.write_chapter_scene_package(
-            current.model_copy(update={"cast_assignments": updated_assignments}),
-            validate_assembly=False,
-        )
-
-    def remove_chapter_cast_assignment(
-        self,
-        chapter_id: str,
-        character_ip_id: str,
-    ) -> ChapterScenePackage:
-        current, _ = self._load_scene_package_for_write(chapter_id)
-        updated = [
-            assignment
-            for assignment in current.cast_assignments
-            if assignment.character_ip_id != character_ip_id
-        ]
-        return self.write_chapter_scene_package(
-            current.model_copy(update={"cast_assignments": updated}),
+            current.model_copy(
+                update={"selected_character_ip_ids": list(character_ip_ids)}
+            ),
             validate_assembly=False,
         )
 
@@ -289,53 +192,6 @@ class CoursePlannerScenePackageStoreMixin(CoursePlannerScenePackageMediaStoreMix
         package = self.read_chapter_scene_package(chapter.id)
         return package, scene_pack_id
 
-    def _normalize_target_objects(
-        self,
-        target_objects: list[dict[str, str]],
-        current_target_objects: list[TargetObjectItem],
-    ) -> list[TargetObjectItem]:
-        existing_by_label = _unique_target_objects_by_label(current_target_objects)
-        used_ids: set[str] = set()
-        normalized: list[TargetObjectItem] = []
-        for target in target_objects:
-            label = target["label"]
-            target_id = target.get("id") or existing_by_label.get(label)
-            if not target_id:
-                target_id = _next_target_object_id(current_target_objects, used_ids)
-            if target_id in used_ids:
-                raise ScenePackageValidationError(
-                    f"Duplicate target object id in prompt update: {target_id}"
-                )
-            used_ids.add(target_id)
-            normalized.append(
-                TargetObjectItem.model_validate(
-                    {
-                        "id": target_id,
-                        "label": label,
-                        # WHY: target object id 必须稳定，asset.linked_target_object_id 才不会在
-                        # 目标列表重排/插入后错绑；label 语义匹配是无显式 id 的兼容路径。
-                        "description": target.get("description", ""),
-                        "priority": target.get("priority", "required"),
-                    }
-                )
-            )
-        return normalized
-
-    def _normalize_avoid_objects(
-        self,
-        avoid_objects: list[dict[str, str]],
-    ) -> list[AvoidObjectItem]:
-        return [
-            AvoidObjectItem.model_validate(
-                {
-                    "id": target.get("id") or f"avoid_object_{index:03d}",
-                    "label": target["label"],
-                    "description": target.get("description", ""),
-                }
-            )
-            for index, target in enumerate(avoid_objects, start=1)
-        ]
-
 def _validate_scene_package_assembly(package: ChapterScenePackage) -> None:
     errors = validate_assembly_manifest(package)
     if not errors:
@@ -343,8 +199,6 @@ def _validate_scene_package_assembly(package: ChapterScenePackage) -> None:
     raise ScenePackageValidationError(
         "Invalid assembly manifest: " + "; ".join(errors)
     )
-
-
 def _validate_scene_package_assembly_structure(package: ChapterScenePackage) -> None:
     errors = validate_assembly_manifest_structure(package)
     if not errors:
@@ -352,33 +206,3 @@ def _validate_scene_package_assembly_structure(package: ChapterScenePackage) -> 
     raise ScenePackageValidationError(
         "Invalid assembly manifest: " + "; ".join(errors)
     )
-
-
-def _next_cast_assignment_id(package: ChapterScenePackage) -> str:
-    return f"cast_assignment_{len(package.cast_assignments) + 1:03d}"
-
-
-def _unique_target_objects_by_label(
-    target_objects: list[TargetObjectItem],
-) -> dict[str, str]:
-    counts: dict[str, int] = {}
-    for target in target_objects:
-        counts[target.label] = counts.get(target.label, 0) + 1
-    return {
-        target.label: target.id
-        for target in target_objects
-        if counts[target.label] == 1
-    }
-
-
-def _next_target_object_id(
-    current_target_objects: list[TargetObjectItem],
-    used_ids: set[str],
-) -> str:
-    existing_ids = {target.id for target in current_target_objects}
-    counter = 1
-    while True:
-        candidate = f"target_object_{counter:03d}"
-        if candidate not in existing_ids and candidate not in used_ids:
-            return candidate
-        counter += 1

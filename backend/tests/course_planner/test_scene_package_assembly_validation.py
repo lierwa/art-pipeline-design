@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from art_pipeline.course_planner.scene_package_models import (
+    ChapterSceneAssembly,
     TargetObjectItem,
     frontmost_layer_id,
 )
@@ -40,6 +41,22 @@ def test_manifest_rejects_unknown_dependency_id() -> None:
     assert any(
         "unknown" in error.lower() and "missing_placement" in error for error in errors
     )
+
+
+def test_manifest_readiness_requires_at_least_one_placement() -> None:
+    package = make_package_with_selected_empty_scene().model_copy(
+        update={
+            "target_objects": [],
+            "assembly": ChapterSceneAssembly(
+                empty_scene_image_id="empty_scene_001",
+                empty_scene_size={"width": 120, "height": 80},
+            ),
+        }
+    )
+
+    errors = validate_assembly_manifest(package)
+
+    assert any("at least one placement" in error.lower() for error in errors)
 
 
 def test_manifest_rejects_layer_order_missing_placement() -> None:

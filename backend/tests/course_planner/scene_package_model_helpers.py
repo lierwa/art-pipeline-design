@@ -12,12 +12,13 @@ from art_pipeline.course_planner.scene_package_models import (
     AvoidObjectItem,
     ChapterAsset,
     ChapterAssetLineage,
-    ChapterCastAssignment,
     ChapterSceneAssembly,
     ChapterScenePackage,
-    ChapterScenePrompt,
     EmptySceneImage,
-    PromptReadinessConfirmation,
+    GeneratedChapterCastDirection,
+    GeneratedChapterPromptPackage,
+    GeneratedChapterPromptReferenceSnapshot,
+    CharacterModelSheetSnapshot,
     TargetObjectItem,
 )
 
@@ -25,22 +26,30 @@ from art_pipeline.course_planner.scene_package_models import (
 def make_prompt_ready_package() -> ChapterScenePackage:
     return ChapterScenePackage(
         chapter_id="chapter_001",
-        prompt=ChapterScenePrompt(
-            prompt_text="A calm living room cleanup scene.",
-            scene_spatial_contract="Sofa at back wall, tea table centered on rug.",
-        ),
-        prompt_confirmations=PromptReadinessConfirmation(
-            avoid_objects_reviewed=True,
-        ),
-        cast_assignments=[
-            ChapterCastAssignment(
-                id="cast_001",
-                character_ip_id="character_tuantuan",
-                role_label="child",
-                action_intent="整理抱枕",
-            )
-        ],
+        selected_character_ip_ids=["character_tuantuan"],
         scene_style_reference_id="scene_style_warm",
+        current_prompt_package=GeneratedChapterPromptPackage(
+            empty_scene_prompt="A calm living room shell without characters.",
+            complete_scene_prompt="Tuan Tuan tidies cushions in a calm living room.",
+            scene_spatial_contract="Sofa at back wall, tea table centered on rug.",
+            cast_directions=[
+                GeneratedChapterCastDirection(
+                    character_ip_id="character_tuantuan",
+                    action="整理抱枕",
+                )
+            ],
+            reference_snapshot=GeneratedChapterPromptReferenceSnapshot(
+                character_model_sheets=[
+                    CharacterModelSheetSnapshot(
+                        character_ip_id="character_tuantuan",
+                        model_sheet_id="character_model_sheet_001",
+                    )
+                ],
+                scene_style_reference_id="scene_style_warm",
+                scene_style_image_id="scene_style_image_001",
+            ),
+            generated_at="2026-07-03T09:02:00Z",
+        ),
         target_objects=[TargetObjectItem(id="target_001", label="抱枕", priority="core")],
         avoid_objects=[AvoidObjectItem(id="avoid_001", label="破碎杯子")],
     )

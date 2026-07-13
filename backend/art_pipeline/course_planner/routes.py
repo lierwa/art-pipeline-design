@@ -29,6 +29,9 @@ from art_pipeline.course_planner.scene_package_errors import (
 from art_pipeline.course_planner.scene_package_routes import (
     register_scene_package_routes,
 )
+from art_pipeline.course_planner.scene_package_route_helpers import (
+    ai_task_http_exception,
+)
 from art_pipeline.course_planner.store import CoursePlannerStore
 
 router = APIRouter(prefix="/api/course-planner")
@@ -153,7 +156,7 @@ def _run_candidate_route(
             run,
         )
     except AiTaskFailedError as exc:
-        raise _ai_task_http_error(exc) from exc
+        raise ai_task_http_exception(exc) from exc
     return {
         "candidates": candidates,
         "candidatePersistence": "ephemeral",
@@ -296,17 +299,3 @@ def _collect_state(store: CoursePlannerStore) -> dict[str, list[dict[str, object
         "chapters": [chapter.model_dump(mode="json") for chapter in chapters],
         "tasks": collect_ai_task_records(store),
     }
-
-
-def _ai_task_http_error(error: AiTaskFailedError) -> HTTPException:
-    public_message = "Course Planner AI task failed. Check the AI task record for diagnostics."
-    task_payload = error.task.model_dump(mode="json")
-    # WHY: 任务 artifact/记录保留原始 provider 错误，HTTP 错误只返回可读摘要，避免 UI 泄露整段 JSON schema 诊断。
-    task_payload["error"] = public_message
-    return HTTPException(
-        status_code=502,
-        detail={
-            "message": public_message,
-            "task": task_payload,
-        },
-    )

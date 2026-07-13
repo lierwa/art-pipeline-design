@@ -9,19 +9,17 @@ import type {
   SceneStyleReference,
 } from "../types";
 import type {
-  ChapterCastAssignmentInput,
-  ChapterScenePromptInput,
   CompleteImageUploadInput,
   EmptySceneImageUploadInput,
 } from "../api";
 import { buildAssemblyReadiness } from "../assembly/assemblyReadiness";
 import { exportAssemblyPreviewFile } from "../assembly/assemblyExport";
+import { chapterPromptStatus } from "../domain/chapterPromptStatus";
+import { ChapterPromptGenerationPanel } from "./ChapterPromptGenerationPanel";
 import { CompleteSceneImagesPanel } from "./CompleteSceneImagesPanel";
 import { CoursePlannerResizableColumns } from "./CoursePlannerChrome";
 import { EmptySceneImagesPanel } from "./EmptySceneImagesPanel";
 import { FinalScenePanel } from "./FinalScenePanel";
-import { LibrarySelectionPanel } from "./LibrarySelectionPanel";
-import { PromptFactsPanel } from "./PromptFactsPanel";
 
 type ChapterSceneStudioProps = {
   chapter: Chapter;
@@ -29,11 +27,11 @@ type ChapterSceneStudioProps = {
   characterIps: CharacterIpProfile[];
   sceneStyles: SceneStyleReference[];
   asyncStatus: AsyncStatusMap;
-  onAssignCharacterIp: (input: ChapterCastAssignmentInput) => Promise<ChapterScenePackage | null>;
-  onRemoveCharacterIp: (characterIpId: string) => Promise<ChapterScenePackage | null>;
+  isGeneratingPrompt: boolean;
+  onGeneratePrompt: (feedback: string) => Promise<ChapterScenePackage | null>;
+  onSelectCharacters: (characterIpIds: string[]) => Promise<ChapterScenePackage | null>;
   onSelectSceneStyle: (sceneStyleId: string) => Promise<ChapterScenePackage | null>;
   onClearSceneStyle: () => Promise<ChapterScenePackage | null>;
-  onUpdatePrompt: (input: ChapterScenePromptInput) => Promise<ChapterScenePackage | null>;
   onUploadEmptySceneImage: (file: File, input: EmptySceneImageUploadInput) => Promise<ChapterScenePackage | null>;
   onSelectEmptySceneImage: (imageId: string) => Promise<ChapterScenePackage | null>;
   onUploadCompleteSceneImage: (file: File, input: CompleteImageUploadInput) => Promise<ChapterScenePackage | null>;
@@ -52,30 +50,58 @@ type StudioStep = {
 export function ChapterSceneStudio({
   chapter,
   characterIps,
+  isGeneratingPrompt,
   sceneStyles,
-  onAssignCharacterIp,
   onClearSceneStyle,
+  onGeneratePrompt,
   onImportCompleteImage,
   onLockFinal,
   onDeleteCompleteSceneImage,
   onSelectEmptySceneImage,
-  onRemoveCharacterIp,
+  onSelectCharacters,
   onSelectSceneStyle,
-  onUpdatePrompt,
   onUploadCompleteSceneImage,
   onUploadEmptySceneImage,
   scenePackage,
 }: ChapterSceneStudioProps) {
   const [localScenePackage, setLocalScenePackage] = useState(scenePackage);
   const assemblyReadiness = useMemo(() => buildAssemblyReadiness(localScenePackage), [localScenePackage]);
+  const promptStatus = chapterPromptStatus(localScenePackage, characterIps, sceneStyles, isGeneratingPrompt);
   const steps = useMemo(
-    () => buildStudioSteps(localScenePackage, assemblyReadiness.is_ready),
-    [assemblyReadiness.is_ready, localScenePackage],
+    () => buildStudioSteps(localScenePackage, assemblyReadiness.is_ready, promptStatus),
+    [assemblyReadiness.is_ready, localScenePackage, promptStatus],
   );
 
   useEffect(() => {
     setLocalScenePackage(scenePackage);
   }, [scenePackage]);
+
+  const applyMutation = useCallback(async (
+    operation: () => Promise<ChapterScenePackage | null>,
+  ) => {
+    const nextScenePackage = await operation();
+    if (nextScenePackage) {
+      setLocalScenePackage(nextScenePackage);
+    }
+    return nextScenePackage;
+  }, []);
+
+  const handleSelectCharacters = useCallback(
+    (characterIpIds: string[]) => applyMutation(() => onSelectCharacters(characterIpIds)),
+    [applyMutation, onSelectCharacters],
+  );
+  const handleSelectSceneStyle = useCallback(
+    (sceneStyleId: string) => applyMutation(() => onSelectSceneStyle(sceneStyleId)),
+    [applyMutation, onSelectSceneStyle],
+  );
+  const handleClearSceneStyle = useCallback(
+    () => applyMutation(onClearSceneStyle),
+    [applyMutation, onClearSceneStyle],
+  );
+  const handleGeneratePrompt = useCallback(
+    (feedback: string) => applyMutation(() => onGeneratePrompt(feedback)),
+    [applyMutation, onGeneratePrompt],
+  );
 
   const handleSelectEmptySceneImage = useCallback(async (imageId: string) => {
     const nextScenePackage = await onSelectEmptySceneImage(imageId);
@@ -127,12 +153,12 @@ export function ChapterSceneStudio({
               assemblyReadiness={assemblyReadiness}
               chapter={chapter}
               characterIps={characterIps}
+              isGeneratingPrompt={isGeneratingPrompt}
               localScenePackage={localScenePackage}
-              onAssignCharacterIp={onAssignCharacterIp}
-              onClearSceneStyle={onClearSceneStyle}
-              onRemoveCharacterIp={onRemoveCharacterIp}
-              onSelectSceneStyle={onSelectSceneStyle}
-              onUpdatePrompt={onUpdatePrompt}
+              onClearSceneStyle={handleClearSceneStyle}
+              onGeneratePrompt={handleGeneratePrompt}
+              onSelectCharacters={handleSelectCharacters}
+              onSelectSceneStyle={handleSelectSceneStyle}
               sceneStyles={sceneStyles}
             />
           ),
@@ -153,6 +179,7 @@ export function ChapterSceneStudio({
               onSelectEmptySceneImage={handleSelectEmptySceneImage}
               onUploadCompleteSceneImage={onUploadCompleteSceneImage}
               onUploadEmptySceneImage={onUploadEmptySceneImage}
+              promptReady={promptStatus === "prompt_ready"}
             />
           ),
         }}
@@ -190,41 +217,36 @@ function ChapterPreparationColumn({
   assemblyReadiness,
   chapter,
   characterIps,
+  isGeneratingPrompt,
   localScenePackage,
-  onAssignCharacterIp,
   onClearSceneStyle,
-  onRemoveCharacterIp,
+  onGeneratePrompt,
+  onSelectCharacters,
   onSelectSceneStyle,
-  onUpdatePrompt,
   sceneStyles,
 }: {
   assemblyReadiness: ReturnType<typeof buildAssemblyReadiness>;
   chapter: Chapter;
   characterIps: CharacterIpProfile[];
+  isGeneratingPrompt: boolean;
   localScenePackage: ChapterScenePackage;
-  onAssignCharacterIp: ChapterSceneStudioProps["onAssignCharacterIp"];
   onClearSceneStyle: ChapterSceneStudioProps["onClearSceneStyle"];
-  onRemoveCharacterIp: ChapterSceneStudioProps["onRemoveCharacterIp"];
+  onGeneratePrompt: ChapterSceneStudioProps["onGeneratePrompt"];
+  onSelectCharacters: ChapterSceneStudioProps["onSelectCharacters"];
   onSelectSceneStyle: ChapterSceneStudioProps["onSelectSceneStyle"];
-  onUpdatePrompt: ChapterSceneStudioProps["onUpdatePrompt"];
   sceneStyles: SceneStyleReference[];
 }) {
   return (
     <div className="chapter-studio-column">
-      <PromptFactsPanel
+      <ChapterPromptGenerationPanel
         characterIps={characterIps}
-        sceneStyles={sceneStyles}
-        scenePackage={localScenePackage}
-        onUpdatePrompt={onUpdatePrompt}
-      />
-      <LibrarySelectionPanel
-        characterIps={characterIps}
-        sceneStyles={sceneStyles}
-        scenePackage={localScenePackage}
-        onAssignCharacterIp={onAssignCharacterIp}
+        isGeneratingPrompt={isGeneratingPrompt}
         onClearSceneStyle={onClearSceneStyle}
-        onRemoveCharacterIp={onRemoveCharacterIp}
+        onGeneratePrompt={onGeneratePrompt}
+        onSelectCharacters={onSelectCharacters}
         onSelectSceneStyle={onSelectSceneStyle}
+        sceneStyles={sceneStyles}
+        scenePackage={localScenePackage}
       />
       <ChapterAssemblySummary
         assemblyReadiness={assemblyReadiness}
@@ -244,6 +266,7 @@ function ChapterMediaColumn({
   onSelectEmptySceneImage,
   onUploadCompleteSceneImage,
   onUploadEmptySceneImage,
+  promptReady,
 }: {
   assemblyReadiness: ReturnType<typeof buildAssemblyReadiness>;
   localScenePackage: ChapterScenePackage;
@@ -253,6 +276,7 @@ function ChapterMediaColumn({
   onSelectEmptySceneImage: ChapterSceneStudioProps["onSelectEmptySceneImage"];
   onUploadCompleteSceneImage: ChapterSceneStudioProps["onUploadCompleteSceneImage"];
   onUploadEmptySceneImage: ChapterSceneStudioProps["onUploadEmptySceneImage"];
+  promptReady: boolean;
 }) {
   return (
     <div className="chapter-studio-column">
@@ -269,6 +293,7 @@ function ChapterMediaColumn({
       />
       <FinalScenePanel
         assemblyReadiness={assemblyReadiness}
+        promptReady={promptReady}
         scenePackage={localScenePackage}
         onLockFinal={onLockFinal}
       />
@@ -329,9 +354,17 @@ function ChapterAssemblySummary({
 function buildStudioSteps(
   scenePackage: ChapterScenePackage,
   currentAssemblyReady: boolean,
+  promptStatus: ReturnType<typeof chapterPromptStatus>,
 ): StudioStep[] {
   return [
-    buildStudioStep("prompt", "Prompt", promptReadinessState(scenePackage)),
+    buildStudioStep(
+      "prompt",
+      "Prompt",
+      promptStatus === "prompt_ready" ? "ready" : "pending",
+      {
+        pending: promptStatus === "needs_regeneration" ? "Needs regeneration" : "Pending",
+      },
+    ),
     buildStudioStep("empty-scene", "Empty Scene", emptySceneState(scenePackage)),
     buildStudioStep("images", "Images", completeImagesState(scenePackage)),
     buildStudioStep("assembly", "Assembly", assemblyState(scenePackage, currentAssemblyReady), {
@@ -365,25 +398,6 @@ function defaultStudioStepStateLabel(state: StudioStepState): string {
     return "Pending";
   }
   return "Not Started";
-}
-
-function promptReadinessState(scenePackage: ChapterScenePackage): StudioStepState {
-  const hasPromptText = Boolean(scenePackage.prompt.prompt_text.trim());
-  const hasSpatialContract = Boolean(scenePackage.prompt.scene_spatial_contract.trim());
-  const hasCharacter = scenePackage.cast_assignments.length > 0 && scenePackage.cast_assignments.every((assignment) =>
-    Boolean(assignment.character_ip_id.trim()) &&
-    Boolean(assignment.action_intent.trim())
-  );
-  const hasTargetObjects = scenePackage.target_objects.length > 0;
-  const hasStyleResolution = Boolean(scenePackage.scene_style_reference_id);
-  return hasPromptText &&
-    hasSpatialContract &&
-    hasCharacter &&
-    hasTargetObjects &&
-    hasStyleResolution &&
-    scenePackage.prompt_confirmations.avoid_objects_reviewed
-    ? "ready"
-    : "pending";
 }
 
 function emptySceneState(scenePackage: ChapterScenePackage): StudioStepState {

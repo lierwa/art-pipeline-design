@@ -11,9 +11,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from art_pipeline.course_planner.codex_json_provider import CodexJsonProvider
 from art_pipeline.course_planner.models import (
+    Chapter,
     ChapterSeed,
     CharacterConceptHint,
     ScenePack,
+)
+from art_pipeline.course_planner.scene_package_models import ChapterScenePackage
+from art_pipeline.course_planner.scene_package_prompt_generation import (
+    generate_chapter_prompt_package,
 )
 from art_pipeline.course_planner.store import CoursePlannerStore
 from art_pipeline.workspace.store import utc_now
@@ -89,6 +94,30 @@ class CoursePlannerAiService:
                 _candidate_payload(scene_pack, candidate, index, batch_id)
                 for index, candidate in enumerate(output.candidates, start=1)
             ]
+        except Exception as exc:
+            _write_error_artifact(artifact_dir, exc)
+            raise
+
+    def generate_chapter_prompt_package(
+        self,
+        chapter: Chapter,
+        package: ChapterScenePackage,
+        *,
+        feedback: str = "",
+    ) -> ChapterScenePackage:
+        artifact_dir = self._artifact_dir(
+            "generate_chapter_prompt_package",
+            chapter.id,
+        )
+        try:
+            return generate_chapter_prompt_package(
+                store=self.store,
+                provider=self.provider,
+                chapter=chapter,
+                package=package,
+                feedback=feedback,
+                artifact_dir=artifact_dir,
+            )
         except Exception as exc:
             _write_error_artifact(artifact_dir, exc)
             raise

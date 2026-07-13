@@ -53,12 +53,6 @@ export type ChapterCandidate = {
 
 export type RuntimeRole = "target" | "initial";
 
-export type ChapterScenePrompt = {
-  prompt_text: string;
-  scene_spatial_contract: string;
-  updated_at: string | null;
-};
-
 export type TargetObjectItem = {
   id: string;
   label: string;
@@ -93,15 +87,32 @@ export type SceneStyleReference = {
   updated_at: string | null;
 };
 
-export type PromptReadinessConfirmation = {
-  avoid_objects_reviewed: boolean;
+export type GeneratedChapterCastDirection = {
+  character_ip_id: string;
+  action: string;
 };
 
-export type ChapterCastAssignment = {
-  id: string;
+export type CharacterModelSheetSnapshot = {
   character_ip_id: string;
-  role_label: string;
-  action_intent: string;
+  model_sheet_id: string;
+};
+
+export type GeneratedChapterPromptReferenceSnapshot = {
+  character_model_sheets: CharacterModelSheetSnapshot[];
+  scene_style_reference_id: string | null;
+  scene_style_image_id: string | null;
+  current_empty_scene_image_id: string | null;
+  global_reference_image_ids: string[];
+};
+
+export type GeneratedChapterPromptPackage = {
+  empty_scene_prompt: string;
+  complete_scene_prompt: string;
+  scene_spatial_contract: string;
+  cast_directions: GeneratedChapterCastDirection[];
+  reference_snapshot: GeneratedChapterPromptReferenceSnapshot;
+  generation_feedback: string;
+  generated_at: string;
 };
 
 export type ImageReferenceSnapshot = {
@@ -208,6 +219,7 @@ export type FinalChapterScene = {
   height: number;
   empty_scene_image_id: string;
   assembly_snapshot: ChapterSceneAssemblyManifest;
+  placed_assets: Array<ChapterAsset & { placement_id: string }>;
   prompt_snapshot: string;
   reference_snapshot: ImageReferenceSnapshot;
   created_at: string;
@@ -238,12 +250,12 @@ export type GeneratedChapterAsset = {
 };
 
 export type ChapterScenePackage = {
+  schema_version: 2;
   chapter_id: string;
   current_empty_scene_image_id: string | null;
-  prompt: ChapterScenePrompt;
-  prompt_confirmations: PromptReadinessConfirmation;
-  cast_assignments: ChapterCastAssignment[];
+  selected_character_ip_ids: string[];
   scene_style_reference_id: string | null;
+  current_prompt_package: GeneratedChapterPromptPackage | null;
   target_objects: TargetObjectItem[];
   target_object_exemptions: TargetObjectExemption[];
   avoid_objects: AvoidObjectItem[];

@@ -1,19 +1,137 @@
 {
+  "schema_version": 2,
   "chapter_id": "chapter_f09ad1c29d5f",
   "current_empty_scene_image_id": "empty_scene_001",
-  "prompt": {
-    "prompt_text": "",
-    "scene_spatial_contract": "",
-    "updated_at": null
+  "selected_character_ip_ids": [
+    "character_ip_6347f69c2b39"
+  ],
+  "scene_style_reference_id": "scene_style_75ebb0412b2e",
+  "current_prompt_package": {
+    "empty_scene_prompt": "以 current_empty_scene「empty_scene_001」作为视觉参考，保持其方形画幅、既有玄关建筑比例、透视关系、材质语言与主要构图；若参考图与文字发生冲突，以本空间契约为准。描绘雨天傍晚的室内玄关空场：后侧入户门半开，门锁清楚可辨，门外仅露出冷灰蓝色雨幕与潮湿环境光；右墙设置固定式低矮鞋柜，柜体沿墙水平展开，下层保留开放收纳格；中央偏右留出明确的换鞋区域，门边保留雨具收纳区，鞋柜上方保留墙面悬挂区。地面从门口湿区自然过渡到室内干区，动线通畅，前景留有呼吸空间。采用略高于儿童视线的室内广角三分之四视角，完整展示门口、右墙与地面功能分区，垂直线稳定，避免夸张广角变形。温暖写实的家庭绘本质感，柔和手绘纹理与可信材质细节；室内暖金色灯光对比门外冷灰雨色，光影柔和、温馨、层次清晰。空场中不得出现任何人物、角色、宠物、动物、身体局部、倒影人物或角色剪影；不得出现换鞋凳、吸水地垫、雨伞、伞筒、雨衣、雨靴、拖鞋、墙面挂钩、毛巾、藤篮、水迹或其他可拆卸道具；不得出现文字、标识、水印、杂乱堆物或遮挡功能区的物体。",
+    "complete_scene_prompt": "严格沿用 current_empty_scene「empty_scene_001」及空场提示中的方形画幅、镜位、透视、玄关建筑结构和冷暖光关系，不移动后侧半开的入户门、右墙固定鞋柜或中央偏右的换鞋区域。画面只出现一个所选角色 abu（character_ip_6347f69c2b39），外形、面部特征、体态比例、配色与模型表 character_model_sheet_3032c0b669b7 严格一致；以单一全身形象呈现，不改变角色身份，不复制角色。abu 刚从冷灰雨幕中进入暖色玄关，外搭已松开的黄色雨衣，身体由后侧门口朝中央偏右换鞋区转身：一只手刚把收拢且仍在滴水的雨伞稳稳放入门边伞筒，另一只手轻扶换鞋凳保持平衡；一只穿湿雨靴的脚仍踩在吸水地垫湿区，另一只脚正从另一只雨靴中抽出并伸向干区的拖鞋，动作清晰、自然且能暗示“进门—收伞—脱雨具—换鞋”的连续过程。湿雨靴集中留在吸水地垫上，少量水滴和短水迹只分布在门口、伞筒与地垫之间，不越过干湿分界。换鞋凳位于中央偏右且完整可见，鞋柜沿右墙展开；墙面挂钩位于角色上方但不与头部重叠，其中一枚空钩等待收纳黄色雨衣。装有折叠干毛巾的藤篮置于鞋柜下层开放格，毛巾清晰可取；一双干拖鞋整齐放在换鞋凳前方干区。门锁、伞筒、雨伞、雨衣、雨靴、换鞋凳、鞋柜、拖鞋、挂钩、干毛巾、藤篮、地垫和局部水迹均需可辨，彼此不遮挡关键动作。整体采用温暖写实的家庭绘本质感，柔和手绘纹理、可信湿润反光与布料质感；室内暖金光包围 abu，门外冷灰蓝雨光形成色温对比。不得添加任何未选择的人物、儿童、父亲、母亲、学生、宠物、小狗或其他动物；不得出现第二个 abu、分身、连环画分格、额外肢体、错误手脚、悬浮物件、过量积水、脏乱堆物、文字、标识或水印。",
+    "scene_spatial_contract": "方形单幅构图，镜头采用略高于儿童视线的三分之四广角视角，由室内前方望向后侧入户门与右墙。后侧半开的入户门及门锁为固定锚点；门边为湿雨具收纳区；右墙固定鞋柜为第二锚点，其下层开放格对应藤篮位置，其上方墙面对应挂钩与雨衣位置；中央偏右为换鞋凳和换鞋动作区；门口地垫范围为湿区，换鞋凳前方及室内前景为干区。伞筒紧邻门侧，湿雨靴和水迹只能留在地垫湿区，拖鞋位于换鞋凳前的干区。abu 的全身轮廓置于门口与换鞋凳之间，不遮挡门锁、伞筒、雨靴、拖鞋、藤篮或挂钩。空场与完整场景必须保持完全相同的建筑几何、镜位、空间轴线、主要材质和冷暖光方向。",
+    "cast_directions": [
+      {
+        "character_ip_id": "character_ip_6347f69c2b39",
+        "action": "仅呈现一个严格遵循模型表的 abu 全身形象。abu 刚进入玄关并朝中央偏右的换鞋区转身，一只手把收拢且滴水的雨伞放入门边伞筒，另一只手轻扶换鞋凳保持平衡；一只湿雨靴仍踩在吸水地垫上，另一只脚正脱离雨靴并伸向干区拖鞋，黄色雨衣已经松开，动作自然清楚且不遮挡关键收纳物件。"
+      }
+    ],
+    "reference_snapshot": {
+      "character_model_sheets": [
+        {
+          "character_ip_id": "character_ip_6347f69c2b39",
+          "model_sheet_id": "character_model_sheet_3032c0b669b7"
+        }
+      ],
+      "scene_style_reference_id": "scene_style_75ebb0412b2e",
+      "scene_style_image_id": "scene_style_image_cf91b443e683",
+      "current_empty_scene_image_id": "empty_scene_001",
+      "global_reference_image_ids": []
+    },
+    "generation_feedback": "",
+    "generated_at": "2026-07-13T17:45:06.683841+00:00"
   },
-  "prompt_confirmations": {
-    "avoid_objects_reviewed": false
-  },
-  "cast_assignments": [],
-  "scene_style_reference_id": null,
-  "target_objects": [],
+  "target_objects": [
+    {
+      "id": "target_object_6fd4eece1ce55f36",
+      "label": "半开入户门与门锁",
+      "description": "位于画面后侧的固定空间锚点；门扇半开，门锁可辨，门外仅呈现冷灰雨幕。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_7be5c0302ff655f2",
+      "label": "吸水地垫",
+      "description": "铺在门口并明确界定湿区，承接湿雨靴和少量滴水，不延伸到室内干区。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_0ff24d6735c656dc",
+      "label": "滴水雨伞",
+      "description": "收拢状态，由 abu 放入门边伞筒；伞面具有克制、可信的湿润高光和水滴。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_56d6d6b5737d5a46",
+      "label": "伞筒",
+      "description": "紧邻入户门设置，完整承接雨伞，不能被角色或门扇遮挡。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_de615ea55825543d",
+      "label": "湿雨靴",
+      "description": "一只仍在 abu 脚上，另一只留在吸水地垫上，清晰表现正在脱靴的动作。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_c14af983b13e5f37",
+      "label": "换鞋凳",
+      "description": "位于中央偏右，供 abu 扶靠并定义换鞋区域，整体轮廓完整可见。",
+      "priority": "core"
+    },
+    {
+      "id": "target_object_3b8aa12b24f05591",
+      "label": "右墙鞋柜",
+      "description": "沿右墙展开的固定低柜，下层设开放收纳格，并保持柜门与边缘透视准确。",
+      "priority": "required"
+    },
+    {
+      "id": "target_object_0cabd08b770557c3",
+      "label": "干拖鞋",
+      "description": "整齐放在换鞋凳前方的干区，其中一只对准 abu 正伸出的脚。",
+      "priority": "required"
+    },
+    {
+      "id": "target_object_16336066f5a4577e",
+      "label": "黄色雨衣与墙面挂钩",
+      "description": "黄色雨衣松开穿在 abu 身上；角色上方设置清楚可见的挂钩，并留有可供随后悬挂雨衣的空钩。",
+      "priority": "required"
+    },
+    {
+      "id": "target_object_20b94c0ab41154db",
+      "label": "干毛巾与藤篮",
+      "description": "装有折叠干毛巾的藤篮位于鞋柜下层开放格，保持干燥并与门口湿区形成对比。",
+      "priority": "required"
+    },
+    {
+      "id": "target_object_7003e6e26e525173",
+      "label": "局部水迹",
+      "description": "少量水滴和短水迹只出现在门口、伞筒与吸水地垫之间，用于强化雨天归家的湿润状态。",
+      "priority": "required"
+    }
+  ],
   "target_object_exemptions": [],
-  "avoid_objects": [],
+  "avoid_objects": [
+    {
+      "id": "avoid_object_a704b92cb9015c1d",
+      "label": "未选择角色",
+      "description": "禁止添加任何儿童、父亲、母亲、学生、路人、宠物、小狗或其他人物与动物。"
+    },
+    {
+      "id": "avoid_object_12593c62b1bf5032",
+      "label": "角色复制与叙事分格",
+      "description": "禁止第二个 abu、分身、镜中角色、连续动作残影或连环画分格。"
+    },
+    {
+      "id": "avoid_object_4ea51b6bd6f05d5a",
+      "label": "空场可拆道具",
+      "description": "空场中禁止出现换鞋凳、地垫、雨伞、伞筒、雨衣、雨靴、拖鞋、挂钩、毛巾、藤篮、水迹及其他可拆卸物件。"
+    },
+    {
+      "id": "avoid_object_167f05f9ef4357d9",
+      "label": "关键物件遮挡",
+      "description": "禁止角色、门扇或杂物遮挡门锁、伞筒、雨靴、拖鞋、挂钩、毛巾藤篮和换鞋动作。"
+    },
+    {
+      "id": "avoid_object_30f4887a13185fe9",
+      "label": "干湿关系错误",
+      "description": "禁止大面积积水、水迹进入干区、干毛巾受潮或湿雨靴散落在室内。"
+    },
+    {
+      "id": "avoid_object_aca3e6898b995e5d",
+      "label": "视觉瑕疵",
+      "description": "禁止额外肢体、错误手脚、悬浮道具、比例失真、夸张广角、文字、标识、水印和杂乱堆物。"
+    }
+  ],
   "assembly": {
     "schema_version": 1,
     "empty_scene_image_id": "empty_scene_001",
